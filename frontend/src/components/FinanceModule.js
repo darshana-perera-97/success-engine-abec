@@ -1,0 +1,409 @@
+import { jsx, jsxs } from "react/jsx-runtime";
+import { useState } from "react";
+import { DollarSign, CheckCircle, Clock, AlertCircle, FileText, Plus, Download, Upload, Eye } from "lucide-react";
+import { Button } from "./Button";
+import { formatLKR, formatRawLKR, EXCHANGE_RATES, RATE_UPDATED_AT } from "../utils";
+import { uploadInvoicePaymentProof } from "../authApi";
+const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateInvoice }) => {
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newAmount, setNewAmount] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newCurrency, setNewCurrency] = useState("LKR");
+  const [newDueDate, setNewDueDate] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const studentInvoices = invoices.filter((inv) => inv.studentId === student.id).sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime());
+  const totalPaid = studentInvoices.filter((i) => i.status === "Paid").reduce((acc, curr) => acc + curr.amount * (EXCHANGE_RATES[curr.currency] || 1), 0);
+  const totalPending = studentInvoices.filter((i) => i.status === "Pending" || i.status === "Overdue" || i.status === "Verifying").reduce((acc, curr) => acc + curr.amount * (EXCHANGE_RATES[curr.currency] || 1), 0);
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    if (!onCreateInvoice) return;
+    setCreateError("");
+    setIsCreatingInvoice(true);
+    const newInv = {
+      id: `INV-${Date.now()}`,
+      studentId: student.id,
+      amount: parseFloat(newAmount),
+      currency: newCurrency,
+      description: newDesc,
+      issueDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+      dueDate: newDueDate,
+      status: "Pending"
+    };
+    const result = await onCreateInvoice(newInv);
+    setIsCreatingInvoice(false);
+    if (!result?.ok) {
+      setCreateError(result?.error || "Failed to create invoice.");
+      return;
+    }
+    setIsCreateOpen(false);
+    setNewAmount("");
+    setNewDesc("");
+    setNewDueDate("");
+    setCreateError("");
+  };
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [detailsInvoice, setDetailsInvoice] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState("card");
+  const [paymentProofFile, setPaymentProofFile] = useState(null);
+  const [paymentError, setPaymentError] = useState("");
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const handlePayClick = (invoice) => {
+    setSelectedInvoice(invoice);
+    setIsPaymentModalOpen(true);
+    setPaymentMethod(canUploadEvidence ? "upload" : "card");
+    setPaymentProofFile(null);
+    setPaymentError("");
+  };
+  const handleOpenDetails = (invoice) => {
+    setDetailsInvoice(invoice);
+    setIsDetailsModalOpen(true);
+  };
+  const handlePaymentSubmit = async () => {
+    if (!onUpdateInvoice || !selectedInvoice) return;
+    setPaymentError("");
+    setIsSubmittingPayment(true);
+    if (canUploadEvidence && paymentMethod === "card") {
+      setPaymentError("Students can only upload payment evidence for verification.");
+      setIsSubmittingPayment(false);
+      return;
+    }
+    if (paymentMethod === "card") {
+      const result = await onUpdateInvoice({
+        ...selectedInvoice,
+        status: "Paid",
+        paymentMethod: "Credit Card",
+        generatedReceiptUrl: `REC-${selectedInvoice.id}.pdf`
+      });
+      if (!result?.ok) {
+        setPaymentError(result?.error || "Failed to complete payment.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+    } else {
+      if (!paymentProofFile) {
+        setPaymentError("Please upload payment proof.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      if (paymentProofFile.size > 10 * 1024 * 1024) {
+        setPaymentError("Proof file must be under 10MB.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_error"));
+        reader.readAsDataURL(paymentProofFile);
+      }).catch(() => "");
+      if (!dataUrl) {
+        setPaymentError("Unable to read payment proof file.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      const uploadResult = await uploadInvoicePaymentProof(selectedInvoice.id, dataUrl, paymentProofFile.name);
+      if (!uploadResult.ok) {
+        setPaymentError(uploadResult.error || "Failed to upload payment proof.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      const updateResult = await onUpdateInvoice(uploadResult.data);
+      if (!updateResult?.ok) {
+        setPaymentError(updateResult?.error || "Payment proof uploaded but status update failed.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+    }
+    setIsSubmittingPayment(false);
+    setIsPaymentModalOpen(false);
+    setSelectedInvoice(null);
+    setPaymentProofFile(null);
+  };
+  const handleApprove = async (invoice) => {
+    if (!onUpdateInvoice) return;
+    await onUpdateInvoice({
+      ...invoice,
+      status: "Paid",
+      generatedReceiptUrl: `REC-${invoice.id}.pdf`
+    });
+  };
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "Paid":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      case "Pending":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Verifying":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+      case "Overdue":
+        return "bg-rose-50 text-rose-700 border-rose-200";
+      default:
+        return "bg-slate-50 text-slate-700 border-slate-200";
+    }
+  };
+  const isStaff = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Counselor";
+  const canAcceptPayment = userRole === "Admin" || userRole === "Manager";
+  const canUploadEvidence = userRole === "Student";
+  return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
+    /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "bg-white p-5 rounded-xl border border-gray-200 shadow-sm", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 mb-2", children: [
+          /* @__PURE__ */ jsx("div", { className: "p-2 bg-indigo-50 text-indigo-600 rounded-lg", children: /* @__PURE__ */ jsx(FileText, { size: 20 }) }),
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-bold text-slate-400 uppercase", children: "Total Invoiced" })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: studentInvoices.length })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "bg-white p-5 rounded-xl border border-gray-200 shadow-sm", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 mb-2", children: [
+          /* @__PURE__ */ jsx("div", { className: "p-2 bg-emerald-50 text-emerald-600 rounded-lg", children: /* @__PURE__ */ jsx(CheckCircle, { size: 20 }) }),
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-bold text-slate-400 uppercase", children: "Total Paid" })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: formatRawLKR(totalPaid) })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "bg-white p-5 rounded-xl border border-gray-200 shadow-sm", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 mb-2", children: [
+          /* @__PURE__ */ jsx("div", { className: "p-2 bg-amber-50 text-amber-600 rounded-lg", children: /* @__PURE__ */ jsx(Clock, { size: 20 }) }),
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-bold text-slate-400 uppercase", children: "Outstanding" })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-amber-600", children: formatRawLKR(totalPending) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
+      /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+        /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 flex items-center gap-2", children: [
+          /* @__PURE__ */ jsx(DollarSign, { size: 18, className: "text-slate-500" }),
+          "Ledger & Payments"
+        ] }),
+        /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-400 flex items-center gap-1", children: [
+          /* @__PURE__ */ jsx(Clock, { size: 10 }),
+          " Rates updated: ",
+          RATE_UPDATED_AT
+        ] })
+      ] }),
+      isStaff && /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: () => setIsCreateOpen(true), children: [
+        /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-2" }),
+        " Create Invoice"
+      ] })
+    ] }),
+    isCreateOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "New Invoice Details" }),
+        /* @__PURE__ */ jsxs("button", { onClick: () => setIsCreateOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
+          /* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }),
+          /* @__PURE__ */ jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: "2", d: "M6 18L18 6M6 6l12 12" }) })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("form", { onSubmit: handleCreateSubmit, className: "grid grid-cols-1 md:grid-cols-2 gap-4", children: [
+        createError ? /* @__PURE__ */ jsx("div", { className: "md:col-span-2 text-xs text-rose-600", children: createError }) : null,
+        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Description" }),
+          /* @__PURE__ */ jsx(
+            "input",
+            {
+              required: true,
+              type: "text",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              placeholder: "e.g. Visa Fee",
+              value: newDesc,
+              onChange: (e) => setNewDesc(e.target.value)
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Amount" }),
+          /* @__PURE__ */ jsx(
+            "input",
+            {
+              required: true,
+              type: "number",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              placeholder: "0.00",
+              value: newAmount,
+              onChange: (e) => setNewAmount(e.target.value)
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Currency" }),
+          /* @__PURE__ */ jsxs(
+            "select",
+            {
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              value: newCurrency,
+              onChange: (e) => setNewCurrency(e.target.value),
+              children: [
+                /* @__PURE__ */ jsx("option", { children: "LKR" }),
+                /* @__PURE__ */ jsx("option", { children: "USD" }),
+                /* @__PURE__ */ jsx("option", { children: "GBP" }),
+                /* @__PURE__ */ jsx("option", { children: "CAD" }),
+                /* @__PURE__ */ jsx("option", { children: "AUD" })
+              ]
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Due Date" }),
+          /* @__PURE__ */ jsx(
+            "input",
+            {
+              required: true,
+              type: "date",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              value: newDueDate,
+              onChange: (e) => setNewDueDate(e.target.value)
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2 flex gap-3 pt-2", children: [
+          /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", className: "flex-1", onClick: () => setIsCreateOpen(false), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, { type: "submit", className: "flex-1", isLoading: isCreatingInvoice, children: "Issue Invoice" })
+        ] })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
+      /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500 font-medium", children: /* @__PURE__ */ jsxs("tr", { children: [
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Description" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Amount" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Status" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-right", children: "Action" })
+      ] }) }),
+      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors cursor-pointer", onClick: () => handleOpenDetails(inv), children: [
+        /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 font-medium text-slate-700", children: [
+          inv.description,
+          inv.createdByName ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-500 mt-0.5", children: [
+            "Created by: ",
+            inv.createdByName
+          ] }) : null,
+          inv.issueDate ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-400 mt-0.5", children: [
+            "Issued: ",
+            inv.issueDate
+          ] }) : null
+        ] }),
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono font-bold text-slate-900", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col", children: [
+          /* @__PURE__ */ jsxs("span", { children: [
+            inv.currency,
+            " ",
+            inv.amount.toLocaleString()
+          ] }),
+          inv.currency !== "LKR" && /* @__PURE__ */ jsxs("span", { className: "text-[10px] text-slate-400 font-normal", children: [
+            "\u2248 ",
+            formatLKR(inv.amount, inv.currency)
+          ] })
+        ] }) }),
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`, children: inv.status }) }),
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: (event) => {
+          event.stopPropagation();
+          handleOpenDetails(inv);
+        }, children: "View More" }) })
+      ] }, inv.id)) })
+    ] }) }),
+    isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Invoice Details" }),
+        /* @__PURE__ */ jsxs("button", { onClick: () => setIsDetailsModalOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
+          /* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }),
+          /* @__PURE__ */ jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: "2", d: "M6 18L18 6M6 6l12 12" }) })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "space-y-3 text-sm", children: [
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Description: " }),
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: detailsInvoice.description })
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Amount: " }),
+          /* @__PURE__ */ jsxs("span", { className: "font-semibold text-slate-800", children: [
+            detailsInvoice.currency,
+            " ",
+            detailsInvoice.amount.toLocaleString()
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Status: " }),
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: detailsInvoice.status })
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Issue Date: " }),
+          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.issueDate || "-" })
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Due Date: " }),
+          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.dueDate || "-" })
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Evidence: " }),
+          detailsInvoice.paymentProofUrl ? /* @__PURE__ */ jsx("a", { href: detailsInvoice.paymentProofUrl, target: "_blank", rel: "noopener noreferrer", className: "text-indigo-600 font-semibold hover:underline", children: detailsInvoice.paymentProofName || "View evidence" }) : /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "Not uploaded" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6", children: [
+        detailsInvoice.paymentProofUrl ? /* @__PURE__ */ jsx("a", { href: detailsInvoice.paymentProofUrl, target: "_blank", rel: "noopener noreferrer", children: /* @__PURE__ */ jsx(Button, { variant: "outline", className: "flex-1", children: "View Evidence" }) }) : null,
+        canUploadEvidence && (detailsInvoice.status === "Pending" || detailsInvoice.status === "Overdue") ? /* @__PURE__ */ jsx(Button, { className: "flex-1", onClick: () => {
+          setIsDetailsModalOpen(false);
+          handlePayClick(detailsInvoice);
+        }, children: "Upload Evidence" }) : null,
+        canAcceptPayment && detailsInvoice.status === "Verifying" ? /* @__PURE__ */ jsx(Button, { className: "flex-1", onClick: async () => {
+          await handleApprove(detailsInvoice);
+          setIsDetailsModalOpen(false);
+        }, children: "Accept Payment" }) : null,
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsDetailsModalOpen(false), children: "Close" })
+      ] })
+    ] }) }),
+    isPaymentModalOpen && selectedInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Process Payment" }),
+        /* @__PURE__ */ jsxs("button", { onClick: () => setIsPaymentModalOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
+          /* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }),
+          /* @__PURE__ */ jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: "2", d: "M6 18L18 6M6 6l12 12" }) })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 uppercase font-bold mb-1", children: "Total Amount" }),
+        /* @__PURE__ */ jsxs("p", { className: "text-2xl font-bold text-slate-900", children: [
+          selectedInvoice.currency,
+          " ",
+          selectedInvoice.amount.toLocaleString()
+        ] }),
+        selectedInvoice.currency !== "LKR" && /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-1", children: [
+          "\u2248 ",
+          formatLKR(selectedInvoice.amount, selectedInvoice.currency)
+        ] }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600 mt-2", children: selectedInvoice.description })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "space-y-4 mb-6", children: [
+        !canUploadEvidence && /* @__PURE__ */ jsxs("label", { className: `flex items-center p-4 border rounded-xl cursor-pointer transition-all ${paymentMethod === "card" ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-gray-200 hover:border-gray-300"}`, children: [
+          /* @__PURE__ */ jsx("input", { type: "radio", name: "payment", className: "sr-only", checked: paymentMethod === "card", onChange: () => setPaymentMethod("card") }),
+          /* @__PURE__ */ jsx("div", { className: `w-5 h-5 rounded-full border mr-3 flex items-center justify-center ${paymentMethod === "card" ? "border-indigo-600" : "border-gray-300"}`, children: paymentMethod === "card" && /* @__PURE__ */ jsx("div", { className: "w-2.5 h-2.5 bg-indigo-600 rounded-full" }) }),
+          /* @__PURE__ */ jsxs("div", { children: [
+            /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-900", children: "Pay by Card" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Secure checkout via Stripe" })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("label", { className: `flex items-center p-4 border rounded-xl cursor-pointer transition-all ${paymentMethod === "upload" ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-gray-200 hover:border-gray-300"}`, children: [
+          /* @__PURE__ */ jsx("input", { type: "radio", name: "payment", className: "sr-only", checked: paymentMethod === "upload", onChange: () => setPaymentMethod("upload") }),
+          /* @__PURE__ */ jsx("div", { className: `w-5 h-5 rounded-full border mr-3 flex items-center justify-center ${paymentMethod === "upload" ? "border-indigo-600" : "border-gray-300"}`, children: paymentMethod === "upload" && /* @__PURE__ */ jsx("div", { className: "w-2.5 h-2.5 bg-indigo-600 rounded-full" }) }),
+          /* @__PURE__ */ jsxs("div", { children: [
+            /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-900", children: "Bank Transfer" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Upload receipt/slip manually" })
+          ] })
+        ] })
+      ] }),
+      paymentMethod === "upload" && /* @__PURE__ */ jsxs("label", { className: "mb-6 border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:bg-slate-50 cursor-pointer transition-colors block", children: [
+        /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf", className: "hidden", onChange: (event) => setPaymentProofFile(event.target.files?.[0] || null) }),
+        /* @__PURE__ */ jsx(Upload, { className: "mx-auto text-slate-400 mb-2", size: 24 }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-600", children: paymentProofFile ? paymentProofFile.name : "Click to upload receipt" }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: "JPG, PNG or PDF (Max 10MB)" })
+      ] }),
+      paymentError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-4", children: paymentError }) : null,
+      /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsPaymentModalOpen(false), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { className: "flex-1 bg-indigo-600 hover:bg-indigo-700 text-white", onClick: handlePaymentSubmit, isLoading: isSubmittingPayment, children: paymentMethod === "card" ? "Pay Now" : "Submit Receipt" })
+      ] })
+    ] }) })
+  ] });
+};
+export {
+  FinanceModule
+};
