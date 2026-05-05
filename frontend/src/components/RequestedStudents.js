@@ -156,7 +156,7 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
     return () => {
       cancelled = true;
     };
-  }, [pipelineRow, userRole, scopeBranch, onAddFromRequest]);
+  }, [pipelineRow, userRole, scopeBranch]);
 
   const closeModal = () => {
     setPipelineRow(null);

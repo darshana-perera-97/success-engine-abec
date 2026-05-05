@@ -1,10 +1,10 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -24,6 +24,7 @@ import { AdminSettings } from "./components/AdminSettings";
 import { RequestedStudents } from "./components/RequestedStudents";
 import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
+import { IntegrationPanel } from "./components/IntegrationPanel";
 import { Bell, X } from "lucide-react";
 import { filterTasksForCounselor } from "./counselorTaskScope";
 import {
@@ -54,6 +55,7 @@ const VIEW_TO_PATH = {
   resume: "/resume",
   university: "/uni-database",
   calendar: "/calendar",
+  integration: "/integration",
   finance: "/finance",
   settings: "/settings",
   "student-detail": "/student-detail",
@@ -97,6 +99,11 @@ function App({ initialView = "dashboard" }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationHistory, setNotificationHistory] = useState([]);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
+  const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
+  const hasStudentsHydratedRef = useRef(false);
+  const hasRequestedStudentsHydratedRef = useRef(false);
+  const requestedStudentsCountRef = useRef(0);
   const addNotification = (title, message, type = "info") => {
     const id = generateId("notif");
     const notification = { id, title, message, type, timestamp: new Date().toISOString() };
@@ -216,8 +223,7 @@ function App({ initialView = "dashboard" }) {
   };
   const currentUser = getCurrentUserObject();
   const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
-  const counselorScopedStudents = (() => {
-    if (currentRole !== "Counselor") return students;
+  const counselorIdentitySet = useMemo(() => {
     const identitySet = /* @__PURE__ */ new Set();
     const addIdentity = (value) => {
       const normalized = normalizeIdentity(value);
@@ -234,8 +240,20 @@ function App({ initialView = "dashboard" }) {
     );
     addIdentity(legacyEmployee?.id);
     addIdentity(legacyEmployee?.name);
-    if (identitySet.size === 0) return [];
-    return students.filter((student) => identitySet.has(normalizeIdentity(student.counselor)));
+    return identitySet;
+  }, [
+    authenticatedUser?.id,
+    authenticatedUser?.email,
+    authenticatedUser?.username,
+    currentUser?.id,
+    currentUser?.email,
+    currentUser?.name,
+    employees
+  ]);
+  const counselorScopedStudents = (() => {
+    if (currentRole !== "Counselor") return students;
+    if (counselorIdentitySet.size === 0) return [];
+    return students.filter((student) => counselorIdentitySet.has(normalizeIdentity(student.counselor)));
   })();
   const managerDataScope = useMemo(() => {
     if (currentRole !== "Manager") {
@@ -407,7 +425,7 @@ function App({ initialView = "dashboard" }) {
       setEmployees(mapped);
     };
     loadEmployees();
-  }, []);
+  }, [currentRole, counselorIdentitySet]);
   useEffect(() => {
     const loadAdminAvatar = async () => {
       const result = await getAccounts();
@@ -418,12 +436,39 @@ function App({ initialView = "dashboard" }) {
     loadAdminAvatar();
   }, []);
   useEffect(() => {
+    hasStudentsHydratedRef.current = false;
+  }, [currentRole, authenticatedUser?.email]);
+  useEffect(() => {
     const loadStudents = async () => {
       const result = await getStudents();
       if (!result.ok) return;
-      setStudents(result.data);
+      setStudents((prev) => {
+        const nextStudents = Array.isArray(result.data) ? result.data : [];
+        if (currentRole === "Counselor" && counselorIdentitySet.size > 0 && hasStudentsHydratedRef.current) {
+          const prevById = new Map(prev.map((student) => [String(student.id || ""), student]));
+          nextStudents.forEach((student) => {
+            const studentId = String(student.id || "").trim();
+            if (!studentId) return;
+            const nextCounselor = normalizeIdentity(student.counselor);
+            if (!counselorIdentitySet.has(nextCounselor)) return;
+            const previous = prevById.get(studentId);
+            if (!previous) return;
+            const previousCounselor = normalizeIdentity(previous.counselor);
+            if (previousCounselor === nextCounselor) return;
+            addNotification(
+              "New Student Assigned",
+              `${student.name || "A student"} has been assigned to you.`,
+              "success"
+            );
+          });
+        }
+        hasStudentsHydratedRef.current = true;
+        return nextStudents;
+      });
     };
     loadStudents();
+    const intervalId = setInterval(loadStudents, 5e3);
+    return () => clearInterval(intervalId);
   }, []);
   useEffect(() => {
     const loadTasks = async () => {
@@ -512,6 +557,67 @@ function App({ initialView = "dashboard" }) {
     };
     loadUnreadCount();
     const intervalId = setInterval(loadUnreadCount, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole, currentUser?.id]);
+  useEffect(() => {
+    let cancelled = false;
+    const canTrackRequestedStudents = currentRole === "Admin" || currentRole === "Manager";
+    if (!canTrackRequestedStudents) {
+      hasRequestedStudentsHydratedRef.current = false;
+      requestedStudentsCountRef.current = 0;
+      setRequestedStudentsCount(0);
+      return;
+    }
+    const loadRequestedStudents = async () => {
+      const params =
+        currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel
+          ? { branch: managerDataScope.branchLabel }
+          : {};
+      const result = await getReqStudents(params);
+      if (!result.ok || cancelled) return;
+      const nextCount = Array.isArray(result.data) ? result.data.length : 0;
+      const previousCount = requestedStudentsCountRef.current;
+      setRequestedStudentsCount(nextCount);
+      if (hasRequestedStudentsHydratedRef.current && nextCount > previousCount) {
+        const delta = nextCount - previousCount;
+        addNotification(
+          "Requested Students",
+          `${delta} new requested student${delta > 1 ? "s are" : " is"} waiting in the table.`,
+          "warning"
+        );
+      }
+      requestedStudentsCountRef.current = nextCount;
+      hasRequestedStudentsHydratedRef.current = true;
+    };
+    loadRequestedStudents();
+    const intervalId = setInterval(loadRequestedStudents, 5e3);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole, managerDataScope.active, managerDataScope.branchLabel]);
+  useEffect(() => {
+    let cancelled = false;
+    const isCounselor = currentRole === "Counselor";
+    const userId = String(currentUser?.id || "").trim();
+    if (!isCounselor || !userId) {
+      setWhatsappConnectionStatus("disconnected");
+      return;
+    }
+    const loadStatus = async () => {
+      const result = await getWhatsappStatus(userId);
+      if (cancelled) return;
+      if (!result.ok) {
+        setWhatsappConnectionStatus("disconnected");
+        return;
+      }
+      setWhatsappConnectionStatus(String(result.data?.status || "disconnected"));
+    };
+    loadStatus();
+    const intervalId = setInterval(loadStatus, 4000);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -1184,6 +1290,9 @@ function App({ initialView = "dashboard" }) {
           onOpenStudent: openEscalationStudent
         });
       }
+      if (currentRole === "Counselor" && currentView === "integration") {
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
+      }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees });
@@ -1314,8 +1423,10 @@ function App({ initialView = "dashboard" }) {
         onUpdateProfileAvatar: handleUpdateProfileAvatar,
         onUpdateProfileContact: handleUpdateProfileContact,
         navMyTasksCount,
+        requestedStudentsBadge: (currentRole === "Admin" || currentRole === "Manager") && requestedStudentsCount > 0 ? String(requestedStudentsCount) : "",
         pipelineEscalationBadge: pipelineEscalationNavBadge,
         counselorStageEscalationBadge: counselorStageNavBadge,
+        whatsappConnectionStatus,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);

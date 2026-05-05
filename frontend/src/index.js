@@ -20,6 +20,7 @@ const ROUTE_VIEWS = [
   { path: "/uni-database", view: "university" },
   { path: "/university", view: "university" },
   { path: "/calendar", view: "calendar" },
+  { path: "/integration", view: "integration" },
   { path: "/finance", view: "finance" },
   { path: "/settings", view: "settings" }
 ];

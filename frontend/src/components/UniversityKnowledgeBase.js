@@ -31,7 +31,7 @@ const UniversityKnowledgeBase = ({ currentRole, students = [] }) => {
     qualificationMinValue: "",
     ranking: "500"
   });
-  const canManagePrograms = currentRole === "Manager";
+  const canManagePrograms = currentRole === "Manager" || currentRole === "Admin";
   useEffect(() => {
     const loadPrograms = async () => {
       setIsLoadingPrograms(true);

@@ -738,3 +738,77 @@ export async function sendChatMessage(payload) {
     };
   }
 }
+
+export async function getWhatsappStatus(userId) {
+  try {
+    const query = new URLSearchParams({ userId: String(userId || "").trim() });
+    const res = await fetch(`${API_BASE}/api/whatsapp/status?${query.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load WhatsApp status." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function connectWhatsapp(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/whatsapp/connect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to start WhatsApp connection." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function disconnectWhatsapp(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/whatsapp/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to disconnect WhatsApp." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function getWhatsappIncoming(userId) {
+  try {
+    const query = new URLSearchParams({ userId: String(userId || "").trim() });
+    const res = await fetch(`${API_BASE}/api/whatsapp/incoming?${query.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load incoming WhatsApp messages." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Is the backend running on port 3334?"
+    };
+  }
+}

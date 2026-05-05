@@ -6,6 +6,7 @@ import { BarChart, Bar, ResponsiveContainer, XAxis } from "recharts";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getChats } from "../authApi";
 import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
+import { normalizePipelineStatus } from "../pipeline";
 const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask }) => {
   const [chatMessages, setChatMessages] = useState([]);
   useEffect(() => {
@@ -64,6 +65,17 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
   const chatScore = inboundFromStudents > 0 ? Math.min(100, counselorReplies / Math.max(1, inboundFromStudents) * 100) : 100;
   const baseActivity = 0.4 * taskCompletionPct + 0.3 * chatScore + 0.3 * reviewScore;
   const performanceScore = Math.max(0, Math.min(100, Math.round(baseActivity / 100 * slaScore)));
+  const pipelineTotals = myStudents.reduce((acc, student) => {
+    const stage = normalizePipelineStatus(student?.status);
+    if (stage === "Inquiry") acc.inquiries += 1;
+    if (stage === "Documentation") acc.docsPending += 1;
+    if (stage === "Visa") acc.visa += 1;
+    return acc;
+  }, { inquiries: 0, docsPending: 0, visa: 0 });
+  const pipelineDenominator = Math.max(1, myStudents.length);
+  const inquiriesPct = Math.max(8, Math.round(pipelineTotals.inquiries / pipelineDenominator * 100));
+  const docsPendingPct = Math.max(8, Math.round(pipelineTotals.docsPending / pipelineDenominator * 100));
+  const visaPct = Math.max(8, Math.round(pipelineTotals.visa / pipelineDenominator * 100));
   const activityData = [
     { name: "Mon", calls: 4 },
     { name: "Tue", calls: 8 },
@@ -216,23 +228,23 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
                 /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "New Inquiries" }),
-                /* @__PURE__ */ jsx("span", { className: "font-bold", children: "12" })
+                  /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.inquiries })
               ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-indigo-500 h-1.5 rounded-full", style: { width: "60%" } }) })
+              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-indigo-500 h-1.5 rounded-full", style: { width: `${inquiriesPct}%` } }) })
             ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
                 /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Docs Pending" }),
-                /* @__PURE__ */ jsx("span", { className: "font-bold", children: "5" })
+                /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.docsPending })
               ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-amber-500 h-1.5 rounded-full", style: { width: "30%" } }) })
+              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-amber-500 h-1.5 rounded-full", style: { width: `${docsPendingPct}%` } }) })
             ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
                 /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Visa" }),
-                /* @__PURE__ */ jsx("span", { className: "font-bold", children: "3" })
+                /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.visa })
               ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-emerald-500 h-1.5 rounded-full", style: { width: "20%" } }) })
+              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-emerald-500 h-1.5 rounded-full", style: { width: `${visaPct}%` } }) })
             ] })
           ] })
         ] }),

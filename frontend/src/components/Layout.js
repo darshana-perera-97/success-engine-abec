@@ -20,8 +20,10 @@ import {
   X,
   Contact,
   ClipboardList,
-  AlertTriangle
+  AlertTriangle,
+  Plug
 } from "lucide-react";
+import { FaWhatsapp } from "react-icons/fa";
 const Layout = ({
   children: pageBody,
   activeView,
@@ -40,8 +42,10 @@ const Layout = ({
   onUpdateProfileAvatar,
   onUpdateProfileContact,
   navMyTasksCount,
+  requestedStudentsBadge = "",
   pipelineEscalationBadge = "",
-  counselorStageEscalationBadge = ""
+  counselorStageEscalationBadge = "",
+  whatsappConnectionStatus = "disconnected"
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -140,6 +144,7 @@ const Layout = ({
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
@@ -162,7 +167,7 @@ const Layout = ({
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
-          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }) },
+          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
@@ -184,7 +189,7 @@ const Layout = ({
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
-          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }) },
+          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge },
@@ -193,6 +198,26 @@ const Layout = ({
     }
   };
   const navItems = getNavItems();
+  const whatsappDotClass =
+    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
+      ? "bg-emerald-500"
+      : whatsappConnectionStatus === "awaiting_qr_scan" || whatsappConnectionStatus === "connecting"
+        ? "bg-amber-500"
+        : "bg-rose-500";
+  const whatsappStatusLabel =
+    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
+      ? "WhatsApp connected"
+      : whatsappConnectionStatus === "awaiting_qr_scan"
+        ? "WhatsApp awaiting QR scan"
+        : whatsappConnectionStatus === "connecting"
+          ? "WhatsApp connecting"
+          : "WhatsApp disconnected";
+  const whatsappIconClass =
+    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
+      ? "text-emerald-500"
+      : whatsappConnectionStatus === "awaiting_qr_scan" || whatsappConnectionStatus === "connecting"
+        ? "text-amber-500"
+        : "text-rose-500";
   return /* @__PURE__ */ jsxs("div", { className: "flex h-screen bg-[#F9FAFB] text-slate-900 font-sans overflow-hidden", children: [
     isMobileMenuOpen && /* @__PURE__ */ jsx(
       "div",
@@ -372,6 +397,10 @@ const Layout = ({
               ] }, n.id)) })
             ] })
           ] }),
+          currentRole === "Counselor" ? /* @__PURE__ */ jsxs("div", { className: "relative inline-flex items-center justify-center w-9 h-9 rounded-full bg-white border border-slate-200", title: whatsappStatusLabel, children: [
+            /* @__PURE__ */ jsx(FaWhatsapp, { size: 16, className: whatsappIconClass }),
+            /* @__PURE__ */ jsx("span", { className: `absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${whatsappDotClass}` })
+          ] }) : null,
           /* @__PURE__ */ jsx("div", { className: "relative", children: /* @__PURE__ */ jsxs("button", { className: "flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border border-transparent", onClick: handleProfileOpen, children: [
               /* @__PURE__ */ jsx("div", { className: "h-8 w-8 rounded-full border-2 border-white shadow-sm ring-1 ring-gray-100 overflow-hidden flex items-center justify-center bg-white", children: /* @__PURE__ */ jsx(
                 "img",
@@ -393,7 +422,11 @@ const Layout = ({
             ] }) })
         ] })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) })
+      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) }),
+      /* @__PURE__ */ jsxs("footer", { className: "border-t border-gray-200 bg-white px-4 lg:px-8 py-3", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `© ${new Date().getFullYear()} ABEC Premier. All rights reserved.` }),
+        /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-400 mt-1", children: "Built for student admissions, counseling, and operations workflows." })
+      ] })
     ] }),
     isProfileOpen ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain bg-slate-900/50 backdrop-blur-sm flex items-start justify-center py-8 px-4", onClick: handleProfileClose, children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
       /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50", children: [

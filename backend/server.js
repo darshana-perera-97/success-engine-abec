@@ -4,6 +4,8 @@ const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const { Client, LocalAuth } = require("whatsapp-web.js");
+const QRCode = require("qrcode");
 
 const PORT = parseInt(process.env.PORT || "", 10) || 3334;
 const USERS_FILE = path.join(__dirname, "data", "users.json");
@@ -19,6 +21,8 @@ const APPOINTMENTS_FILE = path.join(__dirname, "data", "appointments.json");
 const INVOICES_FILE = path.join(__dirname, "data", "invoices.json");
 const TASKS_FILE = path.join(__dirname, "data", "tasks.json");
 const REQ_STUDENTS_FILE = path.join(__dirname, "data", "req-students.json");
+const WHATSAPP_CONNECTIONS_DIR = path.join(__dirname, "data", "whatsapp-connections");
+const WHATSAPP_INCOMING_FILE = path.join(__dirname, "data", "whatsapp-incoming.json");
 const CHAT_FILES_DIR = path.join(__dirname, "data", "chats");
 const ASSETS_DIR = path.join(__dirname, "data", "assets");
 const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
@@ -47,6 +51,18 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor", "Admin", "Country Coordinator"]);
 const DEFAULT_COUNTRY_NAMES = ["UK", "USA", "Canada", "Australia", "New Zealand"];
+const COUNSELOR_ROLES = new Set(["Counselor", "Consultor"]);
+const whatsappSessions = new Map();
+const WHATSAPP_RECONNECT_INTERVAL_MS = 2 * 60 * 60 * 1000;
+
+function normalizeRoleKey(role) {
+  return String(role || "").trim().toLowerCase();
+}
+
+function isCounselorRole(role) {
+  const normalized = normalizeRoleKey(role);
+  return normalized === "counselor" || normalized === "consultor" || normalized === "counsellor";
+}
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -320,6 +336,24 @@ async function readTasks() {
     if (error && error.code === "ENOENT") return [];
     throw error;
   }
+}
+
+async function readWhatsappIncoming() {
+  try {
+    const raw = await fs.readFile(WHATSAPP_INCOMING_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function appendWhatsappIncoming(entry) {
+  const list = await readWhatsappIncoming();
+  list.push(entry);
+  await fs.mkdir(path.dirname(WHATSAPP_INCOMING_FILE), { recursive: true });
+  await fs.writeFile(WHATSAPP_INCOMING_FILE, JSON.stringify(list, null, 2));
 }
 
 async function writeTasks(tasks) {
@@ -612,6 +646,383 @@ function splitAdminRecord(users) {
   };
 }
 
+function sanitizeUserIdForPath(userId) {
+  return String(userId || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 80);
+}
+
+async function resolveCounselor(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  const users = await readUsers();
+  const matched = users.find((user) => String(user.id || "") === id);
+  if (!matched) return null;
+  if (!isCounselorRole(matched.role)) return null;
+  return matched;
+}
+
+function ensureWhatsappState(userId) {
+  const key = String(userId || "").trim();
+  const existing = whatsappSessions.get(key);
+  if (existing) return existing;
+  const created = {
+    status: "disconnected",
+    qrCodeDataUrl: "",
+    error: "",
+    connectedAt: "",
+    whatsappName: "",
+    whatsappNumber: "",
+    whatsappProfilePicUrl: "",
+    lastUpdatedAt: new Date().toISOString(),
+    client: null,
+  };
+  whatsappSessions.set(key, created);
+  return created;
+}
+
+function snapshotWhatsappState(userId) {
+  const state = ensureWhatsappState(userId);
+  return {
+    userId: String(userId || "").trim(),
+    status: state.status,
+    qrCodeDataUrl: state.qrCodeDataUrl,
+    error: state.error,
+    connectedAt: state.connectedAt,
+    whatsappName: state.whatsappName,
+    whatsappNumber: state.whatsappNumber,
+    whatsappProfilePicUrl: state.whatsappProfilePicUrl,
+    lastUpdatedAt: state.lastUpdatedAt,
+  };
+}
+
+async function startWhatsappSession(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) throw new Error("Counselor user id is required.");
+  const state = ensureWhatsappState(cleanUserId);
+  if (state.client && (state.status === "connecting" || state.status === "connected")) {
+    return snapshotWhatsappState(cleanUserId);
+  }
+  if (state.client) {
+    try {
+      await state.client.destroy();
+    } catch {
+      // Ignore cleanup failure and allow creating a fresh session.
+    }
+  }
+  await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
+  const client = new Client({
+    authStrategy: new LocalAuth({
+      clientId: sanitizeUserIdForPath(cleanUserId),
+      dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
+    }),
+    puppeteer: {
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
+  });
+  state.client = client;
+  state.status = "connecting";
+  state.qrCodeDataUrl = "";
+  state.error = "";
+  state.connectedAt = "";
+  state.whatsappName = "";
+  state.whatsappNumber = "";
+  state.whatsappProfilePicUrl = "";
+  state.lastUpdatedAt = new Date().toISOString();
+
+  client.on("qr", async (qr) => {
+    try {
+      state.qrCodeDataUrl = await QRCode.toDataURL(qr);
+      state.status = "awaiting_qr_scan";
+      state.error = "";
+      state.lastUpdatedAt = new Date().toISOString();
+    } catch {
+      state.error = "Failed to render WhatsApp QR code.";
+      state.lastUpdatedAt = new Date().toISOString();
+    }
+  });
+
+  client.on("authenticated", () => {
+    state.status = "authenticated";
+    state.error = "";
+    state.lastUpdatedAt = new Date().toISOString();
+  });
+
+  client.on("ready", async () => {
+    const info = client.info || {};
+    const widSerialized =
+      (info.wid && (info.wid._serialized || info.wid.user)) || "";
+    const numberFromWid =
+      (info.wid && info.wid.user) || String(widSerialized).split("@")[0] || "";
+    let profilePicUrl = "";
+    if (widSerialized) {
+      try {
+        profilePicUrl = String((await client.getProfilePicUrl(widSerialized)) || "");
+      } catch {
+        profilePicUrl = "";
+      }
+    }
+    state.status = "connected";
+    state.qrCodeDataUrl = "";
+    state.error = "";
+    state.connectedAt = new Date().toISOString();
+    state.whatsappName = String(info.pushname || info.platform || "WhatsApp User");
+    state.whatsappNumber = String(numberFromWid || "");
+    state.whatsappProfilePicUrl = profilePicUrl;
+    state.lastUpdatedAt = new Date().toISOString();
+  });
+
+  client.on("auth_failure", (message) => {
+    state.status = "auth_failed";
+    state.error = String(message || "WhatsApp authentication failed.");
+    state.lastUpdatedAt = new Date().toISOString();
+  });
+
+  client.on("disconnected", () => {
+    state.status = "disconnected";
+    state.qrCodeDataUrl = "";
+    state.connectedAt = "";
+    state.lastUpdatedAt = new Date().toISOString();
+  });
+
+  const handleIncomingMessage = async (message) => {
+    try {
+      await persistIncomingWhatsappMessage({ counselorId: cleanUserId, message });
+    } catch (error) {
+      console.error("Failed to persist incoming WhatsApp message:", error);
+    }
+  };
+
+  // "message" is enough for inbound messages; keeping both causes duplicate logs.
+  client.on("message", handleIncomingMessage);
+
+  client
+    .initialize()
+    .catch((error) => {
+      state.status = "error";
+      state.error = String(error?.message || "Failed to initialize WhatsApp client.");
+      state.lastUpdatedAt = new Date().toISOString();
+    });
+
+  return snapshotWhatsappState(cleanUserId);
+}
+
+async function stopWhatsappSession(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) return snapshotWhatsappState(cleanUserId);
+  const state = ensureWhatsappState(cleanUserId);
+  if (state.client) {
+    try {
+      await state.client.destroy();
+    } catch {
+      // Ignore cleanup failure and clear in-memory state anyway.
+    }
+  }
+  state.client = null;
+  state.status = "disconnected";
+  state.qrCodeDataUrl = "";
+  state.error = "";
+  state.connectedAt = "";
+  state.whatsappName = "";
+  state.whatsappNumber = "";
+  state.whatsappProfilePicUrl = "";
+  state.lastUpdatedAt = new Date().toISOString();
+  const userConnectionDir = path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId));
+  try {
+    const entries = await fs.readdir(userConnectionDir);
+    await Promise.all(
+      entries.map((entry) =>
+        fs.rm(path.join(userConnectionDir, entry), {
+          recursive: true,
+          force: true,
+        })
+      )
+    );
+  } catch (error) {
+    if (!(error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+  return snapshotWhatsappState(cleanUserId);
+}
+
+async function userHasSavedWhatsappSession(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) return false;
+  const userConnectionDir = path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId));
+  try {
+    const entries = await fs.readdir(userConnectionDir);
+    return entries.length > 0;
+  } catch (error) {
+    if (error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function initializeWhatsappSessionsOnStartup() {
+  try {
+    const users = await readUsers();
+    const counselors = users.filter((user) => isCounselorRole(user.role));
+    for (const counselor of counselors) {
+      const counselorId = String(counselor.id || "").trim();
+      if (!counselorId) continue;
+      const hasSavedSession = await userHasSavedWhatsappSession(counselorId);
+      if (!hasSavedSession) continue;
+      await startWhatsappSession(counselorId);
+    }
+  } catch (error) {
+    console.error("Failed to initialize WhatsApp sessions on startup:", error);
+  }
+}
+
+async function reconnectActiveWhatsappSessions() {
+  for (const [userId, state] of whatsappSessions.entries()) {
+    const status = String(state?.status || "");
+    if (status !== "connected" && status !== "authenticated" && status !== "awaiting_qr_scan" && status !== "connecting") {
+      continue;
+    }
+    try {
+      await startWhatsappSession(userId);
+    } catch (error) {
+      console.error(`Failed to reconnect WhatsApp session for ${userId}:`, error);
+    }
+  }
+}
+
+function toWhatsAppChatId(phone) {
+  const digitsOnly = String(phone || "").replace(/[^\d]/g, "");
+  if (!digitsOnly) return "";
+  return `${digitsOnly}@c.us`;
+}
+
+function normalizePhoneDigits(phone) {
+  return String(phone || "").replace(/[^\d]/g, "");
+}
+
+async function resolveWhatsappThreadIdFromMessage(message) {
+  try {
+    if (!message || typeof message.getContact !== "function") return "";
+    const contact = await message.getContact();
+    const serialized = String(contact?.id?._serialized || "").trim();
+    return serialized;
+  } catch {
+    return "";
+  }
+}
+
+async function findStudentByWhatsappFrom(chatId) {
+  const rawFrom = String(chatId || "");
+  const numberPart = rawFrom.split("@")[0] || "";
+  const incomingDigits = normalizePhoneDigits(numberPart);
+  if (!incomingDigits) return null;
+  const students = await readStudemts();
+  return (
+    students.find((student) => {
+      const studentDigits = normalizePhoneDigits(student.phone || "");
+      if (!studentDigits) return false;
+      return incomingDigits.endsWith(studentDigits) || studentDigits.endsWith(incomingDigits);
+    }) || null
+  );
+}
+
+async function persistIncomingWhatsappMessage({ counselorId, message }) {
+  const incomingId =
+    String(message?.id?._serialized || "").trim() ||
+    (() => {
+      const from = String(message?.from || "").trim();
+      const timestamp = String(message?.timestamp || "").trim();
+      const body = String(message?.body || "").trim();
+      if (!from || !timestamp) return "";
+      return `fallback:${from}:${timestamp}:${body.slice(0, 50)}`;
+    })();
+  if (!incomingId) return;
+  if (!message || message.fromMe === true) return;
+  const from = String(message.from || "");
+  const resolvedThreadId = await resolveWhatsappThreadIdFromMessage(message);
+  const fromChatId = resolvedThreadId || from;
+  if (!from || from.includes("@g.us") || from === "status@broadcast") return;
+  const numberPart = fromChatId.split("@")[0] || "";
+  const incomingContactNumber = normalizePhoneDigits(numberPart);
+  const student = await findStudentByWhatsappFrom(fromChatId);
+  const content = String(message.body || "").trim();
+  if (!content) return;
+  await appendWhatsappIncoming({
+    id: `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+    counselorId: String(counselorId || ""),
+    from: fromChatId,
+    contactNumber: incomingContactNumber || numberPart || "",
+    message: content,
+    timestamp: message.timestamp
+      ? new Date(Number(message.timestamp) * 1000).toISOString()
+      : new Date().toISOString(),
+    isGroup: false,
+    mappedStudentId: String(student?.id || ""),
+  });
+  if (!student || !student.id) return;
+  const chats = await readChats();
+  if (chats.some((chat) => String(chat.whatsappMessageId || "") === incomingId)) {
+    return;
+  }
+  const chat = {
+    id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
+    senderId: String(student.id),
+    receiverId: String(counselorId),
+    content,
+    timestamp: message.timestamp
+      ? new Date(Number(message.timestamp) * 1000).toISOString()
+      : new Date().toISOString(),
+    read: false,
+    platform: "whatsapp",
+    attachment: null,
+    whatsappMessageId: incomingId,
+    whatsappDelivery: {
+      attempted: true,
+      status: "received",
+      channel: "whatsapp",
+      chatId: fromChatId,
+    },
+  };
+  await writeChats([...chats, chat]);
+}
+
+async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content }) {
+  const sender = await resolveCounselor(senderId);
+  if (!sender) {
+    return { attempted: false, status: "skipped", reason: "Sender is not a counselor account." };
+  }
+  const studentId = String(receiverId || "").trim();
+  if (!studentId) {
+    return { attempted: false, status: "skipped", reason: "Student receiver id is missing." };
+  }
+  const students = await readStudemts();
+  const student = students.find((item) => String(item.id || "") === studentId);
+  if (!student) {
+    return { attempted: false, status: "skipped", reason: "Student record not found." };
+  }
+  const phone = String(student.phone || "").trim();
+  const chatId = toWhatsAppChatId(phone);
+  const toChatId = chatId;
+  if (!chatId) {
+    return { attempted: false, status: "skipped", reason: "Student phone number is missing." };
+  }
+  const senderState = ensureWhatsappState(sender.id);
+  if (!senderState.client || (senderState.status !== "connected" && senderState.status !== "authenticated")) {
+    return { attempted: true, status: "failed", reason: "Counselor WhatsApp is not connected." };
+  }
+  try {
+    await senderState.client.sendMessage(chatId, String(content || ""));
+    return { attempted: true, status: "sent", channel: "whatsapp", chatId };
+  } catch (error) {
+    return {
+      attempted: true,
+      status: "failed",
+      reason: String(error?.message || "Failed to send message via WhatsApp."),
+    };
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
@@ -679,6 +1090,91 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 401, { ok: false, error: "Invalid email or password." });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/whatsapp/status") {
+    try {
+      const userId = String(url.searchParams.get("userId") || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return;
+      }
+      const counselor = await resolveCounselor(userId);
+      if (!counselor) {
+        sendJson(res, 404, { ok: false, error: "Counselor account not found." });
+        return;
+      }
+      sendJson(res, 200, { ok: true, data: snapshotWhatsappState(counselor.id) });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load WhatsApp status." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/whatsapp/incoming") {
+    try {
+      const userId = String(url.searchParams.get("userId") || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return;
+      }
+      const counselor = await resolveCounselor(userId);
+      if (!counselor) {
+        sendJson(res, 404, { ok: false, error: "Counselor account not found." });
+        return;
+      }
+      const all = await readWhatsappIncoming();
+      const data = all
+        .filter((row) => String(row.counselorId || "") === counselor.id && row.isGroup !== true)
+        .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+        .slice(0, 100);
+      sendJson(res, 200, { ok: true, data });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load incoming WhatsApp messages." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/whatsapp/connect") {
+    try {
+      const body = await parseBody(req);
+      const userId = String(body.userId || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return;
+      }
+      const counselor = await resolveCounselor(userId);
+      if (!counselor) {
+        sendJson(res, 404, { ok: false, error: "Counselor account not found." });
+        return;
+      }
+      const data = await startWhatsappSession(counselor.id);
+      sendJson(res, 200, { ok: true, data });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to start WhatsApp connection." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/whatsapp/disconnect") {
+    try {
+      const body = await parseBody(req);
+      const userId = String(body.userId || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return;
+      }
+      const counselor = await resolveCounselor(userId);
+      if (!counselor) {
+        sendJson(res, 404, { ok: false, error: "Counselor account not found." });
+        return;
+      }
+      const data = await stopWhatsappSession(counselor.id);
+      sendJson(res, 200, { ok: true, data });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to disconnect WhatsApp." });
     }
     return;
   }
@@ -841,7 +1337,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const counselor = users[counselorIndex];
-      if (String(counselor.role || "") !== "Consultor" && String(counselor.role || "") !== "Counselor") {
+      if (!isCounselorRole(counselor.role)) {
         sendJson(res, 400, { ok: false, error: "Team Lead can only be assigned to counselor accounts." });
         return;
       }
@@ -1776,6 +2272,14 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: "senderId, receiverId and message content or attachment are required." });
         return;
       }
+      let whatsappDelivery = null;
+      if (content && !attachment) {
+        whatsappDelivery = await deliverCounselorMessageToStudentWhatsapp({
+          senderId,
+          receiverId,
+          content,
+        });
+      }
       const chats = await readChats();
       const chat = {
         id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
@@ -1786,6 +2290,7 @@ const server = http.createServer(async (req, res) => {
         read: false,
         platform: platform || "portal",
         attachment,
+        whatsappDelivery,
       };
       await writeChats([...chats, chat]);
       sendJson(res, 201, {
@@ -2389,6 +2894,12 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { ok: false, error: "Not found." });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Backend listening at http://localhost:${PORT}`);
+  await initializeWhatsappSessionsOnStartup();
+  setInterval(() => {
+    reconnectActiveWhatsappSessions().catch((error) => {
+      console.error("Periodic WhatsApp reconnect failed:", error);
+    });
+  }, WHATSAPP_RECONNECT_INTERVAL_MS);
 });

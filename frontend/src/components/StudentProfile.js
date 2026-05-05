@@ -29,7 +29,21 @@ import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
 import { VisaPilot } from "./VisaPilot";
 import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
-const KeyDetails = ({ student }) => {
+function normalizeBranchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+function branchesMatch(a, b) {
+  const x = normalizeBranchValue(a);
+  const y = normalizeBranchValue(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  return x.includes(y) || y.includes(x);
+}
+function isCounselorRole(roleValue) {
+  const role = String(roleValue || "").trim().toLowerCase();
+  return role.includes("counselor") || role.includes("counsellor") || role.includes("consultor");
+}
+const KeyDetails = ({ student, canEditContact = false, onEditContact }) => {
   const details = [
     { icon: MapPin, label: "Branch", value: student.branch },
     { icon: DollarSign, label: "Annual Budget", value: `$${student.budget}` },
@@ -37,7 +51,13 @@ const KeyDetails = ({ student }) => {
     { icon: Phone, label: "Contact", value: student.phone }
   ];
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
-    /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900 mb-4", children: "Key Details" }),
+    /* @__PURE__ */ jsxs("div", { className: "mb-4 flex items-center justify-between gap-2", children: [
+      /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Key Details" }),
+      canEditContact && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px]", onClick: onEditContact, children: [
+        /* @__PURE__ */ jsx(Pencil, { size: 13, strokeWidth: 1.75, className: "mr-1.5" }),
+        "Edit Contact"
+      ] })
+    ] }),
     /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
       /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
       /* @__PURE__ */ jsxs("div", { children: [
@@ -310,6 +330,11 @@ const StudentProfile = ({
     counselorId: "",
     taskActions: {}
   });
+  const [contactDialog, setContactDialog] = useState({
+    open: false,
+    email: "",
+    phone: ""
+  });
   useEffect(() => {
     setLocalStudent(student);
   }, [student]);
@@ -317,18 +342,23 @@ const StudentProfile = ({
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
   const remainingStudentTasks = tasks.filter((task) => task.student_id === localStudent.id && task.status !== "Completed");
+  const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
+  const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
   const availableBranchCounselors = employees.filter((employee) => {
-    const role = String(employee?.role || employee?.position || "").toLowerCase();
-    if (!role.includes("counselor")) return false;
-    if (!localStudent.branch) return true;
-    return String(employee?.branch || "").trim() === String(localStudent.branch).trim();
+    if (!isCounselorRole(employee?.role || employee?.position)) return false;
+    const studentBranch = localStudent.branch || localStudent.nearestOffice || "";
+    if (!studentBranch) return true;
+    const employeeBranch = employee?.branch || employee?.location || employee?.office || "";
+    return branchesMatch(employeeBranch, studentBranch);
   });
+  const reassignableBranchCounselors = availableBranchCounselors.filter(
+    (employee) => String(employee?.id || "").trim() !== String(currentCounselorId || "").trim()
+  );
   const assignedCounselorName = (() => {
     const match = employees.find((employee) => employee.id === localStudent.counselor);
     return match?.name || match?.username || localStudent.counselorName || "";
   })();
-  const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
-  const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
+  const canManagerEditContact = userRole === "Manager";
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {
@@ -363,6 +393,45 @@ const StudentProfile = ({
       counselorId: localStudent.counselor || "",
       taskActions: defaultTaskActions
     });
+  };
+  const openContactDialog = () => {
+    if (!canManagerEditContact) return;
+    setContactDialog({
+      open: true,
+      email: String(localStudent.email || ""),
+      phone: String(localStudent.phone || "")
+    });
+  };
+  const closeContactDialog = () => {
+    setContactDialog((prev) => ({ ...prev, open: false }));
+  };
+  const handleSaveContactDetails = () => {
+    if (!canManagerEditContact) return;
+    const nextEmail = String(contactDialog.email || "").trim();
+    const nextPhone = String(contactDialog.phone || "").trim();
+    const prevEmail = String(localStudent.email || "").trim();
+    const prevPhone = String(localStudent.phone || "").trim();
+    if (!nextEmail || !nextPhone) return;
+    if (nextEmail === prevEmail && nextPhone === prevPhone) {
+      closeContactDialog();
+      return;
+    }
+    const updated = {
+      ...localStudent,
+      email: nextEmail,
+      phone: nextPhone
+    };
+    handleUpdateStudentLocal(updated);
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "updated contact details",
+      target: `${localStudent.name} (${nextEmail}, ${nextPhone})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    closeContactDialog();
   };
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
@@ -706,11 +775,31 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName })
           ] })
         ] }),
+        contactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Edit contact details" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeContactDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Email" }),
+              /* @__PURE__ */ jsx("input", { type: "email", value: contactDialog.email, onChange: (e) => setContactDialog((prev) => ({ ...prev, email: e.target.value })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "student@email.com" })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Phone" }),
+              /* @__PURE__ */ jsx("input", { type: "text", value: contactDialog.phone, onChange: (e) => setContactDialog((prev) => ({ ...prev, phone: e.target.value })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "+8801XXXXXXXXX" })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeContactDialog, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: !String(contactDialog.email || "").trim() || !String(contactDialog.phone || "").trim(), children: "Save changes" })
+          ] })
+        ] }) }),
         advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
           /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50/80 flex items-center justify-between", children: [
             /* @__PURE__ */ jsx("h3", { className: "text-sm font-bold text-slate-900", children: "Move to next stage" }),
@@ -752,12 +841,12 @@ const StudentProfile = ({
                 "Current counselor will continue"
               ] }),
               /* @__PURE__ */ jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-700", children: [
-                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-mode", checked: advanceDialog.counselorMode === "another", onChange: () => setAdvanceDialog((prev) => ({ ...prev, counselorMode: "another" })) }),
+                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-mode", checked: advanceDialog.counselorMode === "another", onChange: () => setAdvanceDialog((prev) => ({ ...prev, counselorMode: "another", counselorId: "" })) }),
                 "Assign another counselor from current branch"
               ] }),
               advanceDialog.counselorMode === "another" && /* @__PURE__ */ jsx("select", { value: advanceDialog.counselorId, onChange: (e) => setAdvanceDialog((prev) => ({ ...prev, counselorId: e.target.value })), className: "mt-1 w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", children: [
                 /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
-                ...availableBranchCounselors.map((employee) => /* @__PURE__ */ jsx("option", { value: employee.id, children: employee.name || employee.username || employee.email || employee.id }, employee.id))
+                ...reassignableBranchCounselors.map((employee) => /* @__PURE__ */ jsx("option", { value: employee.id, children: employee.name || employee.username || employee.email || employee.id }, employee.id))
               ] })
             ] })
           ] }),

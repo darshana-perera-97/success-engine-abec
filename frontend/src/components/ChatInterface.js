@@ -1,7 +1,7 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } from "lucide-react";
-import { getAccounts, getChats } from "../authApi";
+import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
 import { Button } from "./Button";
 const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [] }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
@@ -12,6 +12,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [liveMessages, setLiveMessages] = useState(messages || []);
   const [accountNameById, setAccountNameById] = useState({});
   const [isChatsLoading, setIsChatsLoading] = useState(true);
+  const [whatsappSyncStatus, setWhatsappSyncStatus] = useState("disconnected");
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const lastSignatureRef = useRef("");
@@ -116,6 +117,51 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   };
   const activeMessages = getActiveMessages();
   const activeUser = conversationList.find((u) => u.id === activeConversationId);
+  const getRelevantCounselorId = () => {
+    if (currentRole === "Counselor") {
+      return String(currentUser?.id || "").trim();
+    }
+    if (currentRole === "Student") {
+      return String(currentUser?.counselor || "").trim();
+    }
+    const selectedStudent = students.find((s) => String(s.id || "") === String(activeConversationId || ""));
+    return String(selectedStudent?.counselor || "").trim();
+  };
+  const relevantCounselorId = getRelevantCounselorId();
+  useEffect(() => {
+    let stop = false;
+    if (!relevantCounselorId) {
+      setWhatsappSyncStatus("disconnected");
+      return;
+    }
+    const run = async () => {
+      const result = await getWhatsappStatus(relevantCounselorId);
+      if (stop) return;
+      if (!result.ok) {
+        setWhatsappSyncStatus("disconnected");
+        return;
+      }
+      setWhatsappSyncStatus(String(result.data?.status || "disconnected"));
+    };
+    run();
+    const timer = setInterval(run, 4000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [relevantCounselorId]);
+  const whatsappSyncLabel =
+    whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated"
+      ? "WhatsApp Connected"
+      : whatsappSyncStatus === "connecting" || whatsappSyncStatus === "awaiting_qr_scan"
+        ? "WhatsApp Connecting"
+        : "WhatsApp Disconnected";
+  const whatsappSyncDotClass =
+    whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated"
+      ? "bg-emerald-500"
+      : whatsappSyncStatus === "connecting" || whatsappSyncStatus === "awaiting_qr_scan"
+        ? "bg-amber-500"
+        : "bg-rose-500";
   const getSenderName = (senderId) => {
     const normalizedSenderId = String(senderId || "").trim();
     if (!normalizedSenderId) return "Unknown";
@@ -262,8 +308,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-gray-100", children: [
-          /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-green-500" }),
-          "WhatsApp Synced"
+          /* @__PURE__ */ jsx("div", { className: `w-2 h-2 rounded-full ${whatsappSyncDotClass}` }),
+          whatsappSyncLabel
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50", children: [
@@ -296,7 +342,6 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               ] })
             ] }) : null,
             /* @__PURE__ */ jsxs("div", { className: `absolute bottom-1 right-2 flex items-center gap-1 text-[10px] ${isMe ? "text-indigo-700/80" : "text-slate-400"}`, children: [
-              msg.platform === "whatsapp" && !isMe && /* @__PURE__ */ jsx("span", { className: "mr-1 font-bold text-green-700 bg-green-100 px-1 rounded", children: "WA" }),
               new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               isMe && (msg.read ? /* @__PURE__ */ jsx(CheckCheck, { size: 12, className: "text-[#53BDEB]", title: "Seen" }) : /* @__PURE__ */ jsx(Check, { size: 12, className: "text-slate-400", title: "Sent" }))
             ] })

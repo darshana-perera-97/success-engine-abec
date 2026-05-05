@@ -34,6 +34,7 @@ import {
   AreaChart,
   Area
 } from "recharts";
+const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
 const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "" }) => {
   const [selectedCounselorId, setSelectedCounselorId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -115,8 +116,24 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     }).map((account) => {
       const linkedEmployee = employees.find((e) => String(e.email || "").toLowerCase() === String(account.email || "").toLowerCase());
       const counselorId = linkedEmployee?.id || account.id;
-      const myStudents = students.filter((s) => s.counselor === counselorId);
-      const myTasks = tasks.filter((t) => t.assigned_to.includes(counselorId));
+      const counselorIdentities = new Set();
+      [
+        counselorId,
+        account.id,
+        account.email,
+        account.username,
+        linkedEmployee?.id,
+        linkedEmployee?.email,
+        linkedEmployee?.name
+      ].forEach((identity) => {
+        const normalized = normalizeIdentity(identity);
+        if (normalized) counselorIdentities.add(normalized);
+      });
+      const myStudents = students.filter((student) => counselorIdentities.has(normalizeIdentity(student.counselor)));
+      const myTasks = tasks.filter((task) => {
+        const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+        return assignedTo.some((assignee) => counselorIdentities.has(normalizeIdentity(assignee)));
+      });
       const activeStudents = myStudents.length;
       const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
@@ -214,7 +231,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx("div", { className: "flex gap-2", children: /* @__PURE__ */ jsx(Button, { onClick: () => setIsTransferModalOpen(true), children: "Transfer" }) })
+        /* @__PURE__ */ jsx("div", { className: "flex gap-2", children: /* @__PURE__ */ jsx(Button, { disabled: true, onClick: () => setIsTransferModalOpen(true), children: "Transfer" }) })
       ] }),
       isTransferModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100", children: [
@@ -583,11 +600,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200", children: c.avatar ? /* @__PURE__ */ jsx("img", { src: c.avatar, alt: c.name, className: "w-full h-full object-cover rounded-full", referrerPolicy: "no-referrer" }) : c.name.charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-900", children: c.name }),
-            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
-              c.role,
-              " \u2022 Team Lead: ",
-              c.teamLeadName || "Unassigned"
-            ] })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: c.role })
           ] })
         ] }) }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden md:table-cell text-slate-600", children: c.branch }),
