@@ -4,8 +4,9 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
 import { createBranch, getAccounts, getBranches, getStudents } from "../authApi";
+import { normalizePipelineStatus } from "../pipeline";
 
-const BranchAnalytics = () => {
+const BranchAnalytics = ({ scopeBranch = null }) => {
   const formatRevenueNumber = (value) => {
     const formatted = formatRawLKR(value);
     return formatted.replace(/^LKR\s*/, "");
@@ -20,6 +21,13 @@ const BranchAnalytics = () => {
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
+
+  const branchesForMetrics = useMemo(() => {
+    if (!scopeKey) return branches;
+    return branches.filter((b) => String(b.location || "").trim().toLowerCase() === scopeKey);
+  }, [branches, scopeKey]);
+
   useEffect(() => {
     const loadBranches = async () => {
       const result = await getBranches();
@@ -33,11 +41,16 @@ const BranchAnalytics = () => {
     const loadManagers = async () => {
       const result = await getAccounts();
       if (!result.ok) return;
-      const managers = result.data.filter((acc) => acc.role === "Manager" && acc.branch);
+      let managers = result.data.filter((acc) => acc.role === "Manager" && acc.branch);
+      if (scopeKey) {
+        managers = managers.filter(
+          (acc) => String(acc.branch || "").trim().toLowerCase() === scopeKey
+        );
+      }
       setManagerAccounts(managers);
     };
     loadManagers();
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     const loadStudents = async () => {
@@ -48,19 +61,17 @@ const BranchAnalytics = () => {
     loadStudents();
   }, []);
 
-  const successfulStatuses = useMemo(
-    () => new Set(["Uni Application", "Offer Received", "Visa Pilot"]),
-    []
-  );
-
   const branchData = useMemo(
     () =>
-      branches.map((branch) => {
+      branchesForMetrics.map((branch) => {
         const branchStudents = students.filter(
           (student) => String(student.branch || "").trim().toLowerCase() === String(branch.location || "").trim().toLowerCase()
         );
         const studentsCount = branchStudents.length;
-        const conversionsCount = branchStudents.filter((student) => successfulStatuses.has(String(student.status || ""))).length;
+        const conversionsCount = branchStudents.filter((student) => {
+          const x = normalizePipelineStatus(student.status);
+          return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
+        }).length;
         const liveRevenue = branchStudents.reduce((sum, student) => {
           const numericBudget = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
           return Number.isFinite(numericBudget) ? sum + numericBudget : sum;
@@ -74,7 +85,7 @@ const BranchAnalytics = () => {
           conversionRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0
         };
       }),
-    [branches, students, successfulStatuses]
+    [branchesForMetrics, students]
   );
   const totalRevenue = useMemo(
     () => branchData.reduce((sum, branch) => sum + branch.revenue, 0),
@@ -136,15 +147,21 @@ const BranchAnalytics = () => {
         <div className="flex justify-between items-end">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-[#0F172A]">Detailed Branch Analytics</h1>
-            <p className="text-sm text-slate-500 mt-1">Deep dive into regional performance metrics from live student and branch records.</p>
+            <p className="text-sm text-slate-500 mt-1">
+              {scopeBranch
+                ? `Metrics for your branch only (${scopeBranch}).`
+                : "Deep dive into regional performance metrics from live student and branch records."}
+            </p>
             <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-1">
               <Clock size={10} /> Rates updated: {RATE_UPDATED_AT}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={() => setIsAddOpen(true)}>
-              <Plus size={16} className="mr-2" /> Add Branch
-            </Button>
+            {!scopeBranch ? (
+              <Button onClick={() => setIsAddOpen(true)}>
+                <Plus size={16} className="mr-2" /> Add Branch
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={handleExportReport} isLoading={isExporting}>
               <Download size={16} className="mr-2" /> Export Report
             </Button>
@@ -259,8 +276,8 @@ const BranchAnalytics = () => {
       </div>
 
       {isAddOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-[110] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto">
             <div className="p-5 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between">
               <div>
                 <h3 className="font-semibold text-lg text-slate-900">Add Branch</h3>

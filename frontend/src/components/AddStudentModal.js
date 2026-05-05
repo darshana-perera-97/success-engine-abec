@@ -14,7 +14,7 @@ const AddStudentModal = ({ isOpen, onClose, onSubmit, onNavigate, userRole, curr
     ielts: "",
     gpa: "",
     password: "",
-    status: "New Inquiry",
+    status: "Inquiry",
     budget: "",
     priority: "Medium",
     counselor: ""
@@ -70,15 +70,15 @@ const AddStudentModal = ({ isOpen, onClose, onSubmit, onNavigate, userRole, curr
     }
     onClose();
   };
-  return /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 scale-100 animate-in zoom-in-95 duration-200 m-4 flex flex-col max-h-[90vh]", children: [
-    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50", children: [
+  return /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 scale-100 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] my-auto", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 flex-shrink-0", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-[#0F172A]", children: "Onboard New Student" }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Enter initial details to start the success engine." })
       ] }),
       /* @__PURE__ */ jsx("button", { onClick: onClose, className: "text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-md", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
     ] }),
-    /* @__PURE__ */ jsxs("form", { onSubmit: handleSubmit, className: "p-6 space-y-6 overflow-y-auto", children: [
+    /* @__PURE__ */ jsxs("form", { onSubmit: handleSubmit, className: "p-6 space-y-6 overflow-y-auto flex-1 min-h-0", children: [
       formError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: formError }) : null,
       /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
         /* @__PURE__ */ jsx("h4", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-gray-100 pb-2 mb-3", children: "Personal Details" }),

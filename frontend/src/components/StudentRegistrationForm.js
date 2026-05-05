@@ -1,0 +1,306 @@
+import { useEffect, useState } from "react";
+import { getBranches, getCountries, submitStudentRegistrationRequest } from "../authApi";
+import { Button } from "./Button";
+
+const EDUCATION_LEVELS = [
+  "High school",
+  "Foundation / pathway",
+  "Diploma",
+  "Bachelor's degree",
+  "Master's degree",
+  "Doctorate / PhD",
+  "Professional qualification",
+  "Other"
+];
+
+export function StudentRegistrationForm() {
+  const [countries, setCountries] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [branchesReady, setBranchesReady] = useState(false);
+  const [countriesError, setCountriesError] = useState("");
+  const [branchesError, setBranchesError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    countryToVisit: "",
+    city: "",
+    nearestOffice: "",
+    currentEducationLevel: "",
+    intendedProgram: "",
+    message: ""
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
+      if (cancelled) return;
+      if (!countriesRes.ok) {
+        setCountriesError(countriesRes.error || "Could not load countries.");
+      } else {
+        setCountries(countriesRes.data);
+        setForm((prev) => ({
+          ...prev,
+          countryToVisit: prev.countryToVisit || countriesRes.data[0] || ""
+        }));
+      }
+      if (!branchesRes.ok) {
+        setBranchesError(branchesRes.error || "Could not load offices.");
+        setBranches([]);
+      } else {
+        const locations = (branchesRes.data || [])
+          .map((b) => String(b?.location || "").trim())
+          .filter(Boolean);
+        setBranches(locations);
+        setForm((prev) => ({
+          ...prev,
+          nearestOffice: prev.nearestOffice || locations[0] || ""
+        }));
+      }
+      setBranchesReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const update = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setFormError("");
+    setIsSaving(true);
+    const result = await submitStudentRegistrationRequest({
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      countryToVisit: form.countryToVisit.trim(),
+      city: form.city.trim(),
+      nearestOffice: form.nearestOffice.trim(),
+      currentEducationLevel: form.currentEducationLevel,
+      intendedProgram: form.intendedProgram.trim(),
+      message: form.message.trim()
+    });
+    setIsSaving(false);
+    if (!result.ok) {
+      setFormError(result.error || "Something went wrong.");
+      return;
+    }
+    setSubmitted(true);
+  };
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm text-center">
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Thank you</h1>
+          <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+            We have received your details. Our team will contact you using the email or phone number you provided.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 py-10 px-4">
+      <div className="mx-auto w-full max-w-lg">
+        <header className="mb-8 text-center">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Student interest form</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Share your basic details so we can follow up about studying abroad.
+          </p>
+        </header>
+
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm space-y-5"
+        >
+          {countriesError ? (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              {countriesError} You can still try submitting if the list loaded partially.
+            </p>
+          ) : null}
+          {branchesError ? (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              {branchesError} You can still try submitting if the list loaded partially.
+            </p>
+          ) : null}
+          {formError ? (
+            <p className="text-sm text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">{formError}</p>
+          ) : null}
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Full name <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              autoComplete="name"
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.name}
+              onChange={(e) => update("name", e.target.value)}
+              placeholder="As on your passport or ID"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Email <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.email}
+              onChange={(e) => update("email", e.target.value)}
+              placeholder="you@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Contact number <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="tel"
+              required
+              autoComplete="tel"
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.phone}
+              onChange={(e) => update("phone", e.target.value)}
+              placeholder="Include country code if applicable"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Country you wish to visit <span className="text-rose-500">*</span>
+            </label>
+            <select
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.countryToVisit}
+              onChange={(e) => update("countryToVisit", e.target.value)}
+            >
+              {countries.length === 0 ? (
+                <option value="">Loading destinations…</option>
+              ) : (
+                countries.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))
+              )}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">Options are managed in the platform admin settings.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Nearest office <span className="text-rose-500">*</span>
+            </label>
+            <select
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.nearestOffice}
+              onChange={(e) => update("nearestOffice", e.target.value)}
+            >
+              {!branchesReady ? (
+                <option value="">Loading offices…</option>
+              ) : branches.length === 0 ? (
+                <option value="">No offices available yet</option>
+              ) : (
+                branches.map((loc) => (
+                  <option key={loc} value={loc}>
+                    {loc}
+                  </option>
+                ))
+              )}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">Choose the branch closest to you. Options come from branch settings.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              City / location
+            </label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.city}
+              onChange={(e) => update("city", e.target.value)}
+              placeholder="Where you currently live"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Current education level <span className="text-rose-500">*</span>
+            </label>
+            <select
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.currentEducationLevel}
+              onChange={(e) => update("currentEducationLevel", e.target.value)}
+            >
+              <option value="">Select…</option>
+              {EDUCATION_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Intended program of study <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.intendedProgram}
+              onChange={(e) => update("intendedProgram", e.target.value)}
+              placeholder="e.g. BSc Computer Science, MBA, A-levels"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Additional message
+            </label>
+            <textarea
+              rows={4}
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-y min-h-[96px]"
+              value={form.message}
+              onChange={(e) => update("message", e.target.value)}
+              placeholder="Goals, timeline, questions…"
+            />
+          </div>
+
+          <div className="pt-2">
+            <Button
+              type="submit"
+              className="w-full"
+              size="lg"
+              isLoading={isSaving}
+              disabled={countries.length === 0 || !branchesReady || branches.length === 0}
+            >
+              Submit
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

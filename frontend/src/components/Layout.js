@@ -18,10 +18,12 @@ import {
   UserCog,
   Menu,
   X,
-  Contact
+  Contact,
+  ClipboardList,
+  AlertTriangle
 } from "lucide-react";
 const Layout = ({
-  children,
+  children: pageBody,
   activeView,
   onNavigate,
   currentRole,
@@ -36,7 +38,10 @@ const Layout = ({
   userPhone,
   userBranch,
   onUpdateProfileAvatar,
-  onUpdateProfileContact
+  onUpdateProfileContact,
+  navMyTasksCount,
+  pipelineEscalationBadge = "",
+  counselorStageEscalationBadge = ""
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -135,9 +140,20 @@ const Layout = ({
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
-          { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: "5" }
+          { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
+        ];
+      case "Country Coordinator":
+        return [
+          { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
+          { id: "students", label: "Country students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
+          { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
+          { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
+          { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
         ];
       case "Manager":
         return [
@@ -146,9 +162,10 @@ const Layout = ({
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
-          { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: "3" }
+          { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
         ];
       case "Team Lead":
         return [
@@ -158,7 +175,7 @@ const Layout = ({
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
-          { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: "3" }
+          { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
         ];
       case "Admin":
       default:
@@ -167,8 +184,10 @@ const Layout = ({
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }) },
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
+          { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge },
           { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) }
         ];
     }
@@ -183,7 +202,7 @@ const Layout = ({
       }
     ),
     /* @__PURE__ */ jsxs("aside", { className: `
-        fixed inset-y-0 left-0 z-[70] w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out lg:hidden flex flex-col justify-between
+        fixed inset-y-0 left-0 z-[70] w-64 max-h-screen overflow-y-auto overscroll-contain bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out lg:hidden flex flex-col justify-between
         ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
       `, children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -374,9 +393,9 @@ const Layout = ({
             ] }) })
         ] })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children }) })
+      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) })
     ] }),
-    isProfileOpen ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[120] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4", onClick: handleProfileClose, children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+    isProfileOpen ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain bg-slate-900/50 backdrop-blur-sm flex items-start justify-center py-8 px-4", onClick: handleProfileClose, children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
       /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50", children: [
         /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "My Profile" }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "View your account details and update profile photo." })

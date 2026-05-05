@@ -1,12 +1,13 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { STUDENTS, EMPLOYEES } from "../constants";
 import { formatLKR } from "../utils";
 import { Download, Calendar, Banknote } from "lucide-react";
 import { Button } from "./Button";
-const IncentiveCalculator = () => {
-  const counselors = EMPLOYEES.filter((e) => e.role.includes("Counsel") || e.role.includes("Team Lead"));
+const IncentiveCalculator = ({ students = [], employees = [] }) => {
+  const counselors = employees.filter((e) => e.role.includes("Counsel") || e.role.includes("Team Lead"));
   const incentiveData = counselors.map((agent) => {
-    const successfulVisas = STUDENTS.filter((s) => s.counselor === agent.id && s.status === "Visa Pilot");
+    const successfulVisas = students.filter(
+      (s) => s.counselor === agent.id && (s.status === "Visa" || s.status === "Visa Pilot")
+    );
     const flatCommissions = successfulVisas.length * 150;
     const volumeBonus = successfulVisas.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 2e-3, 0);
     const totalPayout = flatCommissions + volumeBonus;
@@ -31,7 +32,7 @@ const IncentiveCalculator = () => {
           /* @__PURE__ */ jsx(Banknote, { size: 20, className: "text-emerald-600" }),
           "Incentive & Commission Calculator"
         ] }),
-        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: 'Automated payout calculation based on "Visa Pilot" status.' })
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: 'Automated payout calculation based on "Visa" stage completion.' })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-6", children: [
         /* @__PURE__ */ jsxs("div", { className: "text-right hidden sm:block", children: [

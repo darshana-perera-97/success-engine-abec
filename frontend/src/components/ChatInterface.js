@@ -1,10 +1,9 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } from "lucide-react";
-import { STUDENTS, EMPLOYEES } from "../constants";
 import { getAccounts, getChats } from "../authApi";
 import { Button } from "./Button";
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = STUDENTS }) => {
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [] }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -36,7 +35,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   useEffect(() => {
     let cancelled = false;
     const loadChats = async () => {
-      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
+      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
       const result = await getChats(shouldLoadAll ? "" : currentUser?.id);
       if (cancelled) return;
       setIsChatsLoading(false);
@@ -59,7 +58,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       const student = currentUser;
       const counselorId = String(student?.counselor || "").trim();
       if (!counselorId) return [];
-      const counselor = EMPLOYEES.find((e) => String(e.id || "").trim() === counselorId);
+      const counselor = employees.find((e) => String(e.id || "").trim() === counselorId);
       return [
         {
           id: counselorId,
@@ -86,7 +85,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   useEffect(() => {
     if (selectedConversationId) return;
     if (!conversationList.length || !liveMessages.length) return;
-    if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin") return;
+    if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin" && currentRole !== "Country Coordinator") return;
     const studentIdsWithMessages = /* @__PURE__ */ new Set(
       liveMessages.flatMap((m) => [String(m.senderId || ""), String(m.receiverId || "")])
     );
@@ -103,8 +102,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (!activeConversationId) return [];
     const otherUserId = activeConversationId;
     const myId = currentUser.id;
-    if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin") {
-      const selectedStudent = students.find((s) => s.id === otherUserId) || STUDENTS.find((s) => s.id === otherUserId);
+    if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") {
+      const selectedStudent = students.find((s) => s.id === otherUserId);
       if (!selectedStudent) return [];
       return liveMessages.filter(
         (m) => m.senderId === selectedStudent.id || m.receiverId === selectedStudent.id
@@ -126,9 +125,9 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (accountNameById[normalizedSenderId]) {
       return accountNameById[normalizedSenderId];
     }
-    const matchedStudent = students.find((s) => String(s.id || "").trim() === normalizedSenderId) || STUDENTS.find((s) => String(s.id || "").trim() === normalizedSenderId);
+    const matchedStudent = students.find((s) => String(s.id || "").trim() === normalizedSenderId);
     if (matchedStudent?.name) return matchedStudent.name;
-    const matchedEmployee = EMPLOYEES.find((e) => String(e.id || "").trim() === normalizedSenderId);
+    const matchedEmployee = employees.find((e) => String(e.id || "").trim() === normalizedSenderId);
     if (matchedEmployee?.name) return matchedEmployee.name;
     return normalizedSenderId;
   };
@@ -136,7 +135,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     const normalizedId = String(counselorId || "").trim();
     if (!normalizedId) return "Unassigned";
     if (accountNameById[normalizedId]) return accountNameById[normalizedId];
-    const matchedEmployee = EMPLOYEES.find((e) => String(e.id || "").trim() === normalizedId);
+    const matchedEmployee = employees.find((e) => String(e.id || "").trim() === normalizedId);
     if (matchedEmployee?.name) return matchedEmployee.name;
     return normalizedId;
   };
@@ -192,7 +191,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       });
     }
   };
-  const isGhostMode = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
+  const isGhostMode = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
   return /* @__PURE__ */ jsxs("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex overflow-hidden animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-200 bg-white", children: [
@@ -279,7 +278,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         ] }) : activeMessages.map((msg) => {
           let isMe = false;
           if (isGhostMode) {
-            const selectedStudent = students.find((s) => s.id === activeConversationId) || STUDENTS.find((s) => s.id === activeConversationId);
+            const selectedStudent = students.find((s) => s.id === activeConversationId);
             const counselorId = String(selectedStudent?.counselor || "");
             isMe = counselorId ? msg.senderId === counselorId : msg.senderId !== activeConversationId;
           } else {

@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Trophy, Medal, TrendingUp, Star, Crown } from "lucide-react";
-import { STUDENTS, EMPLOYEES } from "../constants";
-const LeaderboardWidget = ({ students = STUDENTS, employees = EMPLOYEES, currentUserId = "", currentUserEmail = "" }) => {
+import { normalizePipelineStatus } from "../pipeline";
+const LeaderboardWidget = ({ students = [], employees = [], currentUserId = "", currentUserEmail = "" }) => {
   const counselors = employees.filter((employee) => {
     const role = String(employee.role || "").toLowerCase();
     return role === "counselor" || role === "consultor";
@@ -11,12 +11,13 @@ const LeaderboardWidget = ({ students = STUDENTS, employees = EMPLOYEES, current
     let score = 0;
     let visas = 0;
     myStudents.forEach((s) => {
-      if (s.status === "Visa Pilot") {
+      const x = normalizePipelineStatus(s.status);
+      if (x === "Visa" || s.status === "Visa Pilot") {
         score += 50;
         visas++;
-      } else if (s.status === "Offer Received") score += 10;
-      else if (s.status === "Uni Application") score += 5;
-      else if (s.status === "Documentation") score += 2;
+      } else if (x === "Interview training" || s.status === "Offer Received") score += 10;
+      else if (x === "Application" || s.status === "Uni Application") score += 5;
+      else if (x === "Documentation") score += 2;
     });
     return {
       ...counselor,

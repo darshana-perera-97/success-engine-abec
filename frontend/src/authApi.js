@@ -1,6 +1,6 @@
 const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL
   ? process.env.REACT_APP_API_URL
-  : "http://localhost:3333";
+  : "http://localhost:3334";
 
 export async function loginAdmin(email, password) {
   try {
@@ -21,7 +21,7 @@ export async function loginAdmin(email, password) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach login server. Is the backend running on port 3333?"
+      error: "Cannot reach login server. Is the backend running on port 3334?"
     };
   }
 }
@@ -37,7 +37,7 @@ export async function getAccounts() {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -57,7 +57,7 @@ export async function createAccount(payload) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -77,7 +77,7 @@ export async function updateCounselorTeamLead(accountId, teamLeadId) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -97,7 +97,7 @@ export async function updateAdminAvatar(avatar) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -117,7 +117,7 @@ export async function updateAccountAvatar(email, avatar) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -137,7 +137,7 @@ export async function updateAccountProfileContact(currentEmail, email, phone) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach account server. Is the backend running on port 3333?"
+      error: "Cannot reach account server. Is the backend running on port 3334?"
     };
   }
 }
@@ -155,7 +155,7 @@ export async function updateStudentAvatar(studentId, avatar) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -172,7 +172,7 @@ export async function uploadStudentCv(studentId, dataUrl, fileName) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -189,7 +189,7 @@ export async function uploadStudentDocument(studentId, { dataUrl, fileName, docT
     }
     return { ok: true, data: data.data, document: data.document || null };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -202,7 +202,7 @@ export async function getBranches() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach branch server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach branch server. Is the backend running on port 3334?" };
   }
 }
 
@@ -219,7 +219,94 @@ export async function createBranch(location) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach branch server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach branch server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function getCountries() {
+  try {
+    const res = await fetch(`${API_BASE}/api/countries`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load countries." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach country server. Is the backend running on port 3334?" };
+  }
+}
+
+/** Admin / Manager: interest-form submissions (optional branch filter for managers). */
+export async function getReqStudents(params = {}) {
+  try {
+    const branch = String(params.branch || "").trim();
+    const query = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+    const res = await fetch(`${API_BASE}/api/req-students${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load requested students." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+/** Remove one interest-form row from backend/data/req-students.json (e.g. after onboarding to pipeline). */
+export async function deleteReqStudent(requestId) {
+  const id = String(requestId || "").trim();
+  if (!id) {
+    return { ok: false, error: "Request id is required." };
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/req-students/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to remove request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+/** Public inquiry form — no login. Appends to backend/data/req-students.json */
+export async function submitStudentRegistrationRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/student-registration`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Submission failed." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach the server. Check your connection or try again later."
+    };
+  }
+}
+
+export async function createCountry(name) {
+  try {
+    const res = await fetch(`${API_BASE}/api/countries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to add country." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach country server. Is the backend running on port 3334?" };
   }
 }
 
@@ -232,7 +319,7 @@ export async function getMeetingSettings() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach meeting settings server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach meeting settings server. Is the backend running on port 3334?" };
   }
 }
 
@@ -249,7 +336,7 @@ export async function updateMeetingSettings(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach meeting settings server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach meeting settings server. Is the backend running on port 3334?" };
   }
 }
 
@@ -266,7 +353,7 @@ export async function getBookings(params = {}) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3334?" };
   }
 }
 
@@ -283,7 +370,7 @@ export async function createBooking(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3334?" };
   }
 }
 
@@ -298,7 +385,7 @@ export async function deleteBooking(bookingId) {
     }
     return { ok: true, data: data.data || null };
   } catch {
-    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach bookings server. Is the backend running on port 3334?" };
   }
 }
 
@@ -311,7 +398,7 @@ export async function getAppointments() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3334?" };
   }
 }
 
@@ -328,7 +415,7 @@ export async function createAppointment(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3334?" };
   }
 }
 
@@ -341,7 +428,7 @@ export async function getActivities() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach activity server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach activity server. Is the backend running on port 3334?" };
   }
 }
 
@@ -358,7 +445,7 @@ export async function createActivity(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach activity server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach activity server. Is the backend running on port 3334?" };
   }
 }
 
@@ -375,7 +462,7 @@ export async function updateAppointment(appointmentId, payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach appointments server. Is the backend running on port 3334?" };
   }
 }
 
@@ -388,7 +475,7 @@ export async function getInvoices() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
   }
 }
 
@@ -401,7 +488,7 @@ export async function getTasks() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3334?" };
   }
 }
 
@@ -418,7 +505,7 @@ export async function createTask(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3334?" };
   }
 }
 
@@ -435,7 +522,7 @@ export async function updateTask(taskId, payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach task server. Is the backend running on port 3334?" };
   }
 }
 
@@ -452,7 +539,7 @@ export async function createInvoice(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
   }
 }
 
@@ -469,7 +556,7 @@ export async function updateInvoice(appointmentId, payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
   }
 }
 
@@ -486,7 +573,7 @@ export async function uploadInvoicePaymentProof(invoiceId, dataUrl, fileName) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
   }
 }
 
@@ -499,7 +586,7 @@ export async function getStudents() {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -516,7 +603,7 @@ export async function createStudent(payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -533,7 +620,7 @@ export async function updateStudent(studentId, payload) {
     }
     return { ok: true, data: data.data };
   } catch {
-    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3333?" };
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }
 }
 
@@ -549,7 +636,7 @@ export async function getUniversityPrograms(options = {}) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach university data server. Is the backend running on port 3333?"
+      error: "Cannot reach university data server. Is the backend running on port 3334?"
     };
   }
 }
@@ -569,7 +656,7 @@ export async function createUniversityProgram(payload) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach university data server. Is the backend running on port 3333?"
+      error: "Cannot reach university data server. Is the backend running on port 3334?"
     };
   }
 }
@@ -589,7 +676,7 @@ export async function updateUniversityProgramVisibility(programId, isHidden) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach university data server. Is the backend running on port 3333?"
+      error: "Cannot reach university data server. Is the backend running on port 3334?"
     };
   }
 }
@@ -607,7 +694,7 @@ export async function deleteUniversityProgram(programId) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach university data server. Is the backend running on port 3333?"
+      error: "Cannot reach university data server. Is the backend running on port 3334?"
     };
   }
 }
@@ -627,7 +714,7 @@ export async function getChats(userId, options = {}) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach chat server. Is the backend running on port 3333?"
+      error: "Cannot reach chat server. Is the backend running on port 3334?"
     };
   }
 }
@@ -647,7 +734,7 @@ export async function sendChatMessage(payload) {
   } catch {
     return {
       ok: false,
-      error: "Cannot reach chat server. Is the backend running on port 3333?"
+      error: "Cannot reach chat server. Is the backend running on port 3334?"
     };
   }
 }

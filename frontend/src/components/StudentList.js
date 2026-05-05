@@ -1,6 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
-import { EMPLOYEES } from "../constants";
 import { getAccounts } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2 } from "lucide-react";
 import { Button } from "./Button";
@@ -108,31 +107,29 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onNaviga
   };
   const getStatusColor = (status) => {
     switch (status) {
+      case "Inquiry":
       case "New Inquiry":
         return "bg-slate-100 text-slate-700 border-gray-200";
+      case "Application":
       case "Counseling":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-      case "Documentation":
-        return "bg-purple-50 text-purple-700 border-purple-200";
       case "Uni Application":
-        return "bg-indigo-50 text-indigo-700 border-indigo-200";
+        return "bg-blue-50 text-blue-700 border-blue-200";
+      case "Interview training":
       case "Offer Received":
         return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Documentation":
+        return "bg-purple-50 text-purple-700 border-purple-200";
+      case "Visa":
       case "Visa Pilot":
         return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      case "Enrolled":
+        return "bg-teal-50 text-teal-800 border-teal-200";
       default:
         return "bg-gray-50 text-gray-700 border-gray-200";
     }
   };
   const counselorsById = useMemo(() => {
     const map = new Map();
-    EMPLOYEES.forEach((employee) => {
-      map.set(String(employee.id || "").trim(), {
-        id: employee.id,
-        name: employee.name || employee.email || employee.id,
-        avatar: employee.avatar || "",
-      });
-    });
     counselorOptions.forEach((counselor) => {
       const id = String(counselor.id || "").trim();
       if (!id) return;
@@ -292,7 +289,7 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onNaviga
         counselorOptions
       }
     ),
-    assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+    assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 bg-slate-50", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Assign Counselor" }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [

@@ -1,13 +1,12 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
-import { TASKS, STUDENTS } from "../constants";
 import { Clock, AlertCircle, Plus, Lock, Upload, CheckCircle, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor } from "../counselorTaskScope";
 const TaskManager = ({
   userRole = "Admin",
-  tasks = TASKS,
+  tasks = [],
   student,
   onUpdateStudent,
   onAddActivity,
@@ -19,7 +18,7 @@ const TaskManager = ({
   employees = []
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const studentLookup = (monitoredStudents && monitoredStudents.length > 0 ? monitoredStudents : STUDENTS).reduce((acc, studentItem) => {
+  const studentLookup = (monitoredStudents || []).reduce((acc, studentItem) => {
     acc[String(studentItem?.id || "").trim()] = studentItem;
     return acc;
   }, {});
@@ -30,6 +29,10 @@ const TaskManager = ({
     }
     if (userRole === "Counselor") {
       return filterTasksForCounselor(tasks, currentUser, monitoredStudents);
+    }
+    if (userRole === "Country Coordinator") {
+      const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
+      return (tasks || []).filter((task) => ids.has(String(task.student_id || task.studentId || "").trim()));
     }
     if (userRole === "Student") {
       return tasks.filter((task) => task.student_id === student?.id && !task.isPrivate);
@@ -120,7 +123,7 @@ const TaskManager = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: userRole === "Student" ? 3 : 5, className: "px-6 py-10 text-center text-slate-500", children: "No tasks found." }) }) : studentTasks.map((task) => {
-          const studentContext = studentLookup[String(task.student_id || "").trim()] || STUDENTS.find((s) => s.id === task.student_id);
+          const studentContext = studentLookup[String(task.student_id || "").trim()] || null;
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";
           const isTaskCompleted = task.status === "Completed";
           let docStatus = "none";
@@ -141,7 +144,7 @@ const TaskManager = ({
                 task.isBlocking && !isTaskCompleted && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-rose-600 font-bold uppercase tracking-wide", children: "Required" })
               ] })
             ] }) }),
-            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: "font-medium", children: studentContext?.name }) }),
+            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: "font-medium", children: studentContext?.name || task.student_id || "—" }) }),
             userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("div", { className: "flex -space-x-2", children: task.assigned_to.map((assignee, i) => /* @__PURE__ */ jsx("div", { className: "h-8 w-8 rounded-full bg-indigo-100 border-2 border-white flex items-center justify-center text-xs font-bold text-indigo-700 shadow-sm", title: assignee, children: assignee.substring(0, 2) }, i)) }) }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getPriorityColor(task.priority)}`, children: task.priority }) }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: userRole === "Student" ? isTaskCompleted ? /* @__PURE__ */ jsxs("span", { className: "flex items-center text-xs font-bold text-emerald-600", children: [
@@ -204,7 +207,7 @@ const TaskManager = ({
         userRole,
         currentUser,
         student,
-        students: monitoredStudents && monitoredStudents.length > 0 ? monitoredStudents : STUDENTS,
+        students: monitoredStudents || [],
         employees
       }
     )

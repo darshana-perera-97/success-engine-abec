@@ -18,21 +18,17 @@ import {
   PlusCircle,
   Clock,
   Download,
-  Eye
+  Eye,
+  Pencil,
+  Trash2,
+  X
 } from "lucide-react";
 import { DocumentManager } from "./DocumentManager";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
 import { VisaPilot } from "./VisaPilot";
-const PIPELINE_STEPS = [
-  "New Inquiry",
-  "Counseling",
-  "Documentation",
-  "Uni Application",
-  "Offer Received",
-  "Visa Pilot"
-];
+import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
 const KeyDetails = ({ student }) => {
   const details = [
     { icon: MapPin, label: "Branch", value: student.branch },
@@ -81,66 +77,172 @@ const StudentTasksPanel = ({ student, tasks = [], userRole }) => {
     ] }, task.id)) })
   ] });
 };
-const SpecializedNotes = ({ student, onAddActivity }) => {
-  const [note, setNote] = useState("");
-  const [notes, setNotes] = useState([]);
-  const handleAddNote = () => {
-    if (!note.trim()) return;
-    const newNote = {
-      id: `N-${Date.now()}`,
-      text: note,
-      date: (/* @__PURE__ */ new Date()).toLocaleDateString(),
-      author: "You"
-      // In real app, current user
-    };
-    setNotes([newNote, ...notes]);
-    setNote("");
-    if (onAddActivity) {
-      onAddActivity({
-        role: "Counselor",
-        action: "added specialized note",
-        target: student.name,
-        type: "system",
-        studentName: student.name,
-        studentId: student.id
-      });
-    }
+const SpecializedNotes = ({ student, onUpdateStudent, currentUser, authenticatedUser, userRole }) => {
+  const [draft, setDraft] = useState("");
+  const [dialog, setDialog] = useState(null);
+  const authorLabel = String(currentUser?.name || currentUser?.username || authenticatedUser?.username || authenticatedUser?.email || "Staff").trim() || "Staff";
+  const notes = Array.isArray(student?.specializedNotes) ? student.specializedNotes : [];
+  const persistNotes = (next) => {
+    onUpdateStudent?.({ ...student, specializedNotes: next });
   };
+  const handleAddNote = () => {
+    const text = draft.trim();
+    if (!text) return;
+    const newNote = {
+      id: `sn-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+      text,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      author: authorLabel,
+      authorId: currentUser?.id ? String(currentUser.id) : ""
+    };
+    persistNotes([newNote, ...notes]);
+    setDraft("");
+  };
+  const formatWhen = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+  };
+  const preview = (text) => {
+    const t = String(text || "").trim();
+    if (t.length <= 90) return t;
+    return `${t.slice(0, 87)}...`;
+  };
+  if (userRole === "Student") return null;
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
     /* @__PURE__ */ jsxs("h3", { className: "text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2", children: [
       /* @__PURE__ */ jsx(ShieldAlert, { size: 16, className: "text-indigo-600" }),
       " Specialized Notes"
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "space-y-3 mb-4 max-h-40 overflow-y-auto", children: [
-      notes.length === 0 && /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No sensitive notes logged." }),
-      notes.map((n) => /* @__PURE__ */ jsxs("div", { className: "bg-slate-50 p-2 rounded border border-slate-100 text-xs", children: [
-        /* @__PURE__ */ jsx("p", { className: "text-slate-700", children: n.text }),
-        /* @__PURE__ */ jsxs("div", { className: "flex justify-between mt-1 text-[10px] text-slate-400", children: [
-          /* @__PURE__ */ jsx("span", { children: n.author }),
-          /* @__PURE__ */ jsx("span", { children: n.date })
+    /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 mb-3", children: "Stored only on this student record. Not shown in Student History." }),
+    /* @__PURE__ */ jsxs("div", { className: "space-y-2 mb-4 max-h-52 overflow-y-auto pr-1", children: [
+      notes.length === 0 && /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No specialized notes yet." }),
+      notes.map((n) => /* @__PURE__ */ jsxs("div", { className: "bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs flex gap-2 items-start justify-between group", children: [
+        /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-slate-700 line-clamp-2", children: preview(n.text) }),
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-x-2 mt-1 text-[10px] text-slate-400", children: [
+            /* @__PURE__ */ jsx("span", { children: n.author || authorLabel }),
+            /* @__PURE__ */ jsx("span", { children: formatWhen(n.updatedAt || n.createdAt) })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-0.5 flex-shrink-0", children: [
+          /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              title: "View",
+              className: "p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-indigo-600 border border-transparent hover:border-slate-200",
+              onClick: () => setDialog({ kind: "view", note: n }),
+              children: /* @__PURE__ */ jsx(Eye, { size: 14 })
+            }
+          ),
+          /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              title: "Edit",
+              className: "p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-indigo-600 border border-transparent hover:border-slate-200",
+              onClick: () => setDialog({ kind: "edit", note: n, draft: n.text }),
+              children: /* @__PURE__ */ jsx(Pencil, { size: 14 })
+            }
+          ),
+          /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              title: "Delete",
+              className: "p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-rose-600 border border-transparent hover:border-slate-200",
+              onClick: () => setDialog({ kind: "delete", note: n }),
+              children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
+            }
+          )
         ] })
       ] }, n.id))
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-      /* @__PURE__ */ jsx(
-        "input",
-        {
-          type: "text",
-          className: "flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-500",
-          placeholder: "Add sensitive note...",
-          value: note,
-          onChange: (e) => setNote(e.target.value)
-        }
-      ),
-      /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleAddNote, children: "Add" })
-    ] })
+    /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+      /* @__PURE__ */ jsx("textarea", {
+        className: "w-full text-xs border border-gray-200 rounded-lg px-3 py-2 min-h-[72px] focus:outline-none focus:border-indigo-500 resize-y",
+        placeholder: "Add a specialized note...",
+        value: draft,
+        onChange: (e) => setDraft(e.target.value)
+      }),
+      /* @__PURE__ */ jsx(Button, { size: "sm", className: "w-full sm:w-auto", onClick: handleAddNote, disabled: !draft.trim(), children: "Save note" })
+    ] }),
+    dialog && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[140] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setDialog(null), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col", onClick: (e) => e.stopPropagation(), children: [
+      dialog.kind === "view" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Specialized note" }),
+          /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "p-4 overflow-y-auto flex-1", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-800 whitespace-pre-wrap break-words", children: dialog.note.text }),
+          /* @__PURE__ */ jsxs("div", { className: "mt-4 text-[11px] text-slate-500 space-y-1", children: [
+            /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Author: " }), dialog.note.author || "—"] }),
+            /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Created: " }), formatWhen(dialog.note.createdAt)] }),
+            dialog.note.updatedAt && /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Updated: " }), formatWhen(dialog.note.updatedAt)] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end", children: /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Close" }) })
+      ] }),
+      dialog.kind === "edit" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Edit note" }),
+          /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "p-4", children: /* @__PURE__ */ jsx("textarea", {
+          className: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[140px] focus:outline-none focus:border-indigo-500",
+          value: dialog.draft,
+          onChange: (e) => setDialog({ ...dialog, draft: e.target.value })
+        }) }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            onClick: () => {
+              const text = String(dialog.draft || "").trim();
+              if (!text) return;
+              const id = dialog.note.id;
+              const next = notes.map((item) => item.id === id ? {
+                ...item,
+                text,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              } : item);
+              persistNotes(next);
+              setDialog(null);
+            },
+            disabled: !String(dialog.draft || "").trim(),
+            children: "Save changes"
+          })
+        ] })
+      ] }),
+      dialog.kind === "delete" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Delete note?" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "This cannot be undone." })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "p-4 max-h-40 overflow-y-auto", children: /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 whitespace-pre-wrap break-words", children: preview(dialog.note.text) }) }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            className: "bg-rose-600 hover:bg-rose-700 border-none text-white",
+            onClick: () => {
+              persistNotes(notes.filter((item) => item.id !== dialog.note.id));
+              setDialog(null);
+            },
+            children: "Delete"
+          })
+        ] })
+      ] })
+    ] }) })
   ] });
 };
 const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => {
-  const genericLabels = new Set(["Counselor", "Manager", "Team Lead", "Admin", "Student", "System"]);
-  const studentActivities = activities.filter(
-    (a) => a.studentId === student.id || a.studentName === student.name || a.target.includes(student.name) || a.user === student.name || student.documents?.some((d) => a.target.includes(d.name)) || a.target.includes(student.id) || a.action === "added specialized note" && a.target === student.name
-  );
+  const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
+  const studentActivities = activities.filter((a) => {
+    if (String(a.action || "") === "added specialized note") return false;
+    return a.studentId === student.id || a.studentName === student.name || a.target.includes(student.name) || a.user === student.name || student.documents?.some((d) => a.target.includes(d.name)) || a.target.includes(student.id);
+  });
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden", children: [
     /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-100 flex justify-between items-center bg-slate-50/50", children: [
       /* @__PURE__ */ jsxs("h3", { className: "text-sm font-bold text-slate-900 flex items-center gap-2", children: [
@@ -196,19 +298,37 @@ const StudentProfile = ({
   onUpdateInvoice,
   onCreateInvoice,
   onUploadStudentDocument,
-  employees = []
+  employees = [],
+  currentUser = null,
+  authenticatedUser = null
 }) => {
   const [localStudent, setLocalStudent] = useState(student);
   const [activeTab, setActiveTab] = useState("pipeline");
+  const [advanceDialog, setAdvanceDialog] = useState({
+    open: false,
+    counselorMode: "current",
+    counselorId: "",
+    taskActions: {}
+  });
   useEffect(() => {
     setLocalStudent(student);
   }, [student]);
-  const currentStepIndex = PIPELINE_STEPS.indexOf(localStudent.status);
+  const effectiveStatus = normalizePipelineStatus(localStudent.status);
+  const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
+  const remainingStudentTasks = tasks.filter((task) => task.student_id === localStudent.id && task.status !== "Completed");
+  const availableBranchCounselors = employees.filter((employee) => {
+    const role = String(employee?.role || employee?.position || "").toLowerCase();
+    if (!role.includes("counselor")) return false;
+    if (!localStudent.branch) return true;
+    return String(employee?.branch || "").trim() === String(localStudent.branch).trim();
+  });
   const assignedCounselorName = (() => {
     const match = employees.find((employee) => employee.id === localStudent.counselor);
     return match?.name || match?.username || localStudent.counselorName || "";
   })();
+  const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
+  const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {
@@ -232,6 +352,19 @@ const StudentProfile = ({
     onUpdateStudent?.(updated);
   };
   const handleAdvancePipeline = () => {
+    if (!nextStep) return;
+    const defaultTaskActions = remainingStudentTasks.reduce((acc, task) => {
+      acc[task.id] = "assign-me";
+      return acc;
+    }, {});
+    setAdvanceDialog({
+      open: true,
+      counselorMode: "current",
+      counselorId: localStudent.counselor || "",
+      taskActions: defaultTaskActions
+    });
+  };
+  const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
       const countryChecklist = COUNTRY_CHECKLISTS[localStudent.country] || COUNTRY_CHECKLISTS["Default"];
       const studentDocs = localStudent.documents || [];
@@ -247,11 +380,12 @@ const StudentProfile = ({
         return missingDocs.map((m) => m.docType);
       };
       let allMissingItems = [];
-      if (localStudent.status === "Documentation") {
+      const st = normalizePipelineStatus(localStudent.status);
+      if (st === "Documentation") {
         allMissingItems = checkStageRequirements("Documentation");
-      } else if (localStudent.status === "Uni Application") {
+      } else if (st === "Application") {
         allMissingItems = checkStageRequirements("Uni Application");
-      } else if (localStudent.status === "Offer Received") {
+      } else if (st === "Interview training") {
         allMissingItems = checkStageRequirements("Offer Received");
       }
       const updatedViolations = [...localStudent.slaViolations || []];
@@ -264,10 +398,39 @@ const StudentProfile = ({
           resolved: false
         });
       }
+      const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
+      const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
+      const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
+      const taskUpdates = remainingStudentTasks.map((task) => {
+        const selectedAction = advanceDialog.taskActions?.[task.id] || "assign-me";
+        const actionType = !shouldAssignAnother && selectedAction === "assign-next" ? "assign-me" : selectedAction;
+        if (shouldAssignAnother && actionType === "assign-next") {
+          return {
+            ...task,
+            assigned_to: nextCounselorId ? [nextCounselorId] : task.assigned_to || [],
+            isPrivate: true
+          };
+        }
+        if (actionType === "student-task") {
+          const recipients = [localStudent.id, currentCounselorId, nextCounselorId].filter(Boolean);
+          return {
+            ...task,
+            assigned_to: Array.from(new Set(recipients)),
+            isPrivate: false
+          };
+        }
+        return {
+          ...task,
+          assigned_to: currentCounselorId ? [currentCounselorId] : task.assigned_to || [],
+          isPrivate: true
+        };
+      });
       const updated = {
         ...localStudent,
         status: nextStep,
-        slaViolations: updatedViolations
+        slaViolations: updatedViolations,
+        counselor: shouldAssignAnother ? advanceDialog.counselorId : localStudent.counselor,
+        counselorName: shouldAssignAnother ? selectedCounselor?.name || selectedCounselor?.username || localStudent.counselorName : localStudent.counselorName
       };
       handleUpdateStudentLocal(updated);
       onAddActivity?.({
@@ -279,6 +442,32 @@ const StudentProfile = ({
         studentName: localStudent.name,
         studentId: localStudent.id
       });
+      if (taskUpdates.length > 0) {
+        onUpdateTasks?.(taskUpdates);
+      }
+      if (shouldAssignAnother && selectedCounselor) {
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "reassigned counselor",
+          target: `${selectedCounselor?.name || selectedCounselor?.username || "Counselor"} (${localStudent.name})`,
+          type: "system",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
+      }
+      if (taskUpdates.length > 0) {
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "updated remaining task ownership",
+          target: `${taskUpdates.length} task(s) for ${localStudent.name}`,
+          type: "task",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
+      }
+      setAdvanceDialog((prev) => ({ ...prev, open: false }));
     }
   };
   const PriorityBadge = ({ priority }) => {
@@ -493,8 +682,7 @@ const StudentProfile = ({
                 className: "w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none h-11 rounded-xl font-bold text-sm group",
                 onClick: handleAdvancePipeline,
                 children: [
-                  "Advance to ",
-                  nextStep,
+                  "Next Stage",
                   /* @__PURE__ */ jsx(ChevronRight, { size: 18, className: "ml-1 group-hover:translate-x-1 transition-transform" })
                 ]
               }
@@ -511,7 +699,7 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Pipeline", activeTab, tabName: "pipeline", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa Pilot", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
+              /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger", activeTab, tabName: "ledger", onClick: setActiveTab })
             ] }) }) }),
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 overflow-y-auto", children: renderContent() })
@@ -519,10 +707,65 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent }),
-            /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
-            /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onAddActivity })
+            /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
+            /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName })
           ] })
-        ] })
+        ] }),
+        advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50/80 flex items-center justify-between", children: [
+            /* @__PURE__ */ jsx("h3", { className: "text-sm font-bold text-slate-900", children: "Move to next stage" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
+            /* @__PURE__ */ jsxs("div", { className: "bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800", children: [
+              /* @__PURE__ */ jsxs("p", { className: "font-semibold", children: ["Upcoming stage: ", nextStep || "N/A"] }),
+              /* @__PURE__ */ jsx("p", { className: "mt-1", children: "Review pending tasks and assign who will continue counseling for remaining stages." })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Remaining tasks" }),
+              remainingStudentTasks.length > 0 ? /* @__PURE__ */ jsx("div", { className: "max-h-56 overflow-y-auto space-y-2 pr-1", children: remainingStudentTasks.map((task) => /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs space-y-2", children: [
+                /* @__PURE__ */ jsx("p", { className: "font-medium text-slate-800", children: task.task }),
+                /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: ["Status: ", task.status, task.dueDate ? ` | Due: ${task.dueDate}` : ""] }),
+                /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+                  /* @__PURE__ */ jsx("label", { className: "text-[11px] font-semibold text-slate-700", children: "Action for this task" }),
+                  /* @__PURE__ */ jsx("select", { value: advanceDialog.counselorMode !== "another" && (advanceDialog.taskActions?.[task.id] || "assign-me") === "assign-next" ? "assign-me" : advanceDialog.taskActions?.[task.id] || "assign-me", onChange: (e) => setAdvanceDialog((prev) => ({
+                    ...prev,
+                    taskActions: {
+                      ...prev.taskActions,
+                      [task.id]: e.target.value
+                    }
+                  })), className: "w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 bg-white", children: advanceDialog.counselorMode === "another" ? [
+                    /* @__PURE__ */ jsx("option", { value: "assign-me", children: "Assign for current counselor" }),
+                    /* @__PURE__ */ jsx("option", { value: "assign-next", children: "Assign for next counselor" }),
+                    /* @__PURE__ */ jsx("option", { value: "student-task", children: "Add as Student Task (Student + Me + Next Counselor)" })
+                  ] : [
+                    /* @__PURE__ */ jsx("option", { value: "assign-me", children: "Assign for current counselor" }),
+                    /* @__PURE__ */ jsx("option", { value: "student-task", children: "Assign for student as a task and for me also" })
+                  ] })
+                ] })
+              ] }, task.id)) }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "No pending tasks for this student." })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Who will conduct the student in remaining stages?" }),
+              /* @__PURE__ */ jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-700", children: [
+                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-mode", checked: advanceDialog.counselorMode === "current", onChange: () => setAdvanceDialog((prev) => ({ ...prev, counselorMode: "current", counselorId: "" })) }),
+                "Current counselor will continue"
+              ] }),
+              /* @__PURE__ */ jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-700", children: [
+                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-mode", checked: advanceDialog.counselorMode === "another", onChange: () => setAdvanceDialog((prev) => ({ ...prev, counselorMode: "another" })) }),
+                "Assign another counselor from current branch"
+              ] }),
+              advanceDialog.counselorMode === "another" && /* @__PURE__ */ jsx("select", { value: advanceDialog.counselorId, onChange: (e) => setAdvanceDialog((prev) => ({ ...prev, counselorId: e.target.value })), className: "mt-1 w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", children: [
+                /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
+                ...availableBranchCounselors.map((employee) => /* @__PURE__ */ jsx("option", { value: employee.id, children: employee.name || employee.username || employee.email || employee.id }, employee.id))
+              ] })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white", children: [
+            /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId, children: "Confirm & Continue" })
+          ] })
+        ] }) })
       ]
     }
   );

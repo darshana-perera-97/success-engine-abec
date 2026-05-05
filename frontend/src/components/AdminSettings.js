@@ -1,7 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState } from "react";
-import { Save, Settings } from "lucide-react";
+import { Globe, Save, Settings } from "lucide-react";
 import { Button } from "./Button";
+import { createCountry, getCountries } from "../authApi";
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -21,6 +22,25 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
   const [meetingError, setMeetingError] = useState("");
   const [meetingSuccess, setMeetingSuccess] = useState("");
   const [isSavingMeetingSettings, setIsSavingMeetingSettings] = useState(false);
+  const [countries, setCountries] = useState([]);
+  const [newCountryName, setNewCountryName] = useState("");
+  const [countryError, setCountryError] = useState("");
+  const [countrySuccess, setCountrySuccess] = useState("");
+  const [isSavingCountry, setIsSavingCountry] = useState(false);
+
+  const loadCountries = async () => {
+    const result = await getCountries();
+    if (!result.ok) {
+      setCountryError(result.error || "Failed to load countries.");
+      return;
+    }
+    setCountries(result.data);
+    setCountryError("");
+  };
+
+  useEffect(() => {
+    loadCountries();
+  }, []);
 
   useEffect(() => {
     if (!meetingSettings) return;
@@ -144,6 +164,59 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
         /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
         "Save Settings"
       ] }) })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsx(Globe, { size: 18, className: "text-slate-600" }),
+        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Destination countries" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Used when creating Country Coordinator accounts. Student records should use the same spelling (e.g. Canada, UK)." }),
+      countryError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: countryError }) : null,
+      countrySuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: countrySuccess }) : null,
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row gap-2 max-w-xl", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "text",
+          className: "flex-1 px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+          placeholder: "e.g. Ireland",
+          value: newCountryName,
+          onChange: (e) => setNewCountryName(e.target.value)
+        }),
+        /* @__PURE__ */ jsx(Button, {
+          type: "button",
+          isLoading: isSavingCountry,
+          onClick: async () => {
+            setCountryError("");
+            setCountrySuccess("");
+            const name = newCountryName.trim();
+            if (!name) {
+              setCountryError("Enter a country name.");
+              return;
+            }
+            setIsSavingCountry(true);
+            const result = await createCountry(name);
+            setIsSavingCountry(false);
+            if (!result.ok) {
+              setCountryError(result.error || "Failed to add country.");
+              return;
+            }
+            setCountries(result.data);
+            setNewCountryName("");
+            setCountrySuccess("Country added.");
+          },
+          children: "Add country"
+        })
+      ] }),
+      /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden max-w-xl", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
+        /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
+          /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
+          /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: "Count" })
+        ] }) }),
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
+          /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
+          /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right text-slate-500 tabular-nums", children: "—" })
+        ] }, c)) })
+      ] }) }),
+      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: `${countries.length} countr${countries.length === 1 ? "y" : "ies"} in the list.` })
     ] })
   ] });
 };

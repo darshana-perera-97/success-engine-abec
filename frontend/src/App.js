@@ -1,15 +1,16 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
 import { StudentProfile } from "./components/StudentProfile";
 import { TaskManager } from "./components/TaskManager";
+import { StageEscalations } from "./components/StageEscalations";
 import { BranchAnalytics } from "./components/BranchAnalytics";
 import { CounselorDashboard } from "./components/CounselorDashboard";
 import { StudentDashboard } from "./components/StudentDashboard";
@@ -20,14 +21,21 @@ import { CalendarScheduler } from "./components/CalendarScheduler";
 import { CounselorManagement } from "./components/CounselorManagement";
 import { AccountsManagement } from "./components/AccountsManagement";
 import { AdminSettings } from "./components/AdminSettings";
+import { RequestedStudents } from "./components/RequestedStudents";
 import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
 import { Bell, X } from "lucide-react";
-import { TASKS, INITIAL_ACTIVITIES, MOCK_MESSAGES, EMPLOYEES, INVOICES } from "./constants";
+import { filterTasksForCounselor } from "./counselorTaskScope";
+import {
+  computePipelineEscalations,
+  filterEscalationsForCounselor,
+  filterEscalationsForManager,
+  normalizePipelineStatus
+} from "./pipeline";
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL
   ? process.env.REACT_APP_API_URL
-  : "http://localhost:3333";
+  : "http://localhost:3334";
 const toAbsoluteAssetUrl = (avatar) => {
   if (!avatar) return avatar;
   if (String(avatar).startsWith("/assets/")) {
@@ -48,7 +56,9 @@ const VIEW_TO_PATH = {
   calendar: "/calendar",
   finance: "/finance",
   settings: "/settings",
-  "student-detail": "/student-detail"
+  "student-detail": "/student-detail",
+  "requested-students": "/requested-students",
+  "stage-escalations": "/stage-escalations"
 };
 
 function App({ initialView = "dashboard" }) {
@@ -57,11 +67,11 @@ function App({ initialView = "dashboard" }) {
   const [isAuthenticated, setIsAuthenticated] = useState(hasLoginSession);
   const [adminAvatar, setAdminAvatar] = useState("/CEO.png");
   const [students, setStudents] = useState([]);
-  const [employees, setEmployees] = useState(EMPLOYEES);
-  const [tasks, setTasks] = useState(TASKS);
-  const [activities, setActivities] = useState(INITIAL_ACTIVITIES);
-  const [messages, setMessages] = useState(MOCK_MESSAGES);
-  const [invoices, setInvoices] = useState(INVOICES);
+  const [employees, setEmployees] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [meetingSettings, setMeetingSettings] = useState({
@@ -78,7 +88,7 @@ function App({ initialView = "dashboard" }) {
   });
   const [currentView, setCurrentView] = useState(initialView);
   const [currentRole, setCurrentRole] = useState(
-    authenticatedUser?.role === "Manager" || authenticatedUser?.role === "Team Lead" || authenticatedUser?.role === "Counselor" || authenticatedUser?.role === "Student" ? authenticatedUser.role : "Admin"
+    authenticatedUser?.role === "Manager" || authenticatedUser?.role === "Team Lead" || authenticatedUser?.role === "Counselor" || authenticatedUser?.role === "Country Coordinator" || authenticatedUser?.role === "Student" ? authenticatedUser.role : "Admin"
   );
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -105,12 +115,13 @@ function App({ initialView = "dashboard" }) {
     if (authenticatedUser && currentRole === authenticatedUser.role) {
       const byEmail = employees.find((e) => e.email.toLowerCase() === String(authenticatedUser.email || "").toLowerCase());
       if (byEmail) return byEmail;
-      if (authenticatedUser.role === "Manager" || authenticatedUser.role === "Team Lead" || authenticatedUser.role === "Counselor" || authenticatedUser.role === "Admin") {
+      if (authenticatedUser.role === "Manager" || authenticatedUser.role === "Team Lead" || authenticatedUser.role === "Counselor" || authenticatedUser.role === "Country Coordinator" || authenticatedUser.role === "Admin") {
         return {
           id: authenticatedUser.id || `AUTH-${authenticatedUser.role}`,
           name: toDisplayName(authenticatedUser.email),
           role: authenticatedUser.role,
           branch: authenticatedUser.branch || "Colombo HQ",
+          country: authenticatedUser.country || "",
           email: authenticatedUser.email || "",
           avatar: authenticatedUser.role === "Admin" ? adminAvatar : authenticatedUser.avatar || "/CEO.png"
         };
@@ -150,6 +161,28 @@ function App({ initialView = "dashboard" }) {
         email: authenticatedUser?.email || "",
         avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
       };
+    } else if (currentRole === "Country Coordinator") {
+      const authEmail = String(authenticatedUser?.email || "").toLowerCase();
+      const byEmail = employees.find((e) => String(e.email || "").toLowerCase() === authEmail);
+      if (byEmail) {
+        return {
+          ...byEmail,
+          id: authenticatedUser?.id || byEmail.id,
+          role: "Country Coordinator",
+          email: authenticatedUser?.email || byEmail.email,
+          country: byEmail.country || authenticatedUser?.country || "",
+          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || "/assets/default-male-avatar.svg"
+        };
+      }
+      return {
+        id: authenticatedUser?.id || "COORD-1",
+        name: authenticatedUser?.username || toDisplayName(authenticatedUser?.email),
+        role: "Country Coordinator",
+        branch: authenticatedUser?.branch || "Colombo HQ",
+        country: authenticatedUser?.country || "",
+        email: authenticatedUser?.email || "",
+        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
+      };
     } else if (currentRole === "Manager" || currentRole === "Team Lead") {
       const authEmail = String(authenticatedUser?.email || "").toLowerCase();
       const byEmail = employees.find((e) => String(e.email || "").toLowerCase() === authEmail);
@@ -171,7 +204,14 @@ function App({ initialView = "dashboard" }) {
         avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
       };
     } else {
-      return employees[0];
+      return {
+        id: authenticatedUser?.id || "ADMIN",
+        name: authenticatedUser?.username || toDisplayName(authenticatedUser?.email || "Admin"),
+        role: "Admin",
+        branch: authenticatedUser?.branch || "",
+        email: authenticatedUser?.email || "",
+        avatar: toAbsoluteAssetUrl(adminAvatar) || "/CEO.png"
+      };
     }
   };
   const currentUser = getCurrentUserObject();
@@ -197,6 +237,154 @@ function App({ initialView = "dashboard" }) {
     if (identitySet.size === 0) return [];
     return students.filter((student) => identitySet.has(normalizeIdentity(student.counselor)));
   })();
+  const managerDataScope = useMemo(() => {
+    if (currentRole !== "Manager") {
+      return { active: false, branchKey: "", branchLabel: "" };
+    }
+    const raw = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
+    return { active: !!raw, branchKey: raw.toLowerCase(), branchLabel: raw };
+  }, [currentRole, currentUser?.branch, authenticatedUser?.branch]);
+  const managerScopedStudents = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return students;
+    return students.filter(
+      (s) => String(s.branch || "").trim().toLowerCase() === managerDataScope.branchKey
+    );
+  }, [students, currentRole, managerDataScope.active, managerDataScope.branchKey]);
+  const managerScopedStudentIds = useMemo(
+    () => new Set(managerScopedStudents.map((s) => s.id)),
+    [managerScopedStudents]
+  );
+  const managerScopedTasks = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return tasks;
+    return tasks.filter((t) => {
+      const sid = t.student_id || t.studentId;
+      if (!sid) return false;
+      return managerScopedStudentIds.has(String(sid));
+    });
+  }, [tasks, currentRole, managerDataScope.active, managerScopedStudentIds]);
+  const managerScopedEmployees = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return employees;
+    return employees.filter(
+      (e) => String(e.branch || "").trim().toLowerCase() === managerDataScope.branchKey
+    );
+  }, [employees, currentRole, managerDataScope.active, managerDataScope.branchKey]);
+  const managerScopedActivities = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return activities;
+    return activities.filter((a) => {
+      const sid = a.studentId || a.student_id;
+      if (!sid) return true;
+      return managerScopedStudentIds.has(String(sid));
+    });
+  }, [activities, currentRole, managerDataScope.active, managerScopedStudentIds]);
+  const managerScopedAppointments = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return appointments;
+    return appointments.filter((apt) => managerScopedStudentIds.has(String(apt.studentId || "")));
+  }, [appointments, currentRole, managerDataScope.active, managerScopedStudentIds]);
+  const managerScopedInvoices = useMemo(() => {
+    if (currentRole !== "Manager" || !managerDataScope.active) return invoices;
+    return invoices.filter((inv) => managerScopedStudentIds.has(String(inv.studentId || "")));
+  }, [invoices, currentRole, managerDataScope.active, managerScopedStudentIds]);
+  const countryCoordinatorScope = useMemo(() => {
+    if (currentRole !== "Country Coordinator") {
+      return { active: false, countryKey: "", countryLabel: "" };
+    }
+    const raw = String(authenticatedUser?.country || currentUser?.country || "").trim();
+    return { active: !!raw, countryKey: raw.toLowerCase(), countryLabel: raw };
+  }, [currentRole, authenticatedUser?.country, currentUser?.country]);
+  const countryCoordinatorScopedStudents = useMemo(() => {
+    if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return students;
+    return students.filter(
+      (s) => String(s.country || "").trim().toLowerCase() === countryCoordinatorScope.countryKey
+    );
+  }, [students, currentRole, countryCoordinatorScope.active, countryCoordinatorScope.countryKey]);
+  const countryCoordinatorStudentIds = useMemo(
+    () => new Set(countryCoordinatorScopedStudents.map((s) => s.id)),
+    [countryCoordinatorScopedStudents]
+  );
+  const countryCoordinatorScopedTasks = useMemo(() => {
+    if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return tasks;
+    return tasks.filter((t) => {
+      const sid = t.student_id || t.studentId;
+      if (!sid) return false;
+      return countryCoordinatorStudentIds.has(String(sid));
+    });
+  }, [tasks, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
+  const countryCoordinatorScopedAppointments = useMemo(() => {
+    if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return appointments;
+    return appointments.filter((apt) => countryCoordinatorStudentIds.has(String(apt.studentId || "")));
+  }, [appointments, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
+  const countryCoordinatorScopedInvoices = useMemo(() => {
+    if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return invoices;
+    return invoices.filter((inv) => countryCoordinatorStudentIds.has(String(inv.studentId || "")));
+  }, [invoices, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
+  const navMyTasksCount = useMemo(() => {
+    if (currentRole === "Counselor") {
+      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents).length;
+    }
+    if (currentRole === "Country Coordinator") {
+      const coordTasks = countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
+      const monitoredStudents = countryCoordinatorScopedStudents;
+      const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
+      return (coordTasks || []).filter((task) => ids.has(String(task.student_id || task.studentId || "").trim())).length;
+    }
+    return void 0;
+  }, [
+    currentRole,
+    tasks,
+    currentUser,
+    counselorScopedStudents,
+    countryCoordinatorScope.active,
+    countryCoordinatorScopedTasks,
+    countryCoordinatorScopedStudents
+  ]);
+  const pipelineEscalationsAll = useMemo(() => computePipelineEscalations(students), [students]);
+  const managerScopedEscalations = useMemo(() => {
+    if (currentRole !== "Manager") return [];
+    if (!managerDataScope.active || !managerDataScope.branchLabel) return pipelineEscalationsAll;
+    return filterEscalationsForManager(pipelineEscalationsAll, managerDataScope.branchLabel, employees);
+  }, [
+    pipelineEscalationsAll,
+    currentRole,
+    managerDataScope.active,
+    managerDataScope.branchLabel,
+    employees
+  ]);
+  const teamLeadScopedEscalations = useMemo(() => {
+    if (currentRole !== "Team Lead") return [];
+    const b = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
+    if (!b) return pipelineEscalationsAll;
+    return filterEscalationsForManager(pipelineEscalationsAll, b, employees);
+  }, [pipelineEscalationsAll, currentRole, currentUser?.branch, authenticatedUser?.branch, employees]);
+  const counselorScopedEscalations = useMemo(
+    () => filterEscalationsForCounselor(pipelineEscalationsAll, currentUser, counselorScopedStudents),
+    [pipelineEscalationsAll, currentUser, counselorScopedStudents]
+  );
+  const countryCoordinatorScopedEscalations = useMemo(
+    () => filterEscalationsForCounselor(pipelineEscalationsAll, currentUser, countryCoordinatorScopedStudents),
+    [pipelineEscalationsAll, currentUser, countryCoordinatorScopedStudents]
+  );
+  const pipelineEscalationNavBadge = useMemo(() => {
+    if (currentRole === "Admin" && pipelineEscalationsAll.length > 0) return String(pipelineEscalationsAll.length);
+    if (currentRole === "Manager" && managerScopedEscalations.length > 0) return String(managerScopedEscalations.length);
+    if (currentRole === "Team Lead" && teamLeadScopedEscalations.length > 0) return String(teamLeadScopedEscalations.length);
+    return "";
+  }, [
+    currentRole,
+    pipelineEscalationsAll.length,
+    managerScopedEscalations.length,
+    teamLeadScopedEscalations.length
+  ]);
+  const counselorStageNavBadge = useMemo(() => {
+    if (currentRole === "Counselor" && counselorScopedEscalations.length > 0) return String(counselorScopedEscalations.length);
+    if (currentRole === "Country Coordinator" && countryCoordinatorScopedEscalations.length > 0) {
+      return String(countryCoordinatorScopedEscalations.length);
+    }
+    return "";
+  }, [
+    currentRole,
+    counselorScopedEscalations.length,
+    countryCoordinatorScopedEscalations.length
+  ]);
   const headerAvatar = currentRole === "Admin" ? toAbsoluteAssetUrl(adminAvatar) : toAbsoluteAssetUrl(currentUser?.avatar) || "/canadian.png";
 
   useEffect(() => {
@@ -213,11 +401,10 @@ function App({ initialView = "dashboard" }) {
         phone: account.phone || "",
         teamLeadId: account.teamLeadId || "",
         teamLeadName: account.teamLeadName || "",
+        country: account.country || "",
         avatar: toAbsoluteAssetUrl(account.avatar) || "/assets/default-male-avatar.svg"
       }));
-      if (mapped.length > 0) {
-        setEmployees(mapped);
-      }
+      setEmployees(mapped);
     };
     loadEmployees();
   }, []);
@@ -305,7 +492,7 @@ function App({ initialView = "dashboard" }) {
   }, [authenticatedUser?.email]);
   useEffect(() => {
     let cancelled = false;
-    const canShowUnreadBadge = currentRole === "Student" || currentRole === "Counselor";
+    const canShowUnreadBadge = currentRole === "Student" || currentRole === "Counselor" || currentRole === "Country Coordinator";
     if (!canShowUnreadBadge) {
       setUnreadMessageCount(0);
       return;
@@ -353,7 +540,7 @@ function App({ initialView = "dashboard" }) {
     setCurrentView("tasks");
   };
   const handleAddActivity = (act) => {
-    const genericLabels = new Set(["Counselor", "Manager", "Team Lead", "Admin", "Student", "System"]);
+    const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
     const explicitActor = String(act.actorName || "").trim();
     const explicitUser = String(act.user || "").trim();
     const sessionName = String(currentUser?.name || authenticatedUser?.username || "").trim();
@@ -379,16 +566,21 @@ function App({ initialView = "dashboard" }) {
     createActivity(newActivity);
   };
   const handleUpdateStudent = async (updatedStudent) => {
-    const newTasks = generateTasks(updatedStudent);
+    const previous = students.find((s) => s.id === updatedStudent.id);
+    let payload = { ...updatedStudent };
+    if (previous && String(previous.status || "") !== String(updatedStudent.status || "")) {
+      payload = { ...payload, stageEnteredAt: new Date().toISOString() };
+    }
+    const newTasks = generateTasks(payload);
     if (newTasks.length > 0) {
       handleAddTasks(newTasks);
-      addNotification("Auto Task Generation", `${newTasks.length} new tasks generated for ${updatedStudent.name}`, "info");
+      addNotification("Auto Task Generation", `${newTasks.length} new tasks generated for ${payload.name}`, "info");
     }
-    setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
-    if (selectedStudent?.id === updatedStudent.id) {
-      setSelectedStudent(updatedStudent);
+    setStudents((prev) => prev.map((s) => s.id === payload.id ? payload : s));
+    if (selectedStudent?.id === payload.id) {
+      setSelectedStudent(payload);
     }
-    const persisted = await updateStudent(updatedStudent.id, updatedStudent);
+    const persisted = await updateStudent(payload.id, payload);
     if (!persisted.ok) {
       addNotification("Save failed", persisted.error || "Failed to save student changes.", "error");
       return;
@@ -434,20 +626,8 @@ function App({ initialView = "dashboard" }) {
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
     const enteredPassword = String(payload?.password || "").trim();
-    const selectedTeamLeadId = String(payload?.teamLeadId || "").trim();
     if (!enteredPassword) {
       return { ok: false, error: "Password is required." };
-    }
-    if (!selectedTeamLeadId) {
-      return { ok: false, error: "Please assign a Team Lead." };
-    }
-    const accountsResult = await getAccounts();
-    if (!accountsResult.ok) {
-      return { ok: false, error: accountsResult.error || "Failed to load Team Leads." };
-    }
-    const teamLeadAccount = accountsResult.data.find((a) => a.id === selectedTeamLeadId && a.role === "Team Lead");
-    if (!teamLeadAccount) {
-      return { ok: false, error: "Selected Team Lead not found." };
     }
     const accountResult = await createAccount({
       username: String(payload?.name || "").trim(),
@@ -455,9 +635,9 @@ function App({ initialView = "dashboard" }) {
       password: enteredPassword,
       role: "Consultor",
       branch: String(payload?.branch || "Colombo HQ").trim(),
-      teamLeadId: teamLeadAccount.id,
-      teamLeadName: teamLeadAccount.username,
-      teamLeadEmail: teamLeadAccount.email
+      teamLeadId: "",
+      teamLeadName: "",
+      teamLeadEmail: ""
     });
     if (!accountResult.ok) {
       return { ok: false, error: accountResult.error || "Failed to save counselor account." };
@@ -469,8 +649,8 @@ function App({ initialView = "dashboard" }) {
       branch: String(payload?.branch || "Colombo HQ"),
       email,
       phone: String(payload?.phone || "").trim(),
-      teamLeadId: teamLeadAccount.id,
-      teamLeadName: teamLeadAccount.username,
+      teamLeadId: "",
+      teamLeadName: "",
       avatar: "/assets/default-male-avatar.svg"
     };
     setEmployees((prev) => [...prev, newEmployee]);
@@ -478,13 +658,86 @@ function App({ initialView = "dashboard" }) {
     return { ok: true, data: accountResult.data || newEmployee };
   };
   const handleAddStudent = async (payload) => {
-    const result = await createStudent(payload);
+    let scopedPayload = payload;
+    if (currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel) {
+      scopedPayload = { ...payload, branch: managerDataScope.branchLabel };
+    }
+    if (currentRole === "Country Coordinator" && countryCoordinatorScope.active && countryCoordinatorScope.countryLabel) {
+      scopedPayload = { ...scopedPayload, country: countryCoordinatorScope.countryLabel };
+    }
+    const result = await createStudent(scopedPayload);
     if (!result.ok) {
       return { ok: false, error: result.error || "Failed to create student." };
     }
     setStudents((prev) => [result.data, ...prev]);
     addNotification("Student onboarded", `${result.data.name} added successfully.`, "success");
     return { ok: true, data: result.data };
+  };
+  const handleAddFromRequest = async (requestRow, { counselorId, priority: rawPriority }) => {
+    if (!requestRow || !counselorId) {
+      return { ok: false, error: "Select a counselor to continue." };
+    }
+    const allowedPriorities = new Set(["Low", "Medium", "High"]);
+    const priority = allowedPriorities.has(String(rawPriority || "").trim())
+      ? String(rawPriority).trim()
+      : "Medium";
+    let counselorBranch = "";
+    const accountsRes = await getAccounts();
+    if (accountsRes.ok) {
+      const acc = accountsRes.data.find((a) => String(a.id || "") === String(counselorId));
+      if (acc) counselorBranch = String(acc.branch || "").trim();
+    }
+    const byEmp = employees.find((e) => String(e.id || "") === String(counselorId));
+    if (!counselorBranch && byEmp) counselorBranch = String(byEmp.branch || "").trim();
+    const branch =
+      currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel
+        ? managerDataScope.branchLabel
+        : counselorBranch || String(requestRow.nearestOffice || "").trim() || "Colombo HQ";
+    const random = Math.random().toString(36).slice(-5);
+    const password = `Stu@${new Date().getFullYear()}${random}`;
+    const noteParts = [
+      `Interest form (${requestRow.id || "web"}).`,
+      requestRow.city ? `City: ${requestRow.city}.` : "",
+      requestRow.intendedProgram ? `Program: ${requestRow.intendedProgram}.` : "",
+      requestRow.currentEducationLevel ? `Education: ${requestRow.currentEducationLevel}.` : "",
+      requestRow.message ? `Message: ${requestRow.message}` : ""
+    ];
+    const notes = noteParts.filter(Boolean).join(" ").trim().slice(0, 1900);
+    const payload = {
+      name: String(requestRow.name || "").trim(),
+      country: String(requestRow.countryToVisit || "").trim() || "UK",
+      branch,
+      email: String(requestRow.email || "").trim().toLowerCase(),
+      phone: String(requestRow.phone || "").trim(),
+      password,
+      ielts: "Pending",
+      gpa: "0.0",
+      status: "Inquiry",
+      budget: "",
+      priority,
+      counselor: counselorId,
+      notes: notes || "From interest form.",
+      lastEducationDate: new Date().toISOString().split("T")[0],
+      documents: []
+    };
+    const created = await handleAddStudent(payload);
+    if (!created.ok) {
+      return created;
+    }
+    const reqId = String(requestRow.id || "").trim();
+    let requestRowRemoved = !reqId;
+    if (reqId) {
+      const removed = await deleteReqStudent(reqId);
+      requestRowRemoved = removed.ok;
+      if (!removed.ok) {
+        addNotification(
+          "Interest form entry",
+          removed.error || "Student was added, but the request could not be removed from the server file.",
+          "warning"
+        );
+      }
+    }
+    return { ...created, requestRowRemoved };
   };
   const handleAddTask = async (newTask) => {
     const relatedStudent = students.find((s) => String(s.id || "") === String(newTask.student_id || ""));
@@ -611,7 +864,7 @@ function App({ initialView = "dashboard" }) {
     }
     setAppointments((prev) => [...prev, saved.data]);
     const studentName = students.find((s) => s.id === newApt.studentId)?.name || "Unknown Student";
-    const counselorName = EMPLOYEES.find((e) => e.id === newApt.counselorId)?.name || "Unknown Counselor";
+    const counselorName = employees.find((e) => e.id === newApt.counselorId)?.name || "Unknown Counselor";
     const preSessionTask = {
       id: generateId("T-PREP"),
       task: `Prep for ${newApt.type} with ${studentName}`,
@@ -640,7 +893,8 @@ function App({ initialView = "dashboard" }) {
   const generateTasks = (student) => {
     const newTasks = [];
     const existingTaskTypes = tasks.filter((t) => t.student_id === student.id).map((t) => t.documentType);
-    if (student.status === "Documentation") {
+    const st = normalizePipelineStatus(student.status);
+    if (st === "Documentation") {
       const requiredDocs = ["Passport", "Identity", "Transcript", "EnglishProficiency"];
       requiredDocs.forEach((docType) => {
         if (!existingTaskTypes.includes(docType)) {
@@ -678,7 +932,7 @@ function App({ initialView = "dashboard" }) {
         }
       });
     }
-    if (student.status === "Uni Application") {
+    if (st === "Application") {
       let countryDocs = [];
       switch (student.country) {
         case "Australia":
@@ -836,16 +1090,40 @@ function App({ initialView = "dashboard" }) {
   };
   const renderContent = () => {
     if (currentView === "messages") {
-      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: currentRole === "Counselor" ? counselorScopedStudents : students });
+      const chatStudents =
+        currentRole === "Counselor"
+          ? counselorScopedStudents
+          : currentRole === "Country Coordinator" && countryCoordinatorScope.active
+            ? countryCoordinatorScopedStudents
+            : currentRole === "Manager" && managerDataScope.active
+              ? managerScopedStudents
+              : students;
+      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees });
     }
     if (currentView === "resume") {
       return /* @__PURE__ */ jsx(AIResumeBuilder, { onNavigate: handleNavigate, onSaveCV: handleSaveCV, currentStudent: currentRole === "Student" ? currentUser : null, onUploadStudentCv: handleUploadStudentCv });
     }
     if (currentView === "university") {
-      return /* @__PURE__ */ jsx(UniversityKnowledgeBase, { onNavigate: handleNavigate, currentRole });
+      return /* @__PURE__ */ jsx(UniversityKnowledgeBase, { onNavigate: handleNavigate, currentRole, students });
     }
     if (currentView === "calendar") {
-      return /* @__PURE__ */ jsx(CalendarScheduler, { appointments, bookingBlocks, onBookAppointment: handleBookAppointment, onUpdateAppointment: handleUpdateAppointment, currentRole, currentUser, employees, meetingSettings, onAddBusyBooking: async (payload) => {
+      const calendarAppointments =
+        currentRole === "Manager" && managerDataScope.active
+          ? managerScopedAppointments
+          : currentRole === "Country Coordinator" && countryCoordinatorScope.active
+            ? countryCoordinatorScopedAppointments
+            : appointments;
+      return /* @__PURE__ */ jsx(CalendarScheduler, {
+        appointments: calendarAppointments,
+        bookingBlocks,
+        studentsLookup: students,
+        onBookAppointment: handleBookAppointment,
+        onUpdateAppointment: handleUpdateAppointment,
+        currentRole,
+        currentUser,
+        employees,
+        meetingSettings,
+        onAddBusyBooking: async (payload) => {
         const result = await createBooking(payload);
         if (!result.ok) return result;
         setBookingBlocks((prev) => [...prev, result.data]);
@@ -857,7 +1135,8 @@ function App({ initialView = "dashboard" }) {
         setBookingBlocks((prev) => prev.filter((item) => item.id !== bookingId));
         addNotification("Busy time removed", "Blocked time has been removed.", "info");
         return result;
-      } });
+      }
+    });
     }
     const studentProfileProps = {
       onBack: () => handleNavigate("students"),
@@ -873,7 +1152,9 @@ function App({ initialView = "dashboard" }) {
       onAddTasks: handleAddTasks,
       onUpdateTasks: handleUpdateTasks,
       activities,
-      onUploadStudentDocument: handleUploadStudentDocument
+      onUploadStudentDocument: handleUploadStudentDocument,
+      currentUser,
+      authenticatedUser
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
@@ -883,21 +1164,62 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, userRole: "Student", onUpdateInvoice: handleUpdateInvoice });
       return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
     }
-    if (currentRole === "Counselor") {
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks, currentUser, students: counselorScopedStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: counselorScopedStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Counselor", tasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: counselorScopedStudents, employees });
-      if (currentView === "student-detail") return selectedStudent && counselorScopedStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Counselor" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: counselorScopedStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks, currentUser, students: counselorScopedStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
+    const openEscalationStudent = (studentId) => {
+      const latest = students.find((s) => String(s.id) === String(studentId));
+      if (latest) handleSelectStudent(latest);
+    };
+    if (currentRole === "Counselor" || currentRole === "Country Coordinator") {
+      const coordStudents = currentRole === "Counselor" ? counselorScopedStudents : countryCoordinatorScopedStudents;
+      const coordTasks = currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
+      const coordProfileProps =
+        currentRole === "Country Coordinator" && countryCoordinatorScope.active
+          ? { ...studentProfileProps, tasks: coordTasks, invoices: countryCoordinatorScopedInvoices }
+          : studentProfileProps;
+      if (currentView === "stage-escalations") {
+        const coordEsc = currentRole === "Counselor" ? counselorScopedEscalations : countryCoordinatorScopedEscalations;
+        return /* @__PURE__ */ jsx(StageEscalations, {
+          escalations: coordEsc,
+          employees,
+          variant: "counselor",
+          onOpenStudent: openEscalationStudent
+        });
+      }
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees });
+      if (currentView === "student-detail") return selectedStudent && coordStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
     }
     if (currentRole === "Manager" || currentRole === "Team Lead") {
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { activities, tasks, students, employees, currentUser, onNavigate: handleNavigate });
-      if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students, employees, tasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "" });
-      if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, {});
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Manager", tasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: students, employees });
-      if (currentView === "student-detail") return selectedStudent ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      return /* @__PURE__ */ jsx(ManagerDashboard, { activities, tasks, students, employees, currentUser, onNavigate: handleNavigate });
+      const mgrStudents = currentRole === "Manager" && managerDataScope.active ? managerScopedStudents : students;
+      const mgrTasks = currentRole === "Manager" && managerDataScope.active ? managerScopedTasks : tasks;
+      const mgrEmployees = currentRole === "Manager" && managerDataScope.active ? managerScopedEmployees : employees;
+      const mgrActivities = currentRole === "Manager" && managerDataScope.active ? managerScopedActivities : activities;
+      const mgrProfileProps =
+        currentRole === "Manager" && managerDataScope.active
+          ? { ...studentProfileProps, tasks: mgrTasks, invoices: managerScopedInvoices }
+          : studentProfileProps;
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
+      if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "" });
+      if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "tasks") {
+        const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
+        return /* @__PURE__ */ jsxs(Fragment, {
+          children: [
+            /* @__PURE__ */ jsx(StageEscalations, {
+              escalations: escBlock,
+              employees: mgrEmployees,
+              variant: "manager",
+              onOpenStudent: openEscalationStudent
+            }),
+            /* @__PURE__ */ jsx(TaskManager, { userRole: "Manager", tasks: mgrTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: mgrStudents, employees: mgrEmployees })
+          ]
+        });
+      }
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
+      return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
     }
     switch (currentView) {
       case "dashboard":
@@ -937,10 +1259,22 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(BranchAnalytics, {});
       case "students":
         return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      case "requested-students":
+        return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: null, onAddFromRequest: handleAddFromRequest });
       case "student-detail":
         return selectedStudent ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "tasks":
-        return /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: students, employees });
+        return /* @__PURE__ */ jsxs(Fragment, {
+          children: [
+            /* @__PURE__ */ jsx(StageEscalations, {
+              escalations: pipelineEscalationsAll,
+              employees,
+              variant: "admin",
+              onOpenStudent: openEscalationStudent
+            }),
+            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: students, employees })
+          ]
+        });
       default:
         return /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Under Construction" });
     }
@@ -950,7 +1284,7 @@ function App({ initialView = "dashboard" }) {
       onLoggedIn: (user) => {
         setAuthenticatedUser(user || null);
         const nextRole = user?.role;
-        if (nextRole === "Manager" || nextRole === "Team Lead" || nextRole === "Counselor" || nextRole === "Student" || nextRole === "Admin") {
+        if (nextRole === "Manager" || nextRole === "Team Lead" || nextRole === "Counselor" || nextRole === "Country Coordinator" || nextRole === "Student" || nextRole === "Admin") {
           setCurrentRole(nextRole);
         } else {
           setCurrentRole("Admin");
@@ -979,6 +1313,9 @@ function App({ initialView = "dashboard" }) {
         onRemoveNotification: (id) => setNotificationHistory((prev) => prev.filter((n) => n.id !== id)),
         onUpdateProfileAvatar: handleUpdateProfileAvatar,
         onUpdateProfileContact: handleUpdateProfileContact,
+        navMyTasksCount,
+        pipelineEscalationBadge: pipelineEscalationNavBadge,
+        counselorStageEscalationBadge: counselorStageNavBadge,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);
@@ -996,7 +1333,7 @@ function App({ initialView = "dashboard" }) {
         student: taskModalStudent,
         currentUser,
         userRole: currentRole,
-        students,
+        students: currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedStudents : currentRole === "Counselor" ? counselorScopedStudents : students,
         employees
       }
     ),

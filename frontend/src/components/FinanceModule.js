@@ -144,7 +144,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
-  const isStaff = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Counselor";
+  const isStaff = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Counselor" || userRole === "Country Coordinator";
   const canAcceptPayment = userRole === "Admin" || userRole === "Manager";
   const canUploadEvidence = userRole === "Student";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
@@ -188,7 +188,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         " Create Invoice"
       ] })
     ] }),
-    isCreateOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95", children: [
+    isCreateOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "New Invoice Details" }),
         /* @__PURE__ */ jsxs("button", { onClick: () => setIsCreateOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
@@ -300,7 +300,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         }, children: "View More" }) })
       ] }, inv.id)) })
     ] }) }),
-    isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95", children: [
+    isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Invoice Details" }),
         /* @__PURE__ */ jsxs("button", { onClick: () => setIsDetailsModalOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
@@ -351,7 +351,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsDetailsModalOpen(false), children: "Close" })
       ] })
     ] }) }),
-    isPaymentModalOpen && selectedInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95", children: [
+    isPaymentModalOpen && selectedInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Process Payment" }),
         /* @__PURE__ */ jsxs("button", { onClick: () => setIsPaymentModalOpen(false), className: "text-slate-400 hover:text-slate-600", children: [

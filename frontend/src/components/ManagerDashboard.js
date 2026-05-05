@@ -12,8 +12,8 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
   const totalRevenue = students.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 0.1, 0);
   const overdueTasks = tasks.filter((t) => t.status === "Overdue").length;
   const pendingReviews = tasks.filter((t) => t.status === "In Review").length;
-  const visaGrantedCount = students.filter((s) => s.status === "Visa Pilot").length;
-  const visaProcessingCount = students.filter((s) => ["Visa Pilot"].includes(s.status)).length;
+  const visaGrantedCount = students.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length;
+  const visaProcessingCount = students.filter((s) => ["Visa", "Visa Pilot"].includes(s.status)).length;
   const successRate = visaProcessingCount ? Math.round(visaGrantedCount / visaProcessingCount * 100) : 0;
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4", children: [
@@ -70,7 +70,7 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-8", children: [
       /* @__PURE__ */ jsxs("div", { className: "lg:col-span-2 space-y-8", children: [
-        /* @__PURE__ */ jsx(IncentiveCalculator, {}),
+        /* @__PURE__ */ jsx(IncentiveCalculator, { students, employees }),
         /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row justify-between sm:items-center gap-4", children: [
             /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center gap-4", children: [

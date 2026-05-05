@@ -3,7 +3,8 @@ import { useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Mail, Phone, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
-const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL : "http://localhost:3333";
+import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
+const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL : "http://localhost:3334";
 const toAbsoluteAssetUrl = (avatar) => {
   if (!avatar) return avatar;
   if (String(avatar).startsWith("/assets/")) {
@@ -38,22 +39,11 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
     phone: matchedCounselor?.phone || student.counselorPhone || "Not available",
     avatar: toAbsoluteAssetUrl(matchedCounselor?.avatar || student.counselorAvatar || "")
   };
-  const allStatuses = ["New Inquiry", "Counseling", "Documentation", "Uni Application", "Offer Received", "Visa Pilot"];
-  const rawIndex = allStatuses.indexOf(student.status);
-  let visualIndex = 0;
-  if (rawIndex <= 0) visualIndex = 0;
-  else if (rawIndex === 1) visualIndex = 1;
-  else if (rawIndex === 2) visualIndex = 2;
-  else if (rawIndex === 3 || rawIndex === 4) visualIndex = 3;
-  else visualIndex = 4;
-  const steps = [
-    { label: "Inquiry", icon: "1" },
-    { label: "Counseling", icon: "2" },
-    { label: "Docs", icon: "3" },
-    { label: "Offer", icon: "4" },
-    { label: "Visa", icon: "5" }
-  ];
-  const progressPercentage = visualIndex / (steps.length - 1) * 100;
+  const canonical = normalizePipelineStatus(student.status);
+  const rawIndex = PIPELINE_STEPS.indexOf(canonical);
+  const visualIndex = rawIndex < 0 ? 0 : rawIndex;
+  const steps = PIPELINE_STEPS.map((label, i) => ({ label, icon: String(i + 1) }));
+  const progressPercentage = steps.length <= 1 ? 0 : visualIndex / (steps.length - 1) * 100;
   const pendingTasks = tasks.filter((t) => t.student_id === student.id && t.status !== "Completed");
   const sortedActions = pendingTasks.sort((a, b) => {
     if (a.isBlocking && !b.isBlocking) return -1;
@@ -359,7 +349,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
         ] })
       ] })
     ] }),
-    isUploadModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95", children: [
+    isUploadModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Upload Documents" }),
         /* @__PURE__ */ jsx("button", { onClick: closeUploadModal, className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 20 }) })

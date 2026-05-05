@@ -1,9 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect } from "react";
-import { STUDENTS } from "../constants";
 import { Button } from "./Button";
 import { ChevronLeft, ChevronRight, Clock, User, CheckCircle, AlertTriangle, Video } from "lucide-react";
-const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking }) => {
+const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking, studentsLookup = null }) => {
   const [currentDate, setCurrentDate] = useState(/* @__PURE__ */ new Date());
   const [selectedDate, setSelectedDate] = useState(/* @__PURE__ */ new Date());
   const [selectedCounselorId, setSelectedCounselorId] = useState("");
@@ -30,6 +29,8 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       if (currentUser.id && selectedCounselorId !== currentUser.id) {
         setSelectedCounselorId(currentUser.id);
       }
+    } else if (currentRole === "Country Coordinator") {
+      setSelectedCounselorId("");
     }
   }, [currentRole, currentUser, employees]);
   const getDaysInMonth = (date) => {
@@ -48,7 +49,8 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     return date.toLocaleDateString("en-CA");
   };
   const getCounselor = (id) => employees.find((e) => e.id === id);
-  const getStudent = (id) => STUDENTS.find((s) => s.id === id);
+  const studentPool = studentsLookup || [];
+  const getStudent = (id) => studentPool.find((s) => s.id === id);
   const toSriLankaTimestamp = (dateStr, timeStr) => {
     return new Date(`${dateStr}T${timeStr}:00+05:30`).getTime();
   };
@@ -177,7 +179,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     return block.counselorId === targetCounselor && block.date === formatDate(selectedDate);
   }).sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime)) : [];
   const roleVisibleBusyBlocks = bookingBlocks.filter((block) => {
-    if (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") return true;
+    if (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Country Coordinator") return true;
     if (currentRole === "Counselor") return block.counselorId === currentUser.id;
     return block.counselorId === selectedCounselorId;
   }).sort((a, b) => {
@@ -217,7 +219,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       const isToday = formatDate(/* @__PURE__ */ new Date()) === dateStr;
       const isSelected = selectedDate && formatDate(selectedDate) === dateStr;
       const myAppointmentsDay = appointments.filter((a) => {
-        if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin") return a.date === dateStr;
+        if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") return a.date === dateStr;
         if (currentRole === "Counselor") return a.date === dateStr && a.counselorId === currentUser.id;
         return a.date === dateStr && a.studentId === currentUser.id;
       });
@@ -363,7 +365,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             }, children: "Remove" })
           ] }, block.id)) })
         ] }),
-        (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+        (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Country Coordinator") && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Counselor Blocked Times" }),
           roleVisibleBusyBlocks.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400", children: "No blocked times found." }) : /* @__PURE__ */ jsx("div", { className: "space-y-2 max-h-64 overflow-y-auto", children: roleVisibleBusyBlocks.map((block) => {
             const counselorName = getCounselor(block.counselorId)?.name || block.counselorId;
@@ -390,7 +392,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
           /* @__PURE__ */ jsx("div", { className: "p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center", children: /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm uppercase tracking-wide", children: "Scheduled Sessions" }) }),
           /* @__PURE__ */ jsxs("div", { className: "divide-y divide-gray-100 overflow-y-auto flex-1 p-0", children: [
             appointments.filter((a) => {
-              if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin") return true;
+              if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") return true;
               if (currentRole === "Counselor") return a.counselorId === currentUser.id;
               return a.studentId === currentUser.id;
             }).sort((a, b) => {
@@ -445,7 +447,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join"
                   ] }),
-                  isPast && apt.status === "Scheduled" && currentRole === "Counselor" && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
+                  isPast && apt.status === "Scheduled" && (currentRole === "Counselor" || currentRole === "Country Coordinator") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
                     setSelectedAptId(apt.id);
                     setOutcomeModalOpen(true);
                   }, children: "Log Outcome" })
@@ -457,7 +459,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
         ] })
       ] })
     ] }),
-    outcomeModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95", children: [
+    outcomeModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Log Session Outcome" }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [

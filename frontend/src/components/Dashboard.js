@@ -16,14 +16,21 @@ import {
   Legend
 } from "recharts";
 import { formatRawLKR } from "../utils";
+import { normalizePipelineStatus } from "../pipeline";
 import { Users, Globe, Briefcase, MapPin, Banknote } from "lucide-react";
 const PIE_COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#6366F1"];
 const Dashboard = ({ students = [], invoices = [] }) => {
   const totalStudents = students.length;
-  const counselingCount = students.filter((student) => student.status === "Counseling" || student.status === "New Inquiry").length;
-  const uniAppsCount = students.filter((student) => ["Uni Application", "Offer Received", "Visa Pilot"].includes(student.status)).length;
-  const visasGranted = students.filter((student) => student.status === "Visa Pilot").length;
-  const activeApplications = students.filter((student) => student.status !== "New Inquiry").length;
+  const counselingCount = students.filter((student) => {
+    const x = normalizePipelineStatus(student.status);
+    return x === "Inquiry" || x === "Application";
+  }).length;
+  const uniAppsCount = students.filter((student) => {
+    const x = normalizePipelineStatus(student.status);
+    return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
+  }).length;
+  const visasGranted = students.filter((student) => normalizePipelineStatus(student.status) === "Visa").length;
+  const activeApplications = students.filter((student) => normalizePipelineStatus(student.status) !== "Inquiry").length;
   const successRate = uniAppsCount ? Math.round(visasGranted / uniAppsCount * 100) : 0;
   const estimatedRevenue = students.reduce((sum, student) => {
     const value = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
@@ -70,7 +77,7 @@ const Dashboard = ({ students = [], invoices = [] }) => {
       const key = String(student.branch || "Unknown").trim() || "Unknown";
       const current = grouped.get(key) || { name: key, students: 0, converted: 0 };
       current.students += 1;
-      if (["Uni Application", "Offer Received", "Visa Pilot"].includes(String(student.status || ""))) {
+      if (["Application", "Interview training", "Documentation", "Visa", "Enrolled", "Uni Application", "Offer Received", "Visa Pilot"].includes(normalizePipelineStatus(student.status))) {
         current.converted += 1;
       }
       grouped.set(key, current);

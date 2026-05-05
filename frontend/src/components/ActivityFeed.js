@@ -2,7 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { Upload, CheckCircle, XCircle, AlertTriangle, Shield, Clock } from "lucide-react";
 const ActivityFeed = ({ activities, limit, showRoleBadge = true }) => {
   const displayActivities = limit ? activities.slice(0, limit) : activities;
-  const genericLabels = new Set(["Counselor", "Manager", "Team Lead", "Admin", "Student", "System"]);
+  const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
   const resolveActorName = (activity) => {
     const actorName = String(activity.actorName || "").trim();
     const userName = String(activity.user || "").trim();

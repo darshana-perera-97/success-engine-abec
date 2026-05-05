@@ -1,10 +1,9 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState, useMemo } from "react";
-import { STUDENTS } from "../constants";
 import { createUniversityProgram, deleteUniversityProgram, getUniversityPrograms, updateUniversityProgramVisibility } from "../authApi";
 import { Search, BookOpen, MapPin, GraduationCap, CheckCircle, ArrowRight, Loader2, Sparkles, EyeOff, Eye, Trash2, PlusCircle, X, CalendarDays, Award } from "lucide-react";
 import { Button } from "./Button";
-const UniversityKnowledgeBase = ({ currentRole }) => {
+const UniversityKnowledgeBase = ({ currentRole, students = [] }) => {
   const [programs, setPrograms] = useState([]);
   const [isLoadingPrograms, setIsLoadingPrograms] = useState(true);
   const [programLoadError, setProgramLoadError] = useState("");
@@ -305,15 +304,15 @@ const UniversityKnowledgeBase = ({ currentRole }) => {
         ] })
       ] })
     ] }, prog.id)) }),
-    isAddUniversityModalOpen && canManagePrograms && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 p-4", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 overflow-hidden", children: [
-      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-slate-50", children: [
+    isAddUniversityModalOpen && canManagePrograms && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-hidden my-auto flex flex-col", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-slate-50 flex-shrink-0", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Add University Program" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Create a new option for the knowledge base." })
         ] }),
         /* @__PURE__ */ jsx("button", { onClick: closeAddUniversityModal, className: "text-slate-400 hover:text-slate-600 transition-colors", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
       ] }),
-      /* @__PURE__ */ jsxs("form", { className: "p-5 space-y-4", onSubmit: (e) => {
+      /* @__PURE__ */ jsxs("form", { className: "p-5 space-y-4 overflow-y-auto flex-1 min-h-0", onSubmit: (e) => {
         e.preventDefault();
         handleAddProgram();
       }, children: [
@@ -394,15 +393,15 @@ const UniversityKnowledgeBase = ({ currentRole }) => {
         ] })
       ] })
     ] }) }),
-    isApplyModalOpen && selectedProgram && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-lg border border-gray-100 overflow-hidden scale-100 animate-in zoom-in-95", children: [
-      /* @__PURE__ */ jsxs("div", { className: `p-6 text-white ${applyStep === "success" ? "bg-emerald-600" : "bg-[#0F172A]"}`, children: [
+    isApplyModalOpen && selectedProgram && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-lg border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-hidden my-auto flex flex-col", children: [
+      /* @__PURE__ */ jsxs("div", { className: `p-6 text-white flex-shrink-0 ${applyStep === "success" ? "bg-emerald-600" : "bg-[#0F172A]"}`, children: [
         /* @__PURE__ */ jsxs("h3", { className: "font-bold text-lg flex items-center gap-2", children: [
           applyStep === "success" ? /* @__PURE__ */ jsx(CheckCircle, {}) : /* @__PURE__ */ jsx(GraduationCap, {}),
           applyStep === "success" ? "Application Drafted!" : `Apply to ${selectedProgram.university}`
         ] }),
         /* @__PURE__ */ jsx("p", { className: "text-white/80 text-xs mt-1", children: applyStep === "success" ? "The student data has been synced to the portal." : `Program: ${selectedProgram.programName} (${selectedProgram.intake})` })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "p-6", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-6 flex-1 min-h-0 overflow-y-auto", children: [
         applyStep === "select" && /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
           /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600", children: "Select a student to auto-fill the application form from the CRM database." }),
           /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
@@ -415,13 +414,13 @@ const UniversityKnowledgeBase = ({ currentRole }) => {
                 onChange: (e) => setSelectedStudentId(e.target.value),
                 children: [
                   /* @__PURE__ */ jsx("option", { value: "", disabled: true, children: "Choose a student..." }),
-                  STUDENTS.filter((s) => s.country === selectedProgram.country).map((s) => /* @__PURE__ */ jsxs("option", { value: s.id, children: [
+                  students.filter((s) => s.country === selectedProgram.country).map((s) => /* @__PURE__ */ jsxs("option", { value: s.id, children: [
                     s.name,
                     " (ID: ",
                     s.id,
                     ")"
                   ] }, s.id)),
-                  STUDENTS.filter((s) => s.country !== selectedProgram.country).map((s) => /* @__PURE__ */ jsxs("option", { value: s.id, disabled: true, children: [
+                  students.filter((s) => s.country !== selectedProgram.country).map((s) => /* @__PURE__ */ jsxs("option", { value: s.id, disabled: true, children: [
                     s.name,
                     " (Different Country: ",
                     s.country,

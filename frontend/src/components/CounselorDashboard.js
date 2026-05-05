@@ -229,7 +229,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
             ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Visa Pilot" }),
+                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Visa" }),
                 /* @__PURE__ */ jsx("span", { className: "font-bold", children: "3" })
               ] }),
               /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-emerald-500 h-1.5 rounded-full", style: { width: "20%" } }) })

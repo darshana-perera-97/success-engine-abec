@@ -2,7 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
 import { KeyRound, Plus, Search, X } from "lucide-react";
-import { createAccount, getAccounts, getBranches, updateAdminAvatar } from "../authApi";
+import { createAccount, getAccounts, getBranches, getCountries, updateAdminAvatar } from "../authApi";
 
 function roleBadgeClass(role) {
   switch (role) {
@@ -14,6 +14,8 @@ function roleBadgeClass(role) {
       return "bg-violet-50 text-violet-800 border-violet-200";
     case "Counselor":
       return "bg-blue-50 text-blue-800 border-blue-200";
+    case "Country Coordinator":
+      return "bg-cyan-50 text-cyan-900 border-cyan-200";
     case "Student":
       return "bg-emerald-50 text-emerald-800 border-emerald-200";
     default:
@@ -31,6 +33,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
   const [loadError, setLoadError] = useState("");
   const [formError, setFormError] = useState("");
   const [branchOptions, setBranchOptions] = useState([]);
+  const [countryOptions, setCountryOptions] = useState([]);
   const fileRef = useRef(null);
   const [form, setForm] = useState({
     username: "",
@@ -38,13 +41,9 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     password: "",
     role: "Manager",
     branch: "",
-    teamLeadId: ""
+    country: ""
   });
   const [newAccountAvatar, setNewAccountAvatar] = useState("");
-  const teamLeadOptions = useMemo(
-    () => rows.filter((row) => String(row.role || "") === "Team Lead"),
-    [rows]
-  );
 
   useEffect(() => {
     const load = async () => {
@@ -64,6 +63,14 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
       setBranchOptions(result.data.map((b) => b.location));
     };
     loadBranches();
+  }, []);
+  useEffect(() => {
+    const loadCountries = async () => {
+      const result = await getCountries();
+      if (!result.ok) return;
+      setCountryOptions(result.data);
+    };
+    loadCountries();
   }, []);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -108,7 +115,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
       setFormError(result.error);
       return;
     }
-    setRows((prev) => prev.map((row) => row.role === "Admin" ? result.data : row));
+    setRows((prev) => prev.map((row) => row.id === "ADM001" ? result.data : row));
     onAdminAvatarUpdated?.(result.data);
   };
 
@@ -126,7 +133,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               }),
               /* @__PURE__ */ jsx("p", {
                 className: "text-sm text-slate-500 mt-0.5",
-                children: "Manage platform logins. Add new Manager/Team Lead/Counselor accounts and reset passwords."
+                children: "Manage platform logins. Add Admin, Manager, Counselor, or Country Coordinator accounts and reset passwords (except the primary admin login)."
               })
             ]
           }),
@@ -225,7 +232,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                             children: /* @__PURE__ */ jsxs("div", {
                               className: "flex justify-end gap-2",
                               children: [
-                                row.role === "Admin" ? /* @__PURE__ */ jsxs("div", {
+                                row.id === "ADM001" ? /* @__PURE__ */ jsxs("div", {
                                   className: "contents",
                                   children: [
                                     /* @__PURE__ */ jsx("input", {
@@ -249,7 +256,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                                     })
                                   ]
                                 }) : null,
-                                row.role !== "Admin" ? /* @__PURE__ */ jsxs(Button, {
+                                row.id !== "ADM001" ? /* @__PURE__ */ jsxs(Button, {
                                   type: "button",
                                   variant: "outline",
                                   size: "sm",
@@ -281,9 +288,9 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
         ].filter(Boolean)
       }),
       isAddOpen ? /* @__PURE__ */ jsx("div", {
-        className: "fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-900/50 backdrop-blur-sm p-4",
+        className: "fixed inset-0 z-[110] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm",
         children: /* @__PURE__ */ jsxs("div", {
-          className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl overflow-hidden",
+          className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto",
           children: [
             /* @__PURE__ */ jsxs("div", {
               className: "p-5 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between",
@@ -291,7 +298,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                 /* @__PURE__ */ jsxs("div", {
                   children: [
                     /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Add Account" }),
-                    /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Create a Manager, Team Lead, or Counselor account." })
+                    /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Create an Admin, Manager, Counselor, or Country Coordinator account." })
                   ]
                 }),
                 /* @__PURE__ */ jsx("button", {
@@ -310,19 +317,18 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               onSubmit: async (e) => {
                 e.preventDefault();
                 setFormError("");
-                if (form.role === "Counselor") {
-                  const selectedTeamLead = teamLeadOptions.find((lead) => lead.id === form.teamLeadId);
-                  if (!selectedTeamLead) {
-                    setFormError("Please assign a Team Lead for this counselor.");
-                    return;
-                  }
+                if (form.role === "Country Coordinator" && !form.country) {
+                  setFormError("Select a country for this Country Coordinator account.");
+                  return;
                 }
                 setIsSaving(true);
-                const selectedTeamLead = teamLeadOptions.find((lead) => lead.id === form.teamLeadId);
                 const result = await createAccount({
                   ...form,
-                  teamLeadName: form.role === "Counselor" ? selectedTeamLead?.username || "" : "",
-                  teamLeadEmail: form.role === "Counselor" ? selectedTeamLead?.email || "" : "",
+                  branch: form.role === "Admin" ? "" : form.branch,
+                  country: form.role === "Country Coordinator" ? form.country : "",
+                  teamLeadId: "",
+                  teamLeadName: "",
+                  teamLeadEmail: "",
                   avatar: newAccountAvatar || void 0
                 });
                 setIsSaving(false);
@@ -333,7 +339,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                 setRows((prev) => [result.data, ...prev]);
                 onAccountCreated?.(result.data);
                 setIsAddOpen(false);
-                setForm({ username: "", email: "", password: "", role: "Manager", branch: "", teamLeadId: "" });
+                setForm({ username: "", email: "", password: "", role: "Manager", branch: "", country: "" });
                 setNewAccountAvatar("");
               },
               children: [
@@ -386,47 +392,28 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                     /* @__PURE__ */ jsxs("select", {
                       className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
                       value: form.role,
-                      onChange: (e) => setForm((prev) => ({
-                        ...prev,
-                        role: e.target.value,
-                        teamLeadId: e.target.value === "Counselor" ? prev.teamLeadId || teamLeadOptions[0]?.id || "" : ""
-                      })),
+                      onChange: (e) => setForm((prev) => {
+                        const role = e.target.value;
+                        return {
+                          ...prev,
+                          role,
+                          branch: role === "Admin" ? "" : prev.branch,
+                          country: role === "Country Coordinator" ? prev.country || countryOptions[0] || "" : ""
+                        };
+                      }),
                       children: [
+                        /* @__PURE__ */ jsx("option", { value: "Admin", children: "Admin" }),
                         /* @__PURE__ */ jsx("option", { value: "Manager", children: "Manager" }),
-                        /* @__PURE__ */ jsx("option", { value: "Team Lead", children: "Team Lead" }),
-                        /* @__PURE__ */ jsx("option", { value: "Counselor", children: "Counselor" })
+                        /* @__PURE__ */ jsx("option", { value: "Counselor", children: "Counselor" }),
+                        /* @__PURE__ */ jsx("option", { value: "Country Coordinator", children: "Country Coordinator" })
                       ]
                     })
                   ]
                 }),
-                form.role === "Counselor" ? /* @__PURE__ */ jsxs("div", {
-                  className: "space-y-1.5",
-                  children: [
-                    /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold uppercase tracking-wide text-slate-700", children: "Assign Team Lead" }),
-                    /* @__PURE__ */ jsxs("select", {
-                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
-                      value: form.teamLeadId,
-                      onChange: (e) => setForm((prev) => ({ ...prev, teamLeadId: e.target.value })),
-                      required: true,
-                      disabled: teamLeadOptions.length === 0,
-                      children: [
-                        /* @__PURE__ */ jsx("option", {
-                          value: "",
-                          disabled: true,
-                          children: teamLeadOptions.length === 0 ? "No Team Leads available" : "Select Team Lead"
-                        }),
-                        ...teamLeadOptions.map((lead) => /* @__PURE__ */ jsxs("option", { value: lead.id, children: [
-                          lead.username,
-                          " (",
-                          lead.branch || "No branch",
-                          ")"
-                        ] }, lead.id))
-                      ]
-                    }),
-                    /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "Counselor accounts must be assigned under a Team Lead." })
-                  ]
-                }) : null,
-                /* @__PURE__ */ jsxs("div", {
+                form.role === "Admin" ? /* @__PURE__ */ jsx("p", {
+                  className: "text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-md px-3 py-2",
+                  children: "Admin accounts are global and are not assigned to a branch."
+                }) : /* @__PURE__ */ jsxs("div", {
                   className: "space-y-1.5",
                   children: [
                     /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold uppercase tracking-wide text-slate-700", children: "Branch" }),
@@ -448,6 +435,28 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                     /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "Only branches saved in Branch Analytics can be selected." })
                   ]
                 }),
+                form.role === "Country Coordinator" ? /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold uppercase tracking-wide text-slate-700", children: "Country (portfolio)" }),
+                    /* @__PURE__ */ jsxs("select", {
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: form.country,
+                      onChange: (e) => setForm((prev) => ({ ...prev, country: e.target.value })),
+                      required: true,
+                      disabled: countryOptions.length === 0,
+                      children: [
+                        /* @__PURE__ */ jsx("option", {
+                          value: "",
+                          disabled: true,
+                          children: countryOptions.length === 0 ? "Add countries in Settings first" : "Select country"
+                        }),
+                        ...countryOptions.map((c) => /* @__PURE__ */ jsx("option", { value: c, children: c }, c))
+                      ]
+                    }),
+                    /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This coordinator only sees students whose destination country matches this value." })
+                  ]
+                }) : null,
                 /* @__PURE__ */ jsxs("div", {
                   className: "space-y-1.5",
                   children: [
@@ -475,7 +484,12 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                   className: "pt-2 flex justify-end gap-2",
                   children: [
                     /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: () => setIsAddOpen(false), children: "Cancel" }),
-                    /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isSaving, disabled: branchOptions.length === 0 || form.role === "Counselor" && teamLeadOptions.length === 0, children: "Save Account" })
+                    /* @__PURE__ */ jsx(Button, {
+                      type: "submit",
+                      isLoading: isSaving,
+                      disabled: (form.role !== "Admin" && branchOptions.length === 0) || (form.role === "Country Coordinator" && (!form.country || countryOptions.length === 0)),
+                      children: "Save Account"
+                    })
                   ]
                 })
               ].filter(Boolean)

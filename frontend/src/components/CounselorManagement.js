@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo, useEffect } from "react";
 import { formatLKR } from "../utils";
-import { getAccounts, getBranches, updateCounselorTeamLead } from "../authApi";
+import { getAccounts, getBranches } from "../authApi";
 import {
   Users,
   TrendingUp,
@@ -22,9 +22,9 @@ import {
   MapPin,
   Phone,
   KeyRound,
-  UserCog
 } from "lucide-react";
 import { Button } from "./Button";
+import { normalizePipelineStatus } from "../pipeline";
 import {
   XAxis,
   YAxis,
@@ -39,27 +39,18 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const [searchTerm, setSearchTerm] = useState("");
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isAssignLeadModalOpen, setIsAssignLeadModalOpen] = useState(false);
   const [isAddingCounselor, setIsAddingCounselor] = useState(false);
-  const [isUpdatingTeamLead, setIsUpdatingTeamLead] = useState(false);
   const [addCounselorError, setAddCounselorError] = useState("");
-  const [assignLeadError, setAssignLeadError] = useState("");
   const [branchOptions, setBranchOptions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [targetCounselorId, setTargetCounselorId] = useState("");
-  const [selectedCounselorForLead, setSelectedCounselorForLead] = useState(null);
-  const [selectedTeamLeadId, setSelectedTeamLeadId] = useState("");
-  const [newCounselor, setNewCounselor] = useState({ name: "", email: "", branch: "", role: "Senior Counselor", phone: "", password: "", teamLeadId: "" });
+  const [newCounselor, setNewCounselor] = useState({ name: "", email: "", branch: "", role: "Senior Counselor", phone: "", password: "" });
   const teamLeadOptions = useMemo(() => accounts.filter((a) => String(a.role || "") === "Team Lead"), [accounts]);
   useEffect(() => {
     const loadAccounts = async () => {
       const result = await getAccounts();
       if (!result.ok) return;
       setAccounts(result.data);
-      const teamLeads = result.data.filter((row) => String(row.role || "") === "Team Lead");
-      if (teamLeads.length > 0) {
-        setNewCounselor((prev) => prev.teamLeadId ? prev : { ...prev, teamLeadId: teamLeads[0].id });
-      }
     };
     loadAccounts();
   }, []);
@@ -77,7 +68,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   }, []);
   const handleAddCounselor = async (e) => {
     e.preventDefault();
-    if (!newCounselor.name || !newCounselor.email || !newCounselor.branch || !newCounselor.password || !newCounselor.teamLeadId) return;
+    if (!newCounselor.name || !newCounselor.email || !newCounselor.branch || !newCounselor.password) return;
     setAddCounselorError("");
     setIsAddingCounselor(true);
     const result = onAddCounselor ? await onAddCounselor(newCounselor) : { ok: true };
@@ -105,8 +96,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       branch: branchOptions[0] || "",
       role: "Senior Counselor",
       phone: "",
-      password: "",
-      teamLeadId: teamLeadOptions[0]?.id || ""
+      password: ""
     });
     setAddCounselorError("");
   };
@@ -128,14 +118,17 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       const myStudents = students.filter((s) => s.counselor === counselorId);
       const myTasks = tasks.filter((t) => t.assigned_to.includes(counselorId));
       const activeStudents = myStudents.length;
-      const visaGranted = myStudents.filter((s) => s.status === "Visa Pilot").length;
+      const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
       const maxCapacity = 35;
       const capacityLoad = Math.round(activeStudents / maxCapacity * 100);
       const successRate = activeStudents > 0 ? Math.round(visaGranted / activeStudents * 100) : 0;
       const sla = Math.max(0, 100 - overdueTasks * 5);
       const revenue = myStudents.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 5e-3, 0);
-      const converted = myStudents.filter((s) => !["New Inquiry", "Counseling"].includes(s.status)).length;
+      const converted = myStudents.filter((s) => {
+        const x = normalizePipelineStatus(s.status);
+        return x !== "Inquiry" && x !== "Application";
+      }).length;
       const conversionRate = activeStudents > 0 ? Math.round(converted / activeStudents * 100) : 0;
       const npsScore = Number.isFinite(linkedEmployee?.npsScore) ? linkedEmployee.npsScore : 0;
       const resolvedTeamLeadById = teamLeadOptions.find((lead) => String(lead.id || "") === String(account.teamLeadId || ""));
@@ -172,40 +165,10 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const filteredCounselors = counselors.filter(
     (c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.branch.toLowerCase().includes(searchTerm.toLowerCase())
   );
-  const canManageTeamLead = currentRole === "Admin" || currentRole === "Manager";
-  const openAssignLeadModal = (counselor) => {
-    setSelectedCounselorForLead(counselor);
-    setSelectedTeamLeadId(counselor.teamLeadId || teamLeadOptions[0]?.id || "");
-    setAssignLeadError("");
-    setIsAssignLeadModalOpen(true);
-  };
-  const handleAssignTeamLead = async () => {
-    if (!selectedCounselorForLead?.accountId || !selectedTeamLeadId) {
-      setAssignLeadError("Please select a Team Lead.");
-      return;
-    }
-    setAssignLeadError("");
-    setIsUpdatingTeamLead(true);
-    const result = await updateCounselorTeamLead(selectedCounselorForLead.accountId, selectedTeamLeadId);
-    setIsUpdatingTeamLead(false);
-    if (!result.ok) {
-      setAssignLeadError(result.error || "Failed to update Team Lead.");
-      return;
-    }
-    setAccounts((prev) => prev.map((row) => row.id === result.data.id ? result.data : row));
-    setIsAssignLeadModalOpen(false);
-    setSelectedCounselorForLead(null);
-    setSelectedTeamLeadId("");
-    if (onAddActivity) {
-      onAddActivity({
-        user: currentRole || "Admin",
-        role: currentRole || "Admin",
-        action: "reassigned team lead",
-        target: result.data.username || selectedCounselorForLead.name || "Counselor",
-        type: "system"
-      });
-    }
-  };
+  const topPerformer = useMemo(() => {
+    if (counselors.length === 0) return null;
+    return counselors.slice().sort((a, b) => b.metrics.visaGranted - a.metrics.visaGranted)[0];
+  }, [counselors]);
   const handleTransfer = () => {
     if (selectedCounselorId && targetCounselorId) {
       onTransferStudents(selectedCounselorId, targetCounselorId);
@@ -218,9 +181,12 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     if (!counselor) return null;
     const funnelData = [
       { stage: "Inquiries", count: counselor.students.length },
-      { stage: "Counseling", count: counselor.students.filter((s) => s.status !== "New Inquiry").length },
-      { stage: "Applied", count: counselor.students.filter((s) => ["Uni Application", "Offer Received", "Visa Pilot"].includes(s.status)).length },
-      { stage: "Visas", count: counselor.students.filter((s) => s.status === "Visa Pilot").length }
+      { stage: "Counseling", count: counselor.students.filter((s) => normalizePipelineStatus(s.status) !== "Inquiry").length },
+      { stage: "Applied", count: counselor.students.filter((s) => {
+        const x = normalizePipelineStatus(s.status);
+        return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
+      }).length },
+      { stage: "Visas", count: counselor.students.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length }
     ];
     return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in slide-in-from-right-8 duration-500 pb-10", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
@@ -250,7 +216,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         ] }),
         /* @__PURE__ */ jsx("div", { className: "flex gap-2", children: /* @__PURE__ */ jsx(Button, { onClick: () => setIsTransferModalOpen(true), children: "Transfer" }) })
       ] }),
-      isTransferModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95", children: [
+      isTransferModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100", children: [
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Transfer Students" }),
@@ -471,15 +437,15 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         ] })
       ] })
     ] }),
-    isAddModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 overflow-hidden", children: [
-      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-slate-50", children: [
+    isAddModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-hidden my-auto flex flex-col", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-slate-50 flex-shrink-0", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Add New Counselor" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Onboard a new member to the team." })
         ] }),
         /* @__PURE__ */ jsx("button", { onClick: () => setIsAddModalOpen(false), className: "text-slate-400 hover:text-slate-600 transition-colors", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
       ] }),
-        /* @__PURE__ */ jsxs("form", { className: "p-5 space-y-4", onSubmit: handleAddCounselor, children: [
+        /* @__PURE__ */ jsxs("form", { className: "p-5 space-y-4 overflow-y-auto flex-1 min-h-0", onSubmit: handleAddCounselor, children: [
           addCounselorError && /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: addCounselorError }),
         /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-4", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-2", children: [
@@ -542,36 +508,6 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
               )
             ] })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "col-span-2", children: [
-            /* @__PURE__ */ jsx("label", { className: "block text-xs font-bold text-slate-500 uppercase mb-1", children: "Assign Team Lead" }),
-            /* @__PURE__ */ jsxs("div", { className: "relative", children: [
-              /* @__PURE__ */ jsx(UserCog, { className: "absolute left-3 top-2.5 text-slate-400", size: 16 }),
-              /* @__PURE__ */ jsxs(
-                "select",
-                {
-                  name: "teamLeadId",
-                  required: true,
-                  className: "w-full pl-10 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 outline-none appearance-none bg-white",
-                  value: newCounselor.teamLeadId,
-                  onChange: (e) => setNewCounselor({ ...newCounselor, teamLeadId: e.target.value }),
-                  disabled: teamLeadOptions.length === 0,
-                  children: [
-                    /* @__PURE__ */ jsx("option", {
-                      value: "",
-                      disabled: true,
-                      children: teamLeadOptions.length === 0 ? "No Team Leads available" : "Select Team Lead"
-                    }),
-                    ...teamLeadOptions.map((lead) => /* @__PURE__ */ jsxs("option", { value: lead.id, children: [
-                      lead.username,
-                      " (",
-                      lead.branch || "No branch",
-                      ")"
-                    ] }, lead.id))
-                  ]
-                }
-              )
-            ] })
-          ] }),
           /* @__PURE__ */ jsx("input", { type: "hidden", name: "role", value: newCounselor.role }),
           /* @__PURE__ */ jsxs("div", { className: "col-span-2", children: [
             /* @__PURE__ */ jsx("label", { className: "block text-xs font-bold text-slate-500 uppercase mb-1", children: "Password" }),
@@ -612,57 +548,21 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         ] }),
           /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4 border-t border-gray-100", children: [
             /* @__PURE__ */ jsx(Button, { variant: "ghost", type: "button", onClick: () => setIsAddModalOpen(false), disabled: isAddingCounselor, children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isAddingCounselor, disabled: teamLeadOptions.length === 0, children: "Create Profile" })
+            /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isAddingCounselor, disabled: branchOptions.length === 0, children: "Create Profile" })
         ] })
       ] })
     ] }) }),
-    isAssignLeadModalOpen && selectedCounselorForLead && canManageTeamLead ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 overflow-hidden", children: [
-      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-slate-50", children: [
-        /* @__PURE__ */ jsxs("div", { children: [
-          /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Assign Team Lead" }),
-          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
-            "Update Team Lead for ",
-            selectedCounselorForLead.name
-          ] })
-        ] }),
-        /* @__PURE__ */ jsx("button", { onClick: () => setIsAssignLeadModalOpen(false), className: "text-slate-400 hover:text-slate-600 transition-colors", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
-      ] }),
-      /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
-        assignLeadError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: assignLeadError }) : null,
-        /* @__PURE__ */ jsxs("div", { className: "space-y-1.5", children: [
-          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold uppercase tracking-wide text-slate-700", children: "Team Lead" }),
-          /* @__PURE__ */ jsxs("select", {
-            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
-            value: selectedTeamLeadId,
-            onChange: (e) => setSelectedTeamLeadId(e.target.value),
-            children: [
-              /* @__PURE__ */ jsx("option", { value: "", disabled: true, children: "Select Team Lead" }),
-              ...teamLeadOptions.map((lead) => /* @__PURE__ */ jsxs("option", { value: lead.id, children: [
-                lead.username,
-                " (",
-                lead.branch || "No branch",
-                ")"
-              ] }, lead.id))
-            ]
-          })
-        ] }),
-        /* @__PURE__ */ jsxs("div", { className: "pt-2 flex justify-end gap-2", children: [
-          /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: () => setIsAssignLeadModalOpen(false), disabled: isUpdatingTeamLead, children: "Cancel" }),
-          /* @__PURE__ */ jsx(Button, { type: "button", onClick: handleAssignTeamLead, isLoading: isUpdatingTeamLead, disabled: teamLeadOptions.length === 0 || !selectedTeamLeadId, children: "Save Team Lead" })
-        ] })
-      ] })
-    ] }) }) : null,
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4", children: [
       /* @__PURE__ */ jsx(MetricCard, { title: "Active Counselors", value: counselors.length.toString(), icon: /* @__PURE__ */ jsx(Briefcase, { size: 18 }) }),
       /* @__PURE__ */ jsx(MetricCard, { title: "Avg SLA Score", value: counselors.length > 0 ? `${Math.round(counselors.reduce((acc, c) => acc + c.metrics.sla, 0) / counselors.length)}%` : "0%", icon: /* @__PURE__ */ jsx(CheckCircle, { size: 18 }), color: "text-emerald-600" }),
       /* @__PURE__ */ jsx(MetricCard, { title: "Total Students", value: counselors.reduce((acc, c) => acc + c.metrics.activeStudents, 0).toString(), icon: /* @__PURE__ */ jsx(Users, { size: 18 }) }),
       /* @__PURE__ */ jsxs("div", { className: "bg-gradient-to-br from-[#D32722] via-[#BF342F] to-[#883560] p-5 rounded-xl text-white shadow-lg relative overflow-hidden flex items-center gap-4", children: [
-        /* @__PURE__ */ jsx("div", { className: "w-16 h-16 bg-white rounded-xl flex-shrink-0 overflow-hidden shadow-sm border-2 border-white/20 flex items-center justify-center text-slate-700 font-bold", children: counselors.length > 0 ? (counselors[0].name || "C").charAt(0).toUpperCase() : "N/A" }),
+        /* @__PURE__ */ jsx("div", { className: "w-16 h-16 bg-white rounded-full flex-shrink-0 overflow-hidden shadow-sm border-2 border-white/20 flex items-center justify-center text-slate-700 font-bold text-lg", children: topPerformer ? topPerformer.avatar ? /* @__PURE__ */ jsx("img", { src: topPerformer.avatar, alt: topPerformer.name || "", className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : (topPerformer.name || "C").charAt(0).toUpperCase() : "N/A" }),
         /* @__PURE__ */ jsxs("div", { className: "relative z-10 flex-1", children: [
           /* @__PURE__ */ jsx("div", { className: "text-white/80 text-xs font-bold uppercase tracking-wider mb-1", children: "Top Performer" }),
-          /* @__PURE__ */ jsx("div", { className: "text-xl font-bold", children: counselors.length > 0 ? counselors.slice().sort((a, b) => b.metrics.visaGranted - a.metrics.visaGranted)[0].name : "No counselor data" }),
+          /* @__PURE__ */ jsx("div", { className: "text-xl font-bold", children: topPerformer ? topPerformer.name : "No counselor data" }),
           /* @__PURE__ */ jsxs("div", { className: "text-sm text-white/90 font-medium mt-0.5", children: [
-            counselors.length > 0 ? counselors.slice().sort((a, b) => b.metrics.visaGranted - a.metrics.visaGranted)[0].metrics.visaGranted : 0,
+            topPerformer ? topPerformer.metrics.visaGranted : 0,
             " Visas Granted"
           ] })
         ] }),
@@ -719,7 +619,6 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           "%"
         ] }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2", children: [
-          canManageTeamLead ? /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => openAssignLeadModal(c), children: c.teamLeadName && c.teamLeadName !== "Unassigned" ? "Change Lead" : "Assign Lead" }) : null,
           /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => setSelectedCounselorId(c.id), children: [
             "View ",
             /* @__PURE__ */ jsx(ArrowRight, { size: 14, className: "ml-1" })

@@ -5,10 +5,11 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 
-const PORT = parseInt(process.env.PORT || "", 10) || 3333;
+const PORT = parseInt(process.env.PORT || "", 10) || 3334;
 const USERS_FILE = path.join(__dirname, "data", "users.json");
 const STUDEMTS_FILE = path.join(__dirname, "data", "studemts.json");
 const BRANCHES_FILE = path.join(__dirname, "data", "branches.json");
+const COUNTRIES_FILE = path.join(__dirname, "data", "countries.json");
 const UNIVERSITY_FILE = path.join(__dirname, "data", "university.json");
 const CHATS_FILE = path.join(__dirname, "data", "chats.json");
 const ACTIVITIES_FILE = path.join(__dirname, "data", "activities.json");
@@ -17,6 +18,7 @@ const BOOKINGS_FILE = path.join(__dirname, "data", "bookings.json");
 const APPOINTMENTS_FILE = path.join(__dirname, "data", "appointments.json");
 const INVOICES_FILE = path.join(__dirname, "data", "invoices.json");
 const TASKS_FILE = path.join(__dirname, "data", "tasks.json");
+const REQ_STUDENTS_FILE = path.join(__dirname, "data", "req-students.json");
 const CHAT_FILES_DIR = path.join(__dirname, "data", "chats");
 const ASSETS_DIR = path.join(__dirname, "data", "assets");
 const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
@@ -43,7 +45,8 @@ const DEFAULT_MEETING_SETTINGS = {
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
-const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor"]);
+const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor", "Admin", "Country Coordinator"]);
+const DEFAULT_COUNTRY_NAMES = ["UK", "USA", "Canada", "Australia", "New Zealand"];
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -141,6 +144,75 @@ async function readBranches() {
 async function writeBranches(branches) {
   await fs.mkdir(path.dirname(BRANCHES_FILE), { recursive: true });
   await fs.writeFile(BRANCHES_FILE, JSON.stringify(branches, null, 2));
+}
+
+async function readCountries() {
+  try {
+    const raw = await fs.readFile(COUNTRIES_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      await writeCountries([...DEFAULT_COUNTRY_NAMES]);
+      return [...DEFAULT_COUNTRY_NAMES];
+    }
+    const names = parsed
+      .map((x) => (typeof x === "string" ? x : String(x?.name || "")).trim())
+      .filter(Boolean);
+    if (names.length === 0) {
+      await writeCountries([...DEFAULT_COUNTRY_NAMES]);
+      return [...DEFAULT_COUNTRY_NAMES];
+    }
+    return Array.from(new Map(names.map((n) => [n.toLowerCase(), n])).values()).sort((a, b) => a.localeCompare(b));
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      await writeCountries([...DEFAULT_COUNTRY_NAMES]);
+      return [...DEFAULT_COUNTRY_NAMES];
+    }
+    throw error;
+  }
+}
+
+async function writeCountries(list) {
+  await fs.mkdir(path.dirname(COUNTRIES_FILE), { recursive: true });
+  const unique = Array.from(
+    new Map(
+      (list || [])
+        .map((n) => String(n || "").trim())
+        .filter(Boolean)
+        .map((n) => [n.toLowerCase(), n])
+    ).values()
+  ).sort((a, b) => a.localeCompare(b));
+  await fs.writeFile(COUNTRIES_FILE, JSON.stringify(unique, null, 2));
+}
+
+async function readReqStudents() {
+  try {
+    const raw = await fs.readFile(REQ_STUDENTS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function appendReqStudent(entry) {
+  const list = await readReqStudents();
+  list.push(entry);
+  await fs.mkdir(path.dirname(REQ_STUDENTS_FILE), { recursive: true });
+  await fs.writeFile(REQ_STUDENTS_FILE, JSON.stringify(list, null, 2));
+}
+
+async function removeReqStudentById(requestId) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  const list = await readReqStudents();
+  const next = list.filter((entry) => String(entry.id || "") !== id);
+  if (next.length === list.length) {
+    return { ok: false, error: "Request not found." };
+  }
+  await fs.mkdir(path.dirname(REQ_STUDENTS_FILE), { recursive: true });
+  await fs.writeFile(REQ_STUDENTS_FILE, JSON.stringify(next, null, 2));
+  return { ok: true };
 }
 
 async function readUniversityPrograms() {
@@ -310,6 +382,7 @@ function sanitizeAccount(user) {
     phone: user.phone || "",
     role: user.role,
     branch: user.branch,
+    country: user.country || "",
     teamLeadId: user.teamLeadId,
     teamLeadName: user.teamLeadName,
     teamLeadEmail: user.teamLeadEmail,
@@ -579,6 +652,7 @@ const server = http.createServer(async (req, res) => {
             email: matchedUser.email,
             role: normalizeLoginRole(matchedUser.role),
             branch: matchedUser.branch || null,
+            country: matchedUser.country || null,
           },
         });
         return;
@@ -643,15 +717,34 @@ const server = http.createServer(async (req, res) => {
       const teamLeadName = String(body.teamLeadName || "").trim();
       const teamLeadEmail = normalizeEmail(body.teamLeadEmail);
       const avatarDataUrl = String(body.avatar || "");
+      const country = String(body.country || "").trim();
 
-      if (!username || !email || !password || !role || !branch) {
-        sendJson(res, 400, { ok: false, error: "All fields are required." });
+      if (!username || !email || !password || !role) {
+        sendJson(res, 400, { ok: false, error: "Username, email, password, and role are required." });
+        return;
+      }
+
+      if (role !== "Admin" && !branch) {
+        sendJson(res, 400, { ok: false, error: "Branch is required for this role." });
         return;
       }
 
       if (!ALLOWED_ROLES.has(role)) {
-        sendJson(res, 400, { ok: false, error: "Role must be Manager, Team Lead, or Consultor." });
+        sendJson(res, 400, { ok: false, error: "Invalid role." });
         return;
+      }
+
+      if (role === "Country Coordinator") {
+        if (!country) {
+          sendJson(res, 400, { ok: false, error: "Country is required for Country Coordinator accounts." });
+          return;
+        }
+        const countriesList = await readCountries();
+        const allowedCountry = countriesList.some((c) => String(c).trim().toLowerCase() === country.toLowerCase());
+        if (!allowedCountry) {
+          sendJson(res, 400, { ok: false, error: "Please select a country from the saved list (Settings)." });
+          return;
+        }
       }
 
       const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -671,11 +764,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       let linkedTeamLead = null;
-      if (role === "Consultor") {
-        if (!teamLeadId) {
-          sendJson(res, 400, { ok: false, error: "Counselor accounts must be assigned to a Team Lead." });
-          return;
-        }
+      if (role === "Consultor" && teamLeadId) {
         linkedTeamLead = users.find((u) => String(u.id || "") === teamLeadId && String(u.role || "") === "Team Lead");
         if (!linkedTeamLead) {
           sendJson(res, 400, { ok: false, error: "Selected Team Lead is invalid." });
@@ -683,13 +772,15 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const savedBranches = await readBranches();
-      const branchExists = savedBranches.some(
-        (b) => String(b.location || "").toLowerCase() === branch.toLowerCase()
-      );
-      if (!branchExists) {
-        sendJson(res, 400, { ok: false, error: "Please select a valid saved branch." });
-        return;
+      if (role !== "Admin") {
+        const savedBranches = await readBranches();
+        const branchExists = savedBranches.some(
+          (b) => String(b.location || "").toLowerCase() === branch.toLowerCase()
+        );
+        if (!branchExists) {
+          sendJson(res, 400, { ok: false, error: "Please select a valid saved branch." });
+          return;
+        }
       }
 
       let avatarPath = DEFAULT_MALE_AVATAR_PATH;
@@ -708,10 +799,11 @@ const server = http.createServer(async (req, res) => {
         email,
         password,
         role,
-        branch,
-        teamLeadId: role === "Consultor" ? teamLeadId : "",
-        teamLeadName: role === "Consultor" ? teamLeadName || String(linkedTeamLead?.username || "").trim() : "",
-        teamLeadEmail: role === "Consultor" ? teamLeadEmail || normalizeEmail(linkedTeamLead?.email) : "",
+        branch: role === "Admin" ? "" : branch,
+        country: role === "Country Coordinator" ? country : "",
+        teamLeadId: role === "Consultor" && linkedTeamLead ? teamLeadId : "",
+        teamLeadName: role === "Consultor" && linkedTeamLead ? teamLeadName || String(linkedTeamLead?.username || "").trim() : "",
+        teamLeadEmail: role === "Consultor" && linkedTeamLead ? teamLeadEmail || normalizeEmail(linkedTeamLead?.email) : "",
         avatar: avatarPath,
         createdAt: new Date().toISOString(),
       };
@@ -942,6 +1034,181 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, data: branches });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load branches." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/countries") {
+    try {
+      const countries = await readCountries();
+      sendJson(res, 200, { ok: true, data: countries });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load countries." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/student-registration") {
+    try {
+      const body = await parseBody(req);
+      const name = String(body.name || "").trim();
+      const email = normalizeEmail(body.email);
+      const phone = String(body.phone || body.contactNumber || "").trim();
+      const countryToVisitRaw = String(body.countryToVisit || "").trim();
+      const city = String(body.city || "").trim();
+      const nearestOfficeRaw = String(body.nearestOffice || "").trim();
+      const currentEducationLevel = String(body.currentEducationLevel || "").trim();
+      const intendedProgram = String(body.intendedProgram || "").trim();
+      const message = String(body.message || "").trim();
+
+      if (!name || !email || !phone || !countryToVisitRaw) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Name, email, contact number, and country to visit are required.",
+        });
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(res, 400, { ok: false, error: "Please enter a valid email address." });
+        return;
+      }
+      if (!currentEducationLevel || !intendedProgram) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Current education level and intended program of study are required.",
+        });
+        return;
+      }
+
+      const countriesList = await readCountries();
+      const matchedCountry = countriesList.find(
+        (c) => String(c).trim().toLowerCase() === countryToVisitRaw.toLowerCase()
+      );
+      if (!matchedCountry) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Please choose a valid country to visit from the list.",
+        });
+        return;
+      }
+
+      const branchesList = await readBranches();
+      const branchLocations = branchesList
+        .map((b) => String(b?.location || "").trim())
+        .filter(Boolean);
+      let nearestOffice = null;
+      if (branchLocations.length > 0) {
+        if (!nearestOfficeRaw) {
+          sendJson(res, 400, {
+            ok: false,
+            error: "Please choose your nearest office from the list.",
+          });
+          return;
+        }
+        const matchedOffice = branchLocations.find(
+          (loc) => loc.toLowerCase() === nearestOfficeRaw.toLowerCase()
+        );
+        if (!matchedOffice) {
+          sendJson(res, 400, {
+            ok: false,
+            error: "Please choose a valid nearest office from the list.",
+          });
+          return;
+        }
+        nearestOffice = matchedOffice;
+      }
+
+      const entry = {
+        id: `REQ-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        submittedAt: new Date().toISOString(),
+        name,
+        email,
+        phone,
+        countryToVisit: String(matchedCountry).trim(),
+        city: city || null,
+        nearestOffice,
+        currentEducationLevel,
+        intendedProgram,
+        message: message || null,
+        source: "student-reg-form",
+      };
+
+      await appendReqStudent(entry);
+      sendJson(res, 201, {
+        ok: true,
+        data: { id: entry.id, submittedAt: entry.submittedAt },
+      });
+    } catch (e) {
+      if (e && e.message === "Invalid JSON") {
+        sendJson(res, 400, { ok: false, error: "Invalid request body." });
+        return;
+      }
+      sendJson(res, 500, { ok: false, error: "Could not save your registration. Please try again later." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/req-students") {
+    try {
+      const branchParam = String(url.searchParams.get("branch") || "").trim();
+      const all = await readReqStudents();
+      if (!branchParam) {
+        sendJson(res, 200, { ok: true, data: all });
+        return;
+      }
+      const key = branchParam.toLowerCase();
+      const filtered = all.filter((entry) => {
+        const office = String(entry.nearestOffice || "").trim().toLowerCase();
+        // Older submissions have no nearest office — still surface them so managers can add to pipeline.
+        if (!office) return true;
+        if (office === key) return true;
+        if (key.includes(office) || office.includes(key)) return true;
+        return false;
+      });
+      sendJson(res, 200, { ok: true, data: filtered });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load requested students." });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/req-students/")) {
+    try {
+      const requestId = decodeURIComponent(url.pathname.replace("/api/req-students/", "").trim()).replace(/\/+$/, "");
+      if (!requestId) {
+        sendJson(res, 400, { ok: false, error: "Request id is required." });
+        return;
+      }
+      const removed = await removeReqStudentById(requestId);
+      if (!removed.ok) {
+        sendJson(res, 404, { ok: false, error: removed.error || "Request not found." });
+        return;
+      }
+      sendJson(res, 200, { ok: true, data: { id: requestId } });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to remove request." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/countries") {
+    try {
+      const body = await parseBody(req);
+      const name = String(body.name || "").trim();
+      if (!name) {
+        sendJson(res, 400, { ok: false, error: "Country name is required." });
+        return;
+      }
+      const existing = await readCountries();
+      if (existing.some((c) => String(c).toLowerCase() === name.toLowerCase())) {
+        sendJson(res, 409, { ok: false, error: "This country is already in the list." });
+        return;
+      }
+      const next = [...existing, name].sort((a, b) => a.localeCompare(b));
+      await writeCountries(next);
+      sendJson(res, 201, { ok: true, data: next });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
     return;
   }
@@ -1674,7 +1941,7 @@ const server = http.createServer(async (req, res) => {
       const password = String(body.password || "").trim();
       const ielts = String(body.ielts || "").trim() || "Pending";
       const gpa = String(body.gpa || "").trim();
-      const status = String(body.status || "").trim() || "New Inquiry";
+      const status = String(body.status || "").trim() || "Inquiry";
       const budget = String(body.budget || "").trim();
       const priority = String(body.priority || "").trim() || "Medium";
       const counselor = String(body.counselor || "").trim() || "Unassigned";
@@ -1708,6 +1975,7 @@ const server = http.createServer(async (req, res) => {
         const match = String(student.id || "").match(/^STU(\d+)$/);
         return match ? Math.max(max, Number(match[1])) : max;
       }, 999);
+      const nowIso = new Date().toISOString();
       const student = {
         id: `STU${maxStudentNumber + 1}`,
         name,
@@ -1725,7 +1993,8 @@ const server = http.createServer(async (req, res) => {
         notes,
         lastEducationDate,
         documents,
-        createdAt: new Date().toISOString()
+        createdAt: nowIso,
+        stageEnteredAt: nowIso
       };
       const updated = [...studemts, student];
       await writeStudemts(updated);

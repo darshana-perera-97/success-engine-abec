@@ -17,7 +17,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
     e.preventDefault();
     setSubmitError("");
     let finalAssignedTo = assignedTo;
-    if (userRole === "Counselor" && currentUser) {
+    if ((userRole === "Counselor" || userRole === "Country Coordinator") && currentUser) {
       finalAssignedTo = [currentUser.id];
     }
     if (!description || !studentId || !dueDate) return;
@@ -25,7 +25,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
       id: `T${Math.floor(Math.random() * 1e4)}`,
       task: description,
       student_id: studentId,
-      assigned_to: isPrivate ? userRole === "Counselor" && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
+      assigned_to: isPrivate ? (userRole === "Counselor" || userRole === "Country Coordinator") && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
       priority,
       status: "Pending",
       dueDate,
@@ -52,15 +52,15 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
   }));
   const showAssignTo = userRole === "Manager" || userRole === "Admin";
   const showRelatedStudent = !student;
-  return /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-xl border border-gray-100 scale-100 animate-in zoom-in-95 duration-200 mx-4 relative", children: [
-    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 rounded-t-xl", children: [
+  return /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-xl border border-gray-100 scale-100 animate-in zoom-in-95 duration-200 relative flex flex-col max-h-[90vh] my-auto overflow-hidden", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 rounded-t-xl flex-shrink-0", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-[#0F172A]", children: "Create New Task" }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: userRole === "Counselor" ? "Add a task to your list." : "Assign an action item to a team member." })
       ] }),
       /* @__PURE__ */ jsx("button", { onClick: onClose, className: "text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-md", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
     ] }),
-    /* @__PURE__ */ jsxs("form", { onSubmit: handleSubmit, className: "p-6 space-y-5", children: [
+    /* @__PURE__ */ jsxs("form", { onSubmit: handleSubmit, className: "p-6 space-y-5 overflow-y-auto flex-1 min-h-0", children: [
       /* @__PURE__ */ jsxs("div", { className: "space-y-1.5", children: [
         /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 uppercase tracking-wide", children: "Task Description" }),
         /* @__PURE__ */ jsx(
