@@ -24,6 +24,23 @@ export async function loginAdmin(email, password) {
   }
 }
 
+export async function changeStudentDefaultPassword(email, currentPassword, newPassword) {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/student/change-default-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, currentPassword, newPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to update password." };
+    }
+    return { ok: true, message: data.message || "Password updated successfully." };
+  } catch {
+    return { ok: false, error: "Cannot reach login server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function requestPasswordOtp(email) {
   try {
     const res = await fetch(`${API_BASE}/api/auth/forgot-password/request`, {

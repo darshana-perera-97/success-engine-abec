@@ -15,6 +15,7 @@ const ForgotPasswordScreen = () => {
   const [otpSent, setOtpSent] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isResetSuccessful, setIsResetSuccessful] = useState(false);
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -22,6 +23,7 @@ const ForgotPasswordScreen = () => {
     e.preventDefault();
     setError("");
     setInfo("");
+    setIsResetSuccessful(false);
     if (!normalizedEmail) {
       setError("Please enter your registered email.");
       return;
@@ -45,6 +47,7 @@ const ForgotPasswordScreen = () => {
     e.preventDefault();
     setError("");
     setInfo("");
+    setIsResetSuccessful(false);
     const code = otp.trim();
     const pw = newPassword.trim();
     const pw2 = confirmPassword.trim();
@@ -76,6 +79,7 @@ const ForgotPasswordScreen = () => {
       setNewPassword("");
       setConfirmPassword("");
       setOtpSent(false);
+      setIsResetSuccessful(true);
     } finally {
       setIsResetting(false);
     }
@@ -123,10 +127,11 @@ const ForgotPasswordScreen = () => {
                   children: info
                 })
               : null,
-            /* @__PURE__ */ jsxs("form", {
-              onSubmit: handleSendOtp,
-              className: "space-y-4",
-              children: [
+            !isResetSuccessful
+              ? /* @__PURE__ */ jsxs("form", {
+                  onSubmit: handleSendOtp,
+                  className: "space-y-4",
+                  children: [
                 /* @__PURE__ */ jsxs("div", {
                   className: "space-y-1.5",
                   children: [
@@ -162,9 +167,10 @@ const ForgotPasswordScreen = () => {
                   isLoading: isSendingOtp,
                   children: otpSent ? "Resend code" : "Send verification code"
                 })
-              ]
-            }),
-            otpSent || otp || newPassword || confirmPassword
+                  ]
+                })
+              : null,
+            !isResetSuccessful && (otpSent || otp || newPassword || confirmPassword)
               ? /* @__PURE__ */ jsxs("form", {
                   onSubmit: handleReset,
                   className: "space-y-4 pt-2 border-t border-gray-100",

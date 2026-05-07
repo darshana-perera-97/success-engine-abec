@@ -109,6 +109,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return liveMessages.filter(
         (m) => m.senderId === selectedStudent.id || m.receiverId === selectedStudent.id
       ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    } else if (currentRole === "Counselor") {
+      // Counselors should see the full student thread (including previous counselors) in one window.
+      return liveMessages.filter(
+        (m) => m.senderId === otherUserId || m.receiverId === otherUserId
+      ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     } else {
       return liveMessages.filter(
         (m) => m.senderId === myId && m.receiverId === otherUserId || m.senderId === otherUserId && m.receiverId === myId
@@ -238,6 +243,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
   };
   const isGhostMode = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
+  const shouldShowSenderNamesInBubbles = isGhostMode || currentRole === "Counselor";
   return /* @__PURE__ */ jsxs("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex overflow-hidden animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-200 bg-white", children: [
@@ -332,7 +338,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           }
           return /* @__PURE__ */ jsx("div", { className: `flex ${isMe ? "justify-end" : "justify-start"}`, children: /* @__PURE__ */ jsxs("div", { className: `max-w-[72%] min-w-[120px] rounded-[10px] px-2.5 pt-1.5 pb-1 shadow-sm relative ${isMe ? "bg-indigo-100 text-slate-900 rounded-tr-[8px] border border-indigo-200/60" : "bg-white text-slate-900 rounded-tl-[8px] border border-slate-200"}`, children: [
             /* @__PURE__ */ jsx("span", { className: `absolute top-2 ${isMe ? "-right-1.5 bg-indigo-100 border-r border-t border-indigo-200/60" : "-left-1.5 bg-white border-l border-t border-slate-200"} h-3 w-3 rotate-45` }),
-            isGhostMode ? /* @__PURE__ */ jsx("p", { className: `text-[10px] font-semibold mb-0.5 ${isMe ? "text-indigo-700" : "text-slate-500"}`, children: getSenderName(msg.senderId) }) : null,
+            shouldShowSenderNamesInBubbles ? /* @__PURE__ */ jsx("p", { className: `text-[10px] font-semibold mb-0.5 ${isMe ? "text-indigo-700" : "text-slate-500"}`, children: getSenderName(msg.senderId) }) : null,
             msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words pr-12", children: msg.content }) : null,
             msg.attachment ? /* @__PURE__ */ jsxs("div", { className: `${msg.content ? "mt-2" : ""} space-y-2`, children: [
               String(msg.attachment.mime || "").startsWith("image/") ? /* @__PURE__ */ jsx("img", { src: msg.attachment.url, alt: msg.attachment.name || "Image attachment", className: "max-h-64 rounded-xl border border-black/10 object-contain bg-white" }) : null,

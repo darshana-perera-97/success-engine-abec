@@ -19,6 +19,11 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const [selectedAptId, setSelectedAptId] = useState(null);
   const [outcomeStatus, setOutcomeStatus] = useState("Completed");
   const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [meetingLinkModalOpen, setMeetingLinkModalOpen] = useState(false);
+  const [meetingLinkAptId, setMeetingLinkAptId] = useState(null);
+  const [meetingLinkDraft, setMeetingLinkDraft] = useState("");
+  const [meetingLinkError, setMeetingLinkError] = useState("");
+  const [isSavingMeetingLink, setIsSavingMeetingLink] = useState(false);
   useEffect(() => {
     if (currentRole === "Student") {
       const s = currentUser;
@@ -133,7 +138,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       duration: Number(meetingSettings?.meetingDurationMinutes || 30),
       type: bookingType,
       status: "Scheduled",
-      meetingLink: "https://meet.google.com/abc-defg-hij"
+      meetingLink: ""
     };
     const result = await onBookAppointment(newApt);
     if (!result?.ok) {
@@ -204,6 +209,38 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       setOutcomeNotes("");
       setSelectedAptId(null);
     }
+  };
+  const openMeetingLinkModal = (apt) => {
+    setMeetingLinkAptId(apt.id);
+    setMeetingLinkDraft("");
+    setMeetingLinkError("");
+    setMeetingLinkModalOpen(true);
+  };
+  const handleSaveMeetingLink = async () => {
+    const apt = appointments.find((a) => a.id === meetingLinkAptId);
+    if (!apt) return;
+    const link = String(meetingLinkDraft || "").trim();
+    if (!link) {
+      setMeetingLinkError("Meeting link is required.");
+      return;
+    }
+    if (!/^https?:\/\//i.test(link)) {
+      setMeetingLinkError("Enter a valid link starting with http:// or https://");
+      return;
+    }
+    setIsSavingMeetingLink(true);
+    const result = await onUpdateAppointment({
+      ...apt,
+      meetingLink: link
+    });
+    setIsSavingMeetingLink(false);
+    if (!result?.ok) {
+      setMeetingLinkError(result?.error || "Failed to save meeting link.");
+      return;
+    }
+    setMeetingLinkModalOpen(false);
+    setMeetingLinkAptId(null);
+    setMeetingLinkDraft("");
   };
   const renderCalendar = () => {
     const days = getDaysInMonth(currentDate);
@@ -443,10 +480,17 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                   ] })
                 ] }),
                 /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
-                  !isPast && apt.status === "Scheduled" && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
+                  !isPast && apt.status === "Scheduled" && currentRole === "Counselor" && (String(apt.meetingLink || "").trim() ? /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
+                    /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
+                    " Join now"
+                  ] }) }) : /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", onClick: () => openMeetingLinkModal(apt), children: [
+                    /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
+                    " Add Meeting Link"
+                  ] })),
+                  !isPast && apt.status === "Scheduled" && currentRole !== "Counselor" && String(apt.meetingLink || "").trim() && /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join"
-                  ] }),
+                  ] }) }),
                   isPast && apt.status === "Scheduled" && (currentRole === "Counselor" || currentRole === "Country Coordinator") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
                     setSelectedAptId(apt.id);
                     setOutcomeModalOpen(true);
@@ -500,6 +544,18 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
           /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setOutcomeModalOpen(false), children: "Cancel" }),
           /* @__PURE__ */ jsx(Button, { onClick: handleLogOutcome, children: "Save Log" })
         ] })
+      ] })
+    ] }) }),
+    meetingLinkModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Add Meeting Link" }),
+      meetingLinkError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: meetingLinkError }),
+      /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+        /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase block", children: "Meeting URL" }),
+        /* @__PURE__ */ jsx("input", { type: "url", value: meetingLinkDraft, onChange: (e) => setMeetingLinkDraft(e.target.value), placeholder: "https://meet.google.com/...", className: "w-full p-3 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 outline-none" })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setMeetingLinkModalOpen(false), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { onClick: handleSaveMeetingLink, isLoading: isSavingMeetingLink, children: "Save Link" })
       ] })
     ] }) })
   ] });

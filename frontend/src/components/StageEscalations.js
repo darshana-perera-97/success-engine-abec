@@ -1,6 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight } from "lucide-react";
-import { findManagersForBranch } from "../pipeline";
 
 function formatOverdue(ms) {
   const m = Math.max(0, ms);
@@ -73,7 +72,7 @@ const StageEscalations = ({
                     (variant === "admin" || variant === "manager") &&
                       /* @__PURE__ */ jsx("th", {
                         className: "px-4 py-3 whitespace-nowrap hidden xl:table-cell",
-                        children: "Branch manager"
+                        children: "Counselor"
                       }),
                     /* @__PURE__ */ jsx("th", { className: "px-4 py-3 w-10", children: "" })
                   ]
@@ -91,11 +90,12 @@ const StageEscalations = ({
                         })
                       })
                     : escalations.map((row) => {
-                        const managers = findManagersForBranch(row.branch, employees);
-                        const managerLabel =
-                          managers.length > 0
-                            ? managers.map((m) => m.name || m.username || m.email).join(", ")
-                            : "—";
+                        const assignedCounselor = (employees || []).find(
+                          (employee) => String(employee.id || "").trim() === String(row.counselorId || "").trim()
+                        );
+                        const counselorLabel = assignedCounselor
+                          ? assignedCounselor.name || assignedCounselor.username || assignedCounselor.email || row.counselorId
+                          : row.counselorId || "—";
                         return /* @__PURE__ */ jsxs(
                           "tr",
                           {
@@ -160,7 +160,7 @@ const StageEscalations = ({
                               (variant === "admin" || variant === "manager") &&
                                 /* @__PURE__ */ jsx("td", {
                                   className: "px-4 py-3 hidden xl:table-cell text-slate-600 text-xs",
-                                  children: managerLabel
+                                  children: counselorLabel
                                 }),
                               /* @__PURE__ */ jsx("td", {
                                 className: "px-4 py-3 text-right",

@@ -46,7 +46,6 @@ function isCounselorRole(roleValue) {
 const KeyDetails = ({ student, canEditContact = false, onEditContact }) => {
   const details = [
     { icon: MapPin, label: "Branch", value: student.branch },
-    { icon: DollarSign, label: "Annual Budget", value: `$${student.budget}` },
     { icon: Mail, label: "Email", value: student.email },
     { icon: Phone, label: "Contact", value: student.phone }
   ];

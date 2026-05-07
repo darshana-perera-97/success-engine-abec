@@ -70,6 +70,20 @@ const COUNSELOR_ROLES = new Set(["Counselor", "Consultor"]);
 const whatsappSessions = new Map();
 const WHATSAPP_RECONNECT_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
+function logEvent(scope, message, meta = null) {
+  const ts = new Date().toISOString();
+  const base = `[${ts}] [${scope}] ${message}`;
+  if (!meta) {
+    console.log(base);
+    return;
+  }
+  try {
+    console.log(base, JSON.stringify(meta));
+  } catch {
+    console.log(base, meta);
+  }
+}
+
 function normalizeRoleKey(role) {
   return String(role || "").trim().toLowerCase();
 }
@@ -807,19 +821,78 @@ async function sendForgotPasswordOtpEmail({ email, otpCode }) {
       pass: SMTP_PASS,
     },
   });
-  await transporter.sendMail({
+  const message = {
     from: SMTP_FROM,
     to: email,
     subject: "Your ABEC Premier verification code",
     text: textBody,
     html: buildForgotPasswordEmailHtml({ otpCode }),
-  });
+  };
+  try {
+    await transporter.sendMail(message);
+    logEvent("email", "forgot-password otp sent", { to: email });
+  } catch (error) {
+    // Some SMTP providers reject custom FROM if it doesn't match authenticated mailbox.
+    // Retry once with SMTP_USER as sender to satisfy sender verification checks.
+    const shouldRetryWithAuthSender =
+      error &&
+      (error.code === "EENVELOPE" || error.responseCode === 550) &&
+      String(SMTP_USER || "").trim();
+    if (!shouldRetryWithAuthSender) throw error;
+    await transporter.sendMail({
+      ...message,
+      from: SMTP_USER,
+      replyTo: SMTP_FROM || SMTP_USER,
+    });
+    logEvent("email", "forgot-password otp sent (fallback sender)", { to: email, from: SMTP_USER });
+  }
 }
 
 function buildStudentPortalLoginUrl() {
   if (!APP_PUBLIC_URL) return "";
   const path = STUDENT_SIGN_IN_PATH.startsWith("/") ? STUDENT_SIGN_IN_PATH : `/${STUDENT_SIGN_IN_PATH}`;
   return `${APP_PUBLIC_URL}${path}`;
+}
+
+function isApplicationStage(value) {
+  return String(value || "").trim().toLowerCase() === "application";
+}
+
+function normalizeStage(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, password, loginUrl }) {
+  const lines = [
+    "ABEC Premier — your student portal login",
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your account is ready. Sign in using:",
+    `Email: ${emailAddress || ""}`,
+    `Password: ${password || ""}`,
+    loginUrl ? `Portal: ${loginUrl}` : "",
+    "",
+    "Please change your password after first sign-in.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, meetingLink }) {
+  const lines = [
+    "ABEC Premier — Meeting Details",
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your meeting has been scheduled/updated:",
+    `Title: ${title || "Session"}`,
+    `Date: ${date || ""}`,
+    `Time: ${time || ""}`,
+    `Meeting Link: ${meetingLink || ""}`,
+    "",
+    "Please join on time.",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, password, counselorName }) {
@@ -953,7 +1026,7 @@ async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress
       pass: SMTP_PASS,
     },
   });
-  await transporter.sendMail({
+  const message = {
     from: SMTP_FROM,
     to,
     subject: "Welcome to ABEC Premier — your student portal login",
@@ -965,7 +1038,23 @@ async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress
       password,
       counselorName,
     }),
-  });
+  };
+  try {
+    await transporter.sendMail(message);
+    logEvent("email", "student welcome email sent", { to });
+  } catch (error) {
+    const shouldRetryWithAuthSender =
+      error &&
+      (error.code === "EENVELOPE" || error.responseCode === 550) &&
+      String(SMTP_USER || "").trim();
+    if (!shouldRetryWithAuthSender) throw error;
+    await transporter.sendMail({
+      ...message,
+      from: SMTP_USER,
+      replyTo: SMTP_FROM || SMTP_USER,
+    });
+    logEvent("email", "student welcome email sent (fallback sender)", { to, from: SMTP_USER });
+  }
 }
 
 async function findResettableUserByEmail(email) {
@@ -1353,8 +1442,10 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
   }
   try {
     await senderState.client.sendMessage(chatId, String(content || ""));
+    logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId });
     return { attempted: true, status: "sent", channel: "whatsapp", chatId };
   } catch (error) {
+    logEvent("whatsapp", "message send failed", { from: sender.id, to: receiverId, reason: String(error?.message || "") });
     return {
       attempted: true,
       status: "failed",
@@ -1365,6 +1456,19 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    const durationMs = Date.now() - startedAt;
+    // Keep backend console clean: only log task-related traffic.
+    if (url.pathname.startsWith("/api/tasks") && req.method !== "GET") {
+      logEvent("task", `${req.method} ${url.pathname}`, {
+        id: requestId,
+        status: res.statusCode,
+        durationMs,
+      });
+    }
+  });
 
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
@@ -1422,6 +1526,7 @@ const server = http.createServer(async (req, res) => {
             email: matchedStudent.email,
             role: "Student",
             branch: matchedStudent.branch || null,
+            mustChangePassword: matchedStudent.forcePasswordChange === true,
           },
         });
         return;
@@ -1440,6 +1545,13 @@ const server = http.createServer(async (req, res) => {
       const email = normalizeEmail(body.email);
       if (!email) {
         sendJson(res, 400, { ok: false, error: "Email is required." });
+        return;
+      }
+      if (email === ADMIN_EMAIL) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Admin password reset is not supported here because admin credentials are managed in backend .env.",
+        });
         return;
       }
 
@@ -1463,7 +1575,8 @@ const server = http.createServer(async (req, res) => {
       await sendForgotPasswordOtpEmail({ email, otpCode });
 
       sendJson(res, 200, { ok: true, message: "OTP has been sent to your registered email." });
-    } catch {
+    } catch (error) {
+      console.error("Forgot-password OTP send failed:", error);
       sendJson(res, 500, { ok: false, error: "Failed to send OTP email." });
     }
     return;
@@ -1509,6 +1622,8 @@ const server = http.createServer(async (req, res) => {
         ...updatedList[matched.index],
         password: newPassword,
         updatedAt: new Date().toISOString(),
+        forcePasswordChange: false,
+        passwordChangedAt: new Date().toISOString(),
       };
       if (matched.kind === "user") {
         await writeUsers(updatedList);
@@ -1519,6 +1634,50 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, message: "Password reset successful." });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to reset password." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/student/change-default-password") {
+    try {
+      const body = await parseBody(req);
+      const email = normalizeEmail(body.email);
+      const currentPassword = String(body.currentPassword || "");
+      const newPassword = String(body.newPassword || "").trim();
+      if (!email || !currentPassword || !newPassword) {
+        sendJson(res, 400, { ok: false, error: "Email, current password, and new password are required." });
+        return;
+      }
+      if (newPassword.length < 6) {
+        sendJson(res, 400, { ok: false, error: "New password must be at least 6 characters." });
+        return;
+      }
+      if (newPassword === currentPassword) {
+        sendJson(res, 400, { ok: false, error: "New password must be different from current password." });
+        return;
+      }
+      const studemts = await readStudemts();
+      const idx = studemts.findIndex((s) => normalizeEmail(s.email) === email);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Student account not found." });
+        return;
+      }
+      if (String(studemts[idx].password || "") !== currentPassword) {
+        sendJson(res, 401, { ok: false, error: "Current password is incorrect." });
+        return;
+      }
+      const updated = [...studemts];
+      updated[idx] = {
+        ...updated[idx],
+        password: newPassword,
+        forcePasswordChange: false,
+        passwordChangedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await writeStudemts(updated);
+      sendJson(res, 200, { ok: true, message: "Password updated successfully." });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
     return;
   }
@@ -2322,6 +2481,7 @@ const server = http.createServer(async (req, res) => {
       };
       const tasks = await readTasks();
       await writeTasks([task, ...tasks]);
+      logEvent("task", "created", { taskId: task.id, studentId: task.student_id, assignedToCount: task.assigned_to.length });
       sendJson(res, 201, { ok: true, data: task });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -2352,6 +2512,7 @@ const server = http.createServer(async (req, res) => {
       const updatedTasks = [...tasks];
       updatedTasks[idx] = merged;
       await writeTasks(updatedTasks);
+      logEvent("task", "updated", { taskId: merged.id, studentId: merged.student_id, status: merged.status });
       sendJson(res, 200, { ok: true, data: merged });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -2507,7 +2668,7 @@ const server = http.createServer(async (req, res) => {
         duration,
         type,
         status,
-        meetingLink: String(body.meetingLink || "https://meet.google.com/abc-defg-hij"),
+        meetingLink: String(body.meetingLink || ""),
         createdAt: new Date().toISOString(),
       };
       const appointments = await readAppointments();
@@ -2549,6 +2710,46 @@ const server = http.createServer(async (req, res) => {
         id: appointments[idx].id,
         updatedAt: new Date().toISOString(),
       };
+      const previousAppointment = appointments[idx];
+      const prevLink = String(previousAppointment?.meetingLink || "").trim();
+      const nextLink = String(updatedAppointment?.meetingLink || "").trim();
+      if (nextLink && nextLink !== prevLink) {
+        try {
+          const students = await readStudemts();
+          const student = students.find((item) => String(item.id || "") === String(updatedAppointment.studentId || ""));
+          const result = await deliverCounselorMessageToStudentWhatsapp({
+            senderId: String(updatedAppointment.counselorId || "").trim(),
+            receiverId: String(updatedAppointment.studentId || "").trim(),
+            content: buildAppointmentLinkWhatsappMessage({
+              studentName: student?.name || "",
+              title: updatedAppointment.title || "Session",
+              date: updatedAppointment.date || "",
+              time: updatedAppointment.time || "",
+              meetingLink: nextLink,
+            }),
+          });
+          updatedAppointment.meetingLinkWhatsappDelivery = {
+            attempted: Boolean(result?.attempted),
+            status: result?.status || "skipped",
+            reason: result?.reason || "",
+            sentAt: new Date().toISOString(),
+          };
+          logEvent("appointment", "meeting link sent to student via whatsapp", {
+            appointmentId,
+            counselorId: updatedAppointment.counselorId,
+            studentId: updatedAppointment.studentId,
+            status: updatedAppointment.meetingLinkWhatsappDelivery.status,
+          });
+        } catch (error) {
+          updatedAppointment.meetingLinkWhatsappDelivery = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp meeting link."),
+            sentAt: new Date().toISOString(),
+          };
+          console.error("Meeting link WhatsApp send failed:", error);
+        }
+      }
       const updatedAppointments = [...appointments];
       updatedAppointments[idx] = updatedAppointment;
       await writeAppointments(updatedAppointments);
@@ -2585,12 +2786,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const userId = String(url.searchParams.get("userId") || "").trim();
       const shouldMarkRead = url.searchParams.get("markRead") !== "0";
-      const chats = await readChats();
-      let chatsForResponse = chats;
+      const chatsAll = await readChats();
+      let chatsAllNext = chatsAll;
       if (userId && shouldMarkRead) {
         // Mark messages as read when the receiver opens their chat inbox.
         let hasReadUpdates = false;
-        chatsForResponse = chats.map((chat) => {
+        chatsAllNext = chatsAll.map((chat) => {
           if (String(chat.receiverId || "") === userId && chat.read !== true) {
             hasReadUpdates = true;
             return { ...chat, read: true, readAt: new Date().toISOString() };
@@ -2598,8 +2799,36 @@ const server = http.createServer(async (req, res) => {
           return chat;
         });
         if (hasReadUpdates) {
-          await writeChats(chatsForResponse);
+          await writeChats(chatsAllNext);
         }
+      }
+      let chatsForResponse = chatsAllNext;
+      const counselor = userId ? await resolveCounselor(userId) : null;
+      if (userId && counselor) {
+        // Counselors can see the full conversation thread for any student they have handled
+        // (current counselor, inquiry counselor, or counselor history), even if they were not
+        // the sender/receiver for older messages.
+        const students = await readStudemts();
+        const visibleStudentIds = new Set(
+          (students || [])
+            .filter((s) => {
+              const c = String(s.counselor || "").trim();
+              const inquiry = String(s.inquiryCounselorId || "").trim();
+              const history = Array.isArray(s.counselorHistory) ? s.counselorHistory : [];
+              return (
+                c === userId ||
+                inquiry === userId ||
+                history.some((id) => String(id || "").trim() === userId)
+              );
+            })
+            .map((s) => String(s.id || "").trim())
+            .filter(Boolean)
+        );
+        chatsForResponse = chatsForResponse.filter((chat) => {
+          const sid = String(chat.senderId || "").trim();
+          const rid = String(chat.receiverId || "").trim();
+          return sid === userId || rid === userId || visibleStudentIds.has(sid) || visibleStudentIds.has(rid);
+        });
       }
       const withPublicUrls = chatsForResponse.map((chat) => {
         if (!chat || !chat.attachment || !chat.attachment.url) return chat;
@@ -2618,7 +2847,8 @@ const server = http.createServer(async (req, res) => {
       const scopedChats = withPublicUrls.filter(
         (chat) => String(chat.senderId || "") === userId || String(chat.receiverId || "") === userId
       );
-      sendJson(res, 200, { ok: true, data: scopedChats });
+      // Counselors get chatsForResponse already scoped by handled students (includes prior counselor thread).
+      sendJson(res, 200, { ok: true, data: counselor ? withPublicUrls : scopedChats });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load chats." });
     }
@@ -2660,6 +2890,13 @@ const server = http.createServer(async (req, res) => {
       };
       const activities = await readActivities();
       await writeActivities([activity, ...activities]);
+      logEvent("activity", "activity created", {
+        id: activity.id,
+        type: activity.type,
+        action: activity.action,
+        studentId: activity.studentId || "",
+        user: activity.user,
+      });
       sendJson(res, 201, { ok: true, data: activity });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -2934,12 +3171,14 @@ const server = http.createServer(async (req, res) => {
         email,
         phone,
         password,
+        forcePasswordChange: true,
         ielts,
         gpa,
         status,
         budget,
         priority,
         counselor,
+        inquiryCounselorId: isApplicationStage(status) ? "" : counselor,
         counselorName,
         notes,
         lastEducationDate,
@@ -2985,12 +3224,135 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, error: "Student not found." });
         return;
       }
+      const previous = studemts[idx];
+      const nowIso = new Date().toISOString();
+      const previousCounselor = String(previous?.counselor || "").trim();
       const merged = {
         ...studemts[idx],
         ...body,
         id: studemts[idx].id,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
       };
+      const nextCounselor = String(merged?.counselor || "").trim();
+      if (previousCounselor && nextCounselor && previousCounselor !== nextCounselor) {
+        const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
+        const normalized = history.map((id) => String(id || "").trim()).filter(Boolean);
+        normalized.push(previousCounselor);
+        merged.counselorHistory = Array.from(new Set(normalized));
+        logEvent("student", "counselor transferred", {
+          studentId,
+          from: previousCounselor,
+          to: nextCounselor,
+        });
+      }
+
+      const transitionedToInquiry =
+        !isApplicationStage(previous?.status) &&
+        String(previous?.status || "").trim().toLowerCase() !== "inquiry" &&
+        String(merged?.status || "").trim().toLowerCase() === "inquiry";
+      if (transitionedToInquiry && !merged.inquiryCounselorId) {
+        const c = String(merged.counselor || "").trim();
+        if (c && c !== "Unassigned") {
+          merged.inquiryCounselorId = c;
+        }
+      }
+
+      const transitionedToApplication =
+        !isApplicationStage(previous?.status) && isApplicationStage(merged?.status);
+      const alreadySent = Boolean(previous?.applicationAccountDetailsSentAt || merged?.applicationAccountDetailsSentAt);
+
+      if (transitionedToApplication && !alreadySent) {
+        const emailAddress = normalizeEmail(merged.email);
+        const password = String(merged.password || "");
+        const studentName = String(merged.name || "").trim();
+        const loginUrl = buildStudentPortalLoginUrl();
+
+        const delivery = {
+          email: { attempted: false, status: "skipped", reason: "" },
+          whatsapp: { attempted: false, status: "skipped", reason: "" },
+        };
+
+        // Email (SMTP)
+        try {
+          const smtpError = getSmtpConfigError();
+          if (smtpError) {
+            delivery.email = { attempted: false, status: "skipped", reason: smtpError };
+          } else if (!emailAddress || !password) {
+            delivery.email = { attempted: false, status: "skipped", reason: "Missing student email or password." };
+          } else {
+            const users = await readUsers();
+            const counselorId = String(merged.counselor || "").trim();
+            const counselorUser = users.find((u) => String(u.id || "") === counselorId);
+            const counselorNameForEmail =
+              String(merged.counselorName || "").trim() ||
+              (counselorUser ? String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email) : "") ||
+              "Not assigned yet";
+            await sendStudentWelcomeEmail({
+              to: emailAddress,
+              studentName: studentName || emailAddress,
+              loginUrl,
+              emailAddress,
+              password,
+              counselorName: counselorNameForEmail,
+            });
+            delivery.email = { attempted: true, status: "sent", reason: "" };
+          }
+        } catch (error) {
+          console.error("Student application-stage email failed:", error);
+          delivery.email = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send email."),
+          };
+        }
+
+        // WhatsApp (sent from assigned counselor's connected WhatsApp)
+        try {
+          const inquiryCounselorId = String(merged.inquiryCounselorId || "").trim();
+          const counselorId = inquiryCounselorId || String(merged.counselor || "").trim();
+          if (!counselorId || counselorId === "Unassigned") {
+            delivery.whatsapp = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
+          } else {
+            const message = buildStudentAccountDetailsWhatsappMessage({
+              studentName: studentName || emailAddress,
+              emailAddress,
+              password,
+              loginUrl,
+            });
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId: counselorId,
+              receiverId: studentId,
+              content: message,
+            });
+            if (result && result.attempted) {
+              delivery.whatsapp = {
+                attempted: true,
+                status: result.status || "failed",
+                reason: result.reason || "",
+              };
+            } else {
+              delivery.whatsapp = { attempted: false, status: "skipped", reason: result?.reason || "Not attempted." };
+            }
+          }
+        } catch (error) {
+          console.error("Student application-stage WhatsApp failed:", error);
+          delivery.whatsapp = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp message."),
+          };
+        }
+
+        merged.applicationAccountDetailsSentAt = nowIso;
+        merged.applicationAccountDetailsDelivery = delivery;
+        logEvent("student", "moved to Application: sent account details", {
+          studentId,
+          email: emailAddress,
+          counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
+          delivery,
+        });
+      }
+
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
@@ -3371,6 +3733,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendJson(res, 404, { ok: false, error: "Not found." });
+});
+
+server.on("error", (error) => {
+  if (error && error.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. Stop the existing process or change PORT in backend/.env.`);
+    return;
+  }
+  console.error("Server failed to start:", error);
 });
 
 server.listen(PORT, async () => {

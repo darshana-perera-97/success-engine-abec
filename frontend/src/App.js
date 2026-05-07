@@ -245,7 +245,17 @@ function App({ initialView = "dashboard" }) {
   const counselorScopedStudents = (() => {
     if (currentRole !== "Counselor") return students;
     if (counselorIdentitySet.size === 0) return [];
-    return students.filter((student) => counselorIdentitySet.has(normalizeIdentity(student.counselor)));
+    return students.filter((student) => {
+      const counselorId = normalizeIdentity(student.counselor);
+      const inquiryCounselorId = normalizeIdentity(student.inquiryCounselorId);
+      const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
+      const historyMatch = history.some((id) => counselorIdentitySet.has(normalizeIdentity(id)));
+      return (
+        counselorIdentitySet.has(counselorId) ||
+        counselorIdentitySet.has(inquiryCounselorId) ||
+        historyMatch
+      );
+    });
   })();
   const managerDataScope = useMemo(() => {
     if (currentRole !== "Manager") {
