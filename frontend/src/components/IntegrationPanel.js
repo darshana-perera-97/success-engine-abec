@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { connectWhatsapp, disconnectWhatsapp, getWhatsappStatus } from "../authApi";
 
 const STATUS_COPY = {
@@ -15,6 +15,7 @@ export function IntegrationPanel({ currentUser }) {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
   const [actionError, setActionError] = useState("");
+  const statusFailureCountRef = useRef(0);
   const userId = String(currentUser?.id || "").trim();
 
   const statusLabel = useMemo(() => {
@@ -37,9 +38,13 @@ export function IntegrationPanel({ currentUser }) {
     if (!userId) return;
     const response = await getWhatsappStatus(userId);
     if (!response.ok) {
-      setActionError(response.error || "Failed to load WhatsApp status.");
+      statusFailureCountRef.current += 1;
+      if (statusFailureCountRef.current >= 3) {
+        setActionError(response.error || "Failed to load WhatsApp status.");
+      }
       return;
     }
+    statusFailureCountRef.current = 0;
     setActionError("");
     setState(response.data);
   };
@@ -52,7 +57,7 @@ export function IntegrationPanel({ currentUser }) {
       await refreshStatus();
     };
     run();
-    const timer = setInterval(run, 3000);
+    const timer = setInterval(run, 4000);
     return () => {
       stop = true;
       clearInterval(timer);

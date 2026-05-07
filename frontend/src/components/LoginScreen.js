@@ -1,5 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import { Button } from "./Button";
 import { saveLoginSession } from "../authSession";
@@ -133,8 +134,8 @@ const LoginScreen = ({ onLoggedIn }) => {
                     "Remember me"
                   ]
                 }),
-                /* @__PURE__ */ jsx("button", {
-                  type: "button",
+                /* @__PURE__ */ jsx(Link, {
+                  to: "/forgot-password",
                   className: "text-indigo-600 hover:text-indigo-700 font-medium",
                   children: "Forgot password?"
                 })

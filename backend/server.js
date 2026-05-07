@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const QRCode = require("qrcode");
 
@@ -25,6 +26,7 @@ const WHATSAPP_CONNECTIONS_DIR = path.join(__dirname, "data", "whatsapp-connecti
 const WHATSAPP_INCOMING_FILE = path.join(__dirname, "data", "whatsapp-incoming.json");
 const CHAT_FILES_DIR = path.join(__dirname, "data", "chats");
 const ASSETS_DIR = path.join(__dirname, "data", "assets");
+const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
 const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
 const STUDENT_PERMISSIONS_DIR = path.join(__dirname, "data", "studentDocs", "permissions");
 const PAYMENTS_DIR = path.join(__dirname, "data", "payments");
@@ -49,6 +51,19 @@ const DEFAULT_MEETING_SETTINGS = {
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587", 10) || 587;
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").trim().toLowerCase() === "true";
+const SMTP_USER = String(process.env.SMTP_USER || "").trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || "").trim();
+const SMTP_FROM = String(process.env.SMTP_FROM || "").trim() || SMTP_USER;
+/** Base URL of the student/staff portal (no trailing slash). Used in welcome emails — e.g. https://portal.example.com */
+const APP_PUBLIC_URL = String(process.env.APP_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+const STUDENT_SIGN_IN_PATH = String(process.env.STUDENT_SIGN_IN_PATH || "/dashboard")
+  .trim()
+  .replace(/\s+/g, "");
+const FORGOT_PASSWORD_OTP_TTL_MS = 10 * 60 * 1000;
+const forgotPasswordOtps = new Map();
 const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor", "Admin", "Country Coordinator"]);
 const DEFAULT_COUNTRY_NAMES = ["UK", "USA", "Canada", "Australia", "New Zealand"];
 const COUNSELOR_ROLES = new Set(["Counselor", "Consultor"]);
@@ -112,6 +127,29 @@ function sendJson(res, status, obj) {
   Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(JSON.stringify(obj));
+}
+
+function getContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".js" || ext === ".mjs") return "text/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".ico") return "image/x-icon";
+  if (ext === ".map") return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}
+
+async function sendFrontendFile(res, filePath) {
+  const file = await fs.readFile(filePath);
+  res.statusCode = 200;
+  res.setHeader("Content-Type", getContentType(filePath));
+  res.end(file);
 }
 
 async function readUsers() {
@@ -646,6 +684,302 @@ function splitAdminRecord(users) {
   };
 }
 
+function getSmtpConfigError() {
+  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
+    return "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM in backend .env.";
+  }
+  return "";
+}
+
+function createOtpCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function escapeHtmlEmail(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildForgotPasswordEmailHtml({ otpCode }) {
+  const safe = escapeHtmlEmail(otpCode);
+  return `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <meta name="supported-color-schemes" content="light" />
+  <title>Password reset</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Your ABEC Premier verification code is ${safe}. Valid for 10 minutes.
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;margin:0 auto;">
+          <tr>
+            <td bgcolor="#4f46e5" style="background-color:#4f46e5;background:linear-gradient(135deg,#4f46e5 0%,#6366f1 50%,#7c3aed 100%);border-radius:12px 12px 0 0;height:4px;line-height:4px;font-size:4px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 14px 14px;overflow:hidden;box-shadow:0 22px 50px rgba(15,23,42,0.06);">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding:40px 40px 28px;text-align:center;">
+                    <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">
+                      ABEC Premier
+                    </p>
+                    <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">
+                      Secure password reset
+                    </h1>
+                    <p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.55;color:#64748b;">
+                      Use this one-time code to verify it’s you and create a new password. This code expires in&nbsp;<strong style="color:#334155;font-weight:600;">10 minutes</strong>.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 32px;text-align:center;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="margin:0 auto;background-color:#f8fafc;background:linear-gradient(180deg,#f8fafc 0%,#f1f5f9 100%);border:1px solid #e2e8f0;border-radius:12px;">
+                      <tr>
+                        <td style="padding:22px 36px;font-family:'SF Mono',ui-monospace,Menlo,Monaco,'Cascadia Mono',Consolas,monospace;font-size:34px;line-height:1;font-weight:700;letter-spacing:0.42em;color:#312e81;text-align:center;">
+                          ${safe}
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="margin:16px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.5;color:#94a3b8;">
+                      For your security, never share this code. ABEC&nbsp;Premier will never ask you for it by phone or chat.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 36px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-top:1px solid #f1f5f9;">
+                      <tr>
+                        <td style="padding-top:28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:1.6;color:#64748b;">
+                          <strong style="color:#475569;display:block;margin-bottom:6px;font-size:13px;font-weight:600;">Didn’t request this?</strong>
+                          You can safely ignore this message. Your password won’t change until you enter this code on the reset page.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
+              This email was sent automatically for account security.&nbsp;<br/>
+              © ${new Date().getFullYear()} ABEC Premier. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendForgotPasswordOtpEmail({ email, otpCode }) {
+  const textBody =
+    [
+      "ABEC Premier — password reset",
+      "",
+      `Your verification code is: ${otpCode}`,
+      "",
+      "This code expires in 10 minutes. Do not share it with anyone.",
+      "",
+      "If you didn't request this, you can ignore this email.",
+      "",
+      `© ${new Date().getFullYear()} ABEC Premier`,
+    ].join("\n");
+
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+  await transporter.sendMail({
+    from: SMTP_FROM,
+    to: email,
+    subject: "Your ABEC Premier verification code",
+    text: textBody,
+    html: buildForgotPasswordEmailHtml({ otpCode }),
+  });
+}
+
+function buildStudentPortalLoginUrl() {
+  if (!APP_PUBLIC_URL) return "";
+  const path = STUDENT_SIGN_IN_PATH.startsWith("/") ? STUDENT_SIGN_IN_PATH : `/${STUDENT_SIGN_IN_PATH}`;
+  return `${APP_PUBLIC_URL}${path}`;
+}
+
+function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, password, counselorName }) {
+  const safeName = escapeHtmlEmail(studentName);
+  const safeEmail = escapeHtmlEmail(emailAddress);
+  const safePass = escapeHtmlEmail(password);
+  const safeCounselor = escapeHtmlEmail(counselorName);
+  const safeLogin = escapeHtmlEmail(loginUrl);
+  const counselorBlock =
+    counselorName && counselorName.trim() !== "Not assigned yet"
+      ? `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Assigned counselor</strong><br/><span style="font-size:15px;color:#4338ca;font-weight:600;">${safeCounselor}</span></p>`
+      : `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.55;color:#64748b;">Your counselor will be confirmed shortly—you can still sign in below.</p>`;
+  const ctaBlock = loginUrl
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;"><tr><td bgcolor="#4f46e5" style="border-radius:10px;background-color:#4f46e5;background:linear-gradient(135deg,#4f46e5 0%,#6366f1 100%);"><a href="${safeLogin}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:14px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Open student portal</a></td></tr></table><p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.5;color:#94a3b8;word-break:break-all;"><a href="${safeLogin}" style="color:#6366f1;text-decoration:none;">${safeLogin}</a></p>`
+    : `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:1.6;color:#64748b;">Use the student portal URL provided by your branch. (Set <strong style="font-weight:600;color:#475569;">APP_PUBLIC_URL</strong> on the server to include a clickable link automatically.)</p>`;
+
+  return `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Student portal access</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Your ABEC Premier student portal login is ready. Sign in with ${safeEmail}.
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;margin:0 auto;">
+          <tr>
+            <td bgcolor="#4f46e5" style="background-color:#4f46e5;background:linear-gradient(135deg,#4f46e5 0%,#6366f1 50%,#7c3aed 100%);border-radius:12px 12px 0 0;height:4px;line-height:4px;font-size:4px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 14px 14px;overflow:hidden;box-shadow:0 22px 50px rgba(15,23,42,0.06);">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding:40px 40px 24px;text-align:center;">
+                    <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">ABEC Premier</p>
+                    <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">Welcome to your student portal</h1>
+                    <p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.55;color:#64748b;">
+                      Hi <strong style="color:#334155;">${safeName}</strong>, your account is ready. Use the credentials below to sign in and track your journey with us.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 28px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+                      <tr>
+                        <td style="padding:24px 28px;">
+                          <p style="margin:0 0 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:#64748b;">Sign-in details</p>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;width:120px;">Email</td>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:13px;font-weight:600;color:#312e81;word-break:break-all;">${safeEmail}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:10px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;">Password</td>
+                              <td style="padding:10px 0;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:13px;font-weight:600;color:#312e81;word-break:break-all;">${safePass}</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 28px;text-align:center;">
+                    ${ctaBlock}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 28px;text-align:center;border-top:1px solid #f1f5f9;">
+                    ${counselorBlock}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 36px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-top:1px solid #f1f5f9;">
+                      <tr>
+                        <td style="padding-top:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.65;color:#64748b;">
+                          <strong style="color:#475569;display:block;margin-bottom:6px;font-size:13px;font-weight:600;">Security</strong>
+                          For your protection, please change your password after your first sign-in (<strong>Forgot password</strong> is available if needed). Do not forward this message or share your password.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
+              This email was generated when your profile was added to ABEC&nbsp;Premier.<br/>
+              © ${new Date().getFullYear()} ABEC Premier. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress, password, counselorName }) {
+  const textLines = [
+    "ABEC Premier — student portal access",
+    "",
+    `Hi ${studentName},`,
+    "",
+    "Your account is ready. Sign in using:",
+    `- Email: ${emailAddress}`,
+    `- Password: ${password}`,
+    loginUrl ? `- Portal: ${loginUrl}` : `- Portal: (use the URL provided by your branch)`,
+    "",
+    counselorName && counselorName.trim() !== "Not assigned yet" ? `Assigned counselor: ${counselorName}` : "Counselor: to be confirmed shortly.",
+    "",
+    "Change your password after first sign-in. Do not share this email.",
+    "",
+    `© ${new Date().getFullYear()} ABEC Premier`,
+  ];
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+  await transporter.sendMail({
+    from: SMTP_FROM,
+    to,
+    subject: "Welcome to ABEC Premier — your student portal login",
+    text: textLines.join("\n"),
+    html: buildStudentWelcomeEmailHtml({
+      studentName,
+      loginUrl,
+      emailAddress,
+      password,
+      counselorName,
+    }),
+  });
+}
+
+async function findResettableUserByEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized || normalized === ADMIN_EMAIL) return null;
+  const users = await readUsers();
+  const userIndex = users.findIndex((u) => normalizeEmail(u.email) === normalized);
+  if (userIndex !== -1) return { kind: "user", list: users, index: userIndex };
+  const students = await readStudemts();
+  const studentIndex = students.findIndex((s) => normalizeEmail(s.email) === normalized);
+  if (studentIndex !== -1) return { kind: "student", list: students, index: studentIndex };
+  return null;
+}
+
 function sanitizeUserIdForPath(userId) {
   return String(userId || "")
     .trim()
@@ -701,7 +1035,13 @@ async function startWhatsappSession(userId) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) throw new Error("Counselor user id is required.");
   const state = ensureWhatsappState(cleanUserId);
-  if (state.client && (state.status === "connecting" || state.status === "connected")) {
+  if (
+    state.client &&
+    (state.status === "connecting" ||
+      state.status === "awaiting_qr_scan" ||
+      state.status === "authenticated" ||
+      state.status === "connected")
+  ) {
     return snapshotWhatsappState(cleanUserId);
   }
   if (state.client) {
@@ -1090,6 +1430,95 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 401, { ok: false, error: "Invalid email or password." });
     } catch (e) {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/forgot-password/request") {
+    try {
+      const body = await parseBody(req);
+      const email = normalizeEmail(body.email);
+      if (!email) {
+        sendJson(res, 400, { ok: false, error: "Email is required." });
+        return;
+      }
+
+      const smtpError = getSmtpConfigError();
+      if (smtpError) {
+        sendJson(res, 500, { ok: false, error: smtpError });
+        return;
+      }
+
+      const matched = await findResettableUserByEmail(email);
+      if (!matched) {
+        sendJson(res, 200, { ok: true, message: "If the account exists, an OTP has been sent." });
+        return;
+      }
+
+      const otpCode = createOtpCode();
+      forgotPasswordOtps.set(email, {
+        otpCode,
+        expiresAt: Date.now() + FORGOT_PASSWORD_OTP_TTL_MS,
+      });
+      await sendForgotPasswordOtpEmail({ email, otpCode });
+
+      sendJson(res, 200, { ok: true, message: "OTP has been sent to your registered email." });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to send OTP email." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/forgot-password/verify") {
+    try {
+      const body = await parseBody(req);
+      const email = normalizeEmail(body.email);
+      const otp = String(body.otp || "").trim();
+      const newPassword = String(body.newPassword || "").trim();
+      if (!email || !otp || !newPassword) {
+        sendJson(res, 400, { ok: false, error: "Email, OTP, and new password are required." });
+        return;
+      }
+      if (newPassword.length < 6) {
+        sendJson(res, 400, { ok: false, error: "New password must be at least 6 characters." });
+        return;
+      }
+      if (email === ADMIN_EMAIL) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Admin password reset is not supported here because admin credentials are managed in backend .env.",
+        });
+        return;
+      }
+
+      const storedOtp = forgotPasswordOtps.get(email);
+      if (!storedOtp || storedOtp.expiresAt < Date.now() || storedOtp.otpCode !== otp) {
+        sendJson(res, 400, { ok: false, error: "Invalid or expired OTP." });
+        return;
+      }
+
+      const matched = await findResettableUserByEmail(email);
+      if (!matched) {
+        forgotPasswordOtps.delete(email);
+        sendJson(res, 404, { ok: false, error: "Account not found." });
+        return;
+      }
+
+      const updatedList = [...matched.list];
+      updatedList[matched.index] = {
+        ...updatedList[matched.index],
+        password: newPassword,
+        updatedAt: new Date().toISOString(),
+      };
+      if (matched.kind === "user") {
+        await writeUsers(updatedList);
+      } else {
+        await writeStudemts(updatedList);
+      }
+      forgotPasswordOtps.delete(email);
+      sendJson(res, 200, { ok: true, message: "Password reset successful." });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to reset password." });
     }
     return;
   }
@@ -2450,6 +2879,7 @@ const server = http.createServer(async (req, res) => {
       const budget = String(body.budget || "").trim();
       const priority = String(body.priority || "").trim() || "Medium";
       const counselor = String(body.counselor || "").trim() || "Unassigned";
+      const counselorNameFromBody = String(body.counselorName || "").trim();
       const notes = String(body.notes || "").trim() || "Newly added via CRM.";
       const lastEducationDate =
         String(body.lastEducationDate || "").trim() || new Date().toISOString().split("T")[0];
@@ -2476,6 +2906,21 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      let counselorName = "";
+      let counselorNameForEmail = "Not assigned yet";
+      if (counselor && counselor !== "Unassigned") {
+        if (counselorNameFromBody) {
+          counselorName = counselorNameFromBody;
+          counselorNameForEmail = counselorNameFromBody;
+        } else {
+          const counselorUser = users.find((u) => String(u.id || "") === counselor);
+          if (counselorUser) {
+            counselorName = String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email);
+            counselorNameForEmail = counselorName;
+          }
+        }
+      }
+
       const maxStudentNumber = studemts.reduce((max, student) => {
         const match = String(student.id || "").match(/^STU(\d+)$/);
         return match ? Math.max(max, Number(match[1])) : max;
@@ -2495,6 +2940,7 @@ const server = http.createServer(async (req, res) => {
         budget,
         priority,
         counselor,
+        counselorName,
         notes,
         lastEducationDate,
         documents,
@@ -2503,6 +2949,21 @@ const server = http.createServer(async (req, res) => {
       };
       const updated = [...studemts, student];
       await writeStudemts(updated);
+      try {
+        if (!getSmtpConfigError()) {
+          const loginUrl = buildStudentPortalLoginUrl();
+          await sendStudentWelcomeEmail({
+            to: email,
+            studentName: name,
+            loginUrl,
+            emailAddress: email,
+            password,
+            counselorName: counselorNameForEmail,
+          });
+        }
+      } catch (mailErr) {
+        console.error("Student welcome email failed:", mailErr && mailErr.message ? mailErr.message : mailErr);
+      }
       sendJson(res, 201, { ok: true, data: publicStudentRecord(req, student) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -2883,12 +3344,30 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/") {
-    res.statusCode = 200;
-    Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end(`Server is running on port ${PORT}\n`);
-    return;
+  if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
+    const decodedPath = decodeURIComponent(url.pathname || "/");
+    const requestedPath = decodedPath === "/" ? "/index.html" : decodedPath;
+    const normalizedPath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
+    const absolutePath = path.join(FRONTEND_DIST_DIR, normalizedPath);
+    const distRoot = path.resolve(FRONTEND_DIST_DIR) + path.sep;
+    const isInsideDist = absolutePath.startsWith(distRoot);
+
+    if (isInsideDist) {
+      try {
+        await sendFrontendFile(res, absolutePath);
+        return;
+      } catch {
+        // Fall through to SPA fallback for client-side routes.
+      }
+    }
+
+    try {
+      await sendFrontendFile(res, path.join(FRONTEND_DIST_DIR, "index.html"));
+      return;
+    } catch {
+      sendJson(res, 404, { ok: false, error: "Frontend build not found. Run frontend build first." });
+      return;
+    }
   }
 
   sendJson(res, 404, { ok: false, error: "Not found." });

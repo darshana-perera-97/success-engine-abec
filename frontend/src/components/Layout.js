@@ -45,6 +45,7 @@ const Layout = ({
   requestedStudentsBadge = "",
   pipelineEscalationBadge = "",
   counselorStageEscalationBadge = "",
+  counselorStudentsBadge = "",
   whatsappConnectionStatus = "disconnected"
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -143,7 +144,7 @@ const Layout = ({
         return [
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
-          { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
           { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },

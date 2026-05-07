@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
+import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
 import "./styles.css";
 
 const ROUTE_VIEWS = [
@@ -39,6 +40,7 @@ root.render(
             element={<App key={route.view} initialView={route.view} />}
           />
         ))}
+        <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

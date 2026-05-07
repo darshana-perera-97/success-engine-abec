@@ -4,14 +4,7 @@ import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Mail, Phone, X, Che
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
-const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL : "http://localhost:3334";
-const toAbsoluteAssetUrl = (avatar) => {
-  if (!avatar) return avatar;
-  if (String(avatar).startsWith("/assets/")) {
-    return `${API_BASE}${avatar}`;
-  }
-  return avatar;
-};
+import { toAbsoluteAssetUrl } from "../apiConfig";
 const normalizeCounselorRole = (role) => {
   const value = String(role || "").trim();
   if (!value) return "Counselor";

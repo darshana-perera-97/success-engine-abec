@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
+import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
 import { StudentRegistrationForm } from "./components/StudentRegistrationForm";
 import "./styles.css";
 
@@ -44,6 +45,7 @@ root.render(
           />
         ))}
         <Route path="/student-reg-form" element={<StudentRegistrationForm />} />
+        <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

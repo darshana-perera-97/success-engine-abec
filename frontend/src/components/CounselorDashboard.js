@@ -7,7 +7,7 @@ import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getChats } from "../authApi";
 import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
 import { normalizePipelineStatus } from "../pipeline";
-const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask }) => {
+const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask, assignmentAlerts = [] }) => {
   const [chatMessages, setChatMessages] = useState([]);
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +161,23 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
               ] }),
               /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", onClick: () => onNavigate("tasks"), children: "Fix Now" })
             ] }),
+            assignmentAlerts.slice(0, 2).map((alert) => /* @__PURE__ */ jsxs(
+              "div",
+              {
+                className: "p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex justify-between items-center",
+                children: [
+                  /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+                    /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-indigo-500 animate-pulse" }),
+                    /* @__PURE__ */ jsxs("div", { children: [
+                      /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-indigo-900", children: alert.type === "reassigned" ? `${alert.studentName} was reassigned to you` : `${alert.studentName} is a newly added student` }),
+                      /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700", children: "Reach out and start onboarding actions." })
+                    ] })
+                  ] }),
+                  /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", onClick: () => onNavigate("students"), children: "Open" })
+                ]
+              },
+              alert.id
+            )),
             pendingTasks.slice(0, 3).map((task) => /* @__PURE__ */ jsxs(
               "div",
               {

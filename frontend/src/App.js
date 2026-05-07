@@ -27,6 +27,7 @@ import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
 import { Bell, X } from "lucide-react";
 import { filterTasksForCounselor } from "./counselorTaskScope";
+import { toAbsoluteAssetUrl } from "./apiConfig";
 import {
   computePipelineEscalations,
   filterEscalationsForCounselor,
@@ -34,16 +35,6 @@ import {
   normalizePipelineStatus
 } from "./pipeline";
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL
-  ? process.env.REACT_APP_API_URL
-  : "http://localhost:3334";
-const toAbsoluteAssetUrl = (avatar) => {
-  if (!avatar) return avatar;
-  if (String(avatar).startsWith("/assets/")) {
-    return `${API_BASE}${avatar}`;
-  }
-  return avatar;
-};
 const VIEW_TO_PATH = {
   dashboard: "/dashboard",
   students: "/students",
@@ -101,6 +92,7 @@ function App({ initialView = "dashboard" }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
+  const whatsappStatusFailuresRef = useRef(0);
   const hasStudentsHydratedRef = useRef(false);
   const hasRequestedStudentsHydratedRef = useRef(false);
   const requestedStudentsCountRef = useRef(0);
@@ -442,26 +434,8 @@ function App({ initialView = "dashboard" }) {
     const loadStudents = async () => {
       const result = await getStudents();
       if (!result.ok) return;
-      setStudents((prev) => {
+      setStudents(() => {
         const nextStudents = Array.isArray(result.data) ? result.data : [];
-        if (currentRole === "Counselor" && counselorIdentitySet.size > 0 && hasStudentsHydratedRef.current) {
-          const prevById = new Map(prev.map((student) => [String(student.id || ""), student]));
-          nextStudents.forEach((student) => {
-            const studentId = String(student.id || "").trim();
-            if (!studentId) return;
-            const nextCounselor = normalizeIdentity(student.counselor);
-            if (!counselorIdentitySet.has(nextCounselor)) return;
-            const previous = prevById.get(studentId);
-            if (!previous) return;
-            const previousCounselor = normalizeIdentity(previous.counselor);
-            if (previousCounselor === nextCounselor) return;
-            addNotification(
-              "New Student Assigned",
-              `${student.name || "A student"} has been assigned to you.`,
-              "success"
-            );
-          });
-        }
         hasStudentsHydratedRef.current = true;
         return nextStudents;
       });
@@ -611,9 +585,13 @@ function App({ initialView = "dashboard" }) {
       const result = await getWhatsappStatus(userId);
       if (cancelled) return;
       if (!result.ok) {
-        setWhatsappConnectionStatus("disconnected");
+        whatsappStatusFailuresRef.current += 1;
+        if (whatsappStatusFailuresRef.current >= 3) {
+          setWhatsappConnectionStatus("disconnected");
+        }
         return;
       }
+      whatsappStatusFailuresRef.current = 0;
       setWhatsappConnectionStatus(String(result.data?.status || "disconnected"));
     };
     loadStatus();
@@ -1293,11 +1271,11 @@ function App({ initialView = "dashboard" }) {
       if (currentRole === "Counselor" && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts: [] });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees });
       if (currentView === "student-detail") return selectedStudent && coordStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask });
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts: [] });
     }
     if (currentRole === "Manager" || currentRole === "Team Lead") {
       const mgrStudents = currentRole === "Manager" && managerDataScope.active ? managerScopedStudents : students;
@@ -1426,6 +1404,7 @@ function App({ initialView = "dashboard" }) {
         requestedStudentsBadge: (currentRole === "Admin" || currentRole === "Manager") && requestedStudentsCount > 0 ? String(requestedStudentsCount) : "",
         pipelineEscalationBadge: pipelineEscalationNavBadge,
         counselorStageEscalationBadge: counselorStageNavBadge,
+        counselorStudentsBadge: "",
         whatsappConnectionStatus,
         onLogout: () => {
           clearLoginSession();

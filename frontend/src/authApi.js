@@ -1,6 +1,4 @@
-const API_BASE = typeof process !== "undefined" && process.env.REACT_APP_API_URL
-  ? process.env.REACT_APP_API_URL
-  : "http://localhost:3334";
+import { API_BASE } from "./apiConfig";
 
 export async function loginAdmin(email, password) {
   try {
@@ -23,6 +21,40 @@ export async function loginAdmin(email, password) {
       ok: false,
       error: "Cannot reach login server. Is the backend running on port 3334?"
     };
+  }
+}
+
+export async function requestPasswordOtp(email) {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/forgot-password/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to send OTP." };
+    }
+    return { ok: true, message: data.message || "OTP sent." };
+  } catch {
+    return { ok: false, error: "Cannot reach login server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function resetPasswordWithOtp(email, otp, newPassword) {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/forgot-password/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, otp, newPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to reset password." };
+    }
+    return { ok: true, message: data.message || "Password reset successful." };
+  } catch {
+    return { ok: false, error: "Cannot reach login server. Is the backend running on port 3334?" };
   }
 }
 
