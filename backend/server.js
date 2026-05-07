@@ -26,6 +26,7 @@ const WHATSAPP_CONNECTIONS_DIR = path.join(__dirname, "data", "whatsapp-connecti
 const WHATSAPP_INCOMING_FILE = path.join(__dirname, "data", "whatsapp-incoming.json");
 const CHAT_FILES_DIR = path.join(__dirname, "data", "chats");
 const ASSETS_DIR = path.join(__dirname, "data", "assets");
+const FRONTEND_BUILD_DIR = path.join(__dirname, "..", "frontend", "build");
 const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
 const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
 const STUDENT_PERMISSIONS_DIR = path.join(__dirname, "data", "studentDocs", "permissions");
@@ -162,8 +163,26 @@ function getContentType(filePath) {
 async function sendFrontendFile(res, filePath) {
   const file = await fs.readFile(filePath);
   res.statusCode = 200;
+  const isHtml = path.extname(filePath).toLowerCase() === ".html";
+  if (isHtml) {
+    // Prevent stale index.html from referencing old hashed asset files.
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  } else {
+    // Allow long caching for hashed static bundles and media assets.
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  }
   res.setHeader("Content-Type", getContentType(filePath));
   res.end(file);
+}
+
+async function resolveFrontendRootDir() {
+  try {
+    await fs.access(path.join(FRONTEND_BUILD_DIR, "index.html"));
+    return FRONTEND_BUILD_DIR;
+  } catch {}
+  return FRONTEND_DIST_DIR;
 }
 
 async function readUsers() {
@@ -3583,7 +3602,19 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("Content-Type", contentType);
       res.end(file);
     } catch {
-      sendJson(res, 404, { ok: false, error: "Asset not found." });
+      try {
+        const frontendRoot = await resolveFrontendRootDir();
+        const fallbackPath = path.join(
+          frontendRoot,
+          String(url.pathname || "").replace(/^[/\\]+/, "")
+        );
+        const file = await fs.readFile(fallbackPath);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", getContentType(fallbackPath));
+        res.end(file);
+      } catch {
+        sendJson(res, 404, { ok: false, error: "Asset not found." });
+      }
     }
     return;
   }
@@ -3707,11 +3738,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
+    const frontendRoot = await resolveFrontendRootDir();
     const decodedPath = decodeURIComponent(url.pathname || "/");
     const requestedPath = decodedPath === "/" ? "/index.html" : decodedPath;
-    const normalizedPath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
-    const absolutePath = path.join(FRONTEND_DIST_DIR, normalizedPath);
-    const distRoot = path.resolve(FRONTEND_DIST_DIR) + path.sep;
+    const normalizedPath = path
+      .normalize(requestedPath)
+      .replace(/^(\.\.[/\\])+/, "")
+      .replace(/^[/\\]+/, "");
+    const absolutePath = path.join(frontendRoot, normalizedPath);
+    const distRoot = path.resolve(frontendRoot) + path.sep;
     const isInsideDist = absolutePath.startsWith(distRoot);
 
     if (isInsideDist) {
@@ -3724,7 +3759,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      await sendFrontendFile(res, path.join(FRONTEND_DIST_DIR, "index.html"));
+      await sendFrontendFile(res, path.join(frontendRoot, "index.html"));
       return;
     } catch {
       sendJson(res, 404, { ok: false, error: "Frontend build not found. Run frontend build first." });
