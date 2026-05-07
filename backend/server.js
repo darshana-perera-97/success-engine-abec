@@ -185,6 +185,24 @@ async function resolveFrontendRootDir() {
   return FRONTEND_DIST_DIR;
 }
 
+async function tryReadFrontendAssetFromBuildOutputs(assetPathname) {
+  const relativeAssetPath = String(assetPathname || "").replace(/^[/\\]+/, "");
+  const candidatePaths = [
+    path.join(FRONTEND_DIST_DIR, relativeAssetPath),
+    path.join(FRONTEND_BUILD_DIR, relativeAssetPath),
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      const file = await fs.readFile(candidatePath);
+      return { file, filePath: candidatePath };
+    } catch {
+      // Try next build output folder.
+    }
+  }
+  return null;
+}
+
 async function readUsers() {
   try {
     const raw = await fs.readFile(USERS_FILE, "utf8");
@@ -3603,15 +3621,13 @@ const server = http.createServer(async (req, res) => {
       res.end(file);
     } catch {
       try {
-        const frontendRoot = await resolveFrontendRootDir();
-        const fallbackPath = path.join(
-          frontendRoot,
-          String(url.pathname || "").replace(/^[/\\]+/, "")
-        );
-        const file = await fs.readFile(fallbackPath);
+        const assetFromFrontend = await tryReadFrontendAssetFromBuildOutputs(url.pathname);
+        if (!assetFromFrontend) {
+          throw new Error("Asset missing in frontend build outputs.");
+        }
         res.statusCode = 200;
-        res.setHeader("Content-Type", getContentType(fallbackPath));
-        res.end(file);
+        res.setHeader("Content-Type", getContentType(assetFromFrontend.filePath));
+        res.end(assetFromFrontend.file);
       } catch {
         sendJson(res, 404, { ok: false, error: "Asset not found." });
       }
