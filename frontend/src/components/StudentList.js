@@ -4,7 +4,7 @@ import { getAccounts } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2 } from "lucide-react";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
-const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onNavigate, onAddStudent, userRole, currentUser, authenticatedUser }) => {
+const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssignStudentCounselor, onNavigate, onAddStudent, userRole, currentUser, authenticatedUser }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
   const [countryFilter, setCountryFilter] = useState("All");
@@ -92,8 +92,15 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onNaviga
     return onAddStudent(newStudent);
   };
   const assignStudentToCounselor = (student, counselorId) => {
-    if (!onUpdateStudent || !counselorId) return;
-    onUpdateStudent({ ...student, counselor: counselorId });
+    if (!counselorId) return;
+    const counselor = counselorOptions.find((item) => String(item.id || "") === String(counselorId || ""));
+    const counselorName = String(counselor?.name || "").trim();
+    if (onAssignStudentCounselor) {
+      onAssignStudentCounselor(student, counselorId, counselorName);
+      return;
+    }
+    if (!onUpdateStudent) return;
+    onUpdateStudent({ ...student, counselor: counselorId, counselorName: counselorName || student.counselorName || "" });
   };
   const openManagerAssignMenu = (student) => {
     setAssigningStudentId(student.id);

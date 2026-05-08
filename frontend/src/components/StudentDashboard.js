@@ -4,7 +4,7 @@ import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Mail, Phone, X, Che
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
-import { toAbsoluteAssetUrl } from "../apiConfig";
+import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "../apiConfig";
 const normalizeCounselorRole = (role) => {
   const value = String(role || "").trim();
   if (!value) return "Counselor";
@@ -299,7 +299,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4 mb-6", children: [
             /* @__PURE__ */ jsx("div", { className: "h-14 w-14 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xl border-2 border-white shadow-md overflow-hidden", children: counselor.avatar ? /* @__PURE__ */ jsx("img", { src: counselor.avatar, alt: counselor.name, className: "w-full h-full object-cover", referrerPolicy: "no-referrer", onError: (event) => {
               event.currentTarget.onerror = null;
-              event.currentTarget.src = "/canadian.png";
+              event.currentTarget.src = DEFAULT_USER_AVATAR;
             } }) : counselor.name.charAt(0) }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("p", { className: "font-bold text-slate-900", children: counselor.name }),

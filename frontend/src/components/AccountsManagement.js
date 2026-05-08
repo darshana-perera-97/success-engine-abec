@@ -477,7 +477,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                         reader.readAsDataURL(file);
                       }
                     }),
-                    /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "If skipped, a default ash male avatar will be used." })
+                    /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "If skipped, the default company icon will be used." })
                   ]
                 }),
                 /* @__PURE__ */ jsxs("div", {

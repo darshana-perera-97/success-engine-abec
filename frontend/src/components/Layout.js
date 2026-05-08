@@ -24,6 +24,7 @@ import {
   Plug
 } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
+import { DEFAULT_USER_AVATAR } from "../apiConfig";
 const Layout = ({
   children: pageBody,
   activeView,
@@ -56,7 +57,7 @@ const Layout = ({
   const [selectedAvatarDataUrl, setSelectedAvatarDataUrl] = useState("");
   const [editableEmail, setEditableEmail] = useState(userEmail || "");
   const [editablePhone, setEditablePhone] = useState(userPhone || "");
-  const displayedAvatar = selectedAvatarDataUrl || userAvatar || "/canadian.png";
+  const displayedAvatar = selectedAvatarDataUrl || userAvatar || DEFAULT_USER_AVATAR;
   const handleProfileClose = () => {
     setIsProfileOpen(false);
     setProfileError("");
@@ -406,13 +407,13 @@ const Layout = ({
               /* @__PURE__ */ jsx("div", { className: "h-8 w-8 rounded-full border-2 border-white shadow-sm ring-1 ring-gray-100 overflow-hidden flex items-center justify-center bg-white", children: /* @__PURE__ */ jsx(
                 "img",
                 {
-                    src: userAvatar || "/canadian.png",
+                    src: userAvatar || DEFAULT_USER_AVATAR,
                   alt: userName || "User profile",
                   className: "w-full h-full object-cover",
                   referrerPolicy: "no-referrer",
                   onError: (event) => {
                     event.currentTarget.onerror = null;
-                    event.currentTarget.src = "/canadian.png";
+                    event.currentTarget.src = DEFAULT_USER_AVATAR;
                   }
                 }
               ) }),
@@ -424,10 +425,10 @@ const Layout = ({
         ] })
       ] }),
       /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) }),
-      /* @__PURE__ */ jsxs("footer", { className: "border-t border-gray-200 bg-white px-4 lg:px-8 py-3", children: [
+      /* @__PURE__ */ jsx("footer", { className: "border-t border-gray-200 bg-white px-4 lg:px-8 py-3", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between", children: [
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `© ${new Date().getFullYear()} ABEC Premier. All rights reserved.` }),
-        /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-400 mt-1", children: "Built for student admissions, counseling, and operations workflows." })
-      ] })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 sm:text-right", children: "Powered by NexGenAI" })
+      ] }) })
     ] }),
     isProfileOpen ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain bg-slate-900/50 backdrop-blur-sm flex items-start justify-center py-8 px-4", onClick: handleProfileClose, children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
       /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50", children: [
@@ -438,7 +439,7 @@ const Layout = ({
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
           /* @__PURE__ */ jsx("img", { src: displayedAvatar, alt: userName || "Profile", className: "w-16 h-16 rounded-full object-cover border border-gray-200", referrerPolicy: "no-referrer", onError: (event) => {
             event.currentTarget.onerror = null;
-            event.currentTarget.src = "/canadian.png";
+            event.currentTarget.src = DEFAULT_USER_AVATAR;
           } }),
           /* @__PURE__ */ jsxs("label", { className: "inline-flex items-center px-3 py-1.5 rounded-md text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer", children: [
             "Change Photo",

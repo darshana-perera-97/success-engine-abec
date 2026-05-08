@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { connectWhatsapp, disconnectWhatsapp, getWhatsappStatus } from "../authApi";
+import { DEFAULT_USER_AVATAR } from "../apiConfig";
 
 const STATUS_COPY = {
   disconnected: "Disconnected",
@@ -139,13 +140,13 @@ export function IntegrationPanel({ currentUser }) {
             {isConnected ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <img
-                  src={whatsappProfilePicUrl || "/canadian.png"}
+                  src={whatsappProfilePicUrl || DEFAULT_USER_AVATAR}
                   alt={whatsappName}
                   className="w-24 h-24 rounded-full object-cover border border-slate-200"
                   referrerPolicy="no-referrer"
                   onError={(event) => {
                     event.currentTarget.onerror = null;
-                    event.currentTarget.src = "/canadian.png";
+                    event.currentTarget.src = DEFAULT_USER_AVATAR;
                   }}
                 />
                 <p className="mt-3 text-lg font-bold text-slate-900">{whatsappName}</p>

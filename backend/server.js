@@ -5,8 +5,9 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const QRCode = require("qrcode");
+const { buildAdminAiSystemPrompt } = require("./prompts");
 
 const PORT = parseInt(process.env.PORT || "", 10) || 3334;
 const USERS_FILE = path.join(__dirname, "data", "users.json");
@@ -15,6 +16,7 @@ const BRANCHES_FILE = path.join(__dirname, "data", "branches.json");
 const COUNTRIES_FILE = path.join(__dirname, "data", "countries.json");
 const UNIVERSITY_FILE = path.join(__dirname, "data", "university.json");
 const CHATS_FILE = path.join(__dirname, "data", "chats.json");
+const ADMIN_CHATS_FILE = path.join(__dirname, "data", "adminChats.json");
 const ACTIVITIES_FILE = path.join(__dirname, "data", "activities.json");
 const MEETING_DATA_FILE = path.join(__dirname, "data", "meetingData.json");
 const BOOKINGS_FILE = path.join(__dirname, "data", "bookings.json");
@@ -31,7 +33,10 @@ const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
 const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
 const STUDENT_PERMISSIONS_DIR = path.join(__dirname, "data", "studentDocs", "permissions");
 const PAYMENTS_DIR = path.join(__dirname, "data", "payments");
-const DEFAULT_MALE_AVATAR_PATH = "/assets/default-male-avatar.svg";
+// Default avatar served when a user has no custom avatar uploaded.
+// Resolved via the SPA fallback to `frontend/public/companyIcon.png` (or the
+// equivalent file in the production build output).
+const DEFAULT_MALE_AVATAR_PATH = "/companyIcon.png";
 const DEFAULT_DAY_SCHEDULE = {
   isOpen: true,
   startHour: 8,
@@ -52,6 +57,7 @@ const DEFAULT_MEETING_SETTINGS = {
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ADMIN_DISPLAY_NAME = (process.env.ADMIN_NAME || "").trim() || "Admin";
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587", 10) || 587;
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").trim().toLowerCase() === "true";
@@ -63,6 +69,11 @@ const APP_PUBLIC_URL = String(process.env.APP_PUBLIC_URL || "").trim().replace(/
 const STUDENT_SIGN_IN_PATH = String(process.env.STUDENT_SIGN_IN_PATH || "/dashboard")
   .trim()
   .replace(/\s+/g, "");
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_MODEL = String(process.env.OPENAI_MODEL || "gpt-4o-mini").trim() || "gpt-4o-mini";
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_MAX_HISTORY_MESSAGES = 12;
+const OPENAI_REQUEST_TIMEOUT_MS = 45 * 1000;
 const FORGOT_PASSWORD_OTP_TTL_MS = 10 * 60 * 1000;
 const forgotPasswordOtps = new Map();
 const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor", "Admin", "Country Coordinator"]);
@@ -450,6 +461,326 @@ async function writeTasks(tasks) {
   await fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2));
 }
 
+async function readSafe(reader, fallback) {
+  try {
+    const value = await reader();
+    return value == null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function stripUserSecrets(user) {
+  if (!user || typeof user !== "object") return user;
+  const { password, ...rest } = user;
+  return rest;
+}
+
+function stripStudentSecrets(student) {
+  if (!student || typeof student !== "object") return student;
+  const { password, ...rest } = student;
+  return rest;
+}
+
+function buildAdminDataSummary({ users, students, branches, tasks, activities, appointments, countries, reqStudents, chats }) {
+  const studentsByBranch = {};
+  const studentsByStage = {};
+  const studentsByCountry = {};
+  let unresolvedSlaViolations = 0;
+  for (const s of students) {
+    const b = String(s.branch || "Unassigned");
+    const stage = String(s.status || "Unknown");
+    const c = String(s.country || "Unassigned");
+    studentsByBranch[b] = (studentsByBranch[b] || 0) + 1;
+    studentsByStage[stage] = (studentsByStage[stage] || 0) + 1;
+    studentsByCountry[c] = (studentsByCountry[c] || 0) + 1;
+    if (Array.isArray(s.slaViolations)) {
+      unresolvedSlaViolations += s.slaViolations.filter((v) => v && !v.resolved).length;
+    }
+  }
+
+  const tasksByStatus = {};
+  let overdueTasks = 0;
+  let pendingReviews = 0;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  for (const t of tasks) {
+    const status = String(t.status || "Unknown");
+    tasksByStatus[status] = (tasksByStatus[status] || 0) + 1;
+    if (status === "Overdue") overdueTasks += 1;
+    else if (t.dueDate && String(t.dueDate) < todayIso && status !== "Completed" && status !== "Done") {
+      overdueTasks += 1;
+    }
+    if (status === "In Review") pendingReviews += 1;
+  }
+
+  const usersByRole = {};
+  for (const u of users) {
+    const r = String(u.role || "Unknown");
+    usersByRole[r] = (usersByRole[r] || 0) + 1;
+  }
+
+  const appointmentsByStatus = {};
+  for (const a of appointments) {
+    const s = String(a.status || "Unknown");
+    appointmentsByStatus[s] = (appointmentsByStatus[s] || 0) + 1;
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts: {
+      users: users.length,
+      students: students.length,
+      branches: branches.length,
+      tasks: tasks.length,
+      activities: activities.length,
+      appointments: appointments.length,
+      countries: countries.length,
+      reqStudents: reqStudents.length,
+      chatMessages: chats.length,
+    },
+    studentsByBranch,
+    studentsByStage,
+    studentsByCountry,
+    tasksByStatus,
+    overdueTasks,
+    pendingReviews,
+    unresolvedSlaViolations,
+    usersByRole,
+    appointmentsByStatus,
+  };
+}
+
+async function buildAdminAiContext() {
+  const [usersRaw, studentsRaw, branches, tasks, activities, appointments, countries, reqStudents, chats] =
+    await Promise.all([
+      readSafe(readUsers, []),
+      readSafe(readStudemts, []),
+      readSafe(readBranches, []),
+      readSafe(readTasks, []),
+      readSafe(readActivities, []),
+      readSafe(readAppointments, []),
+      readSafe(readCountries, []),
+      readSafe(readReqStudents, []),
+      readSafe(readChats, []),
+    ]);
+
+  const users = (usersRaw || []).map(stripUserSecrets);
+  const students = (studentsRaw || []).map(stripStudentSecrets);
+
+  const recentActivities = (activities || [])
+    .slice()
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 30);
+
+  const recentChats = (chats || [])
+    .slice()
+    .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")))
+    .slice(0, 25)
+    .map((c) => ({
+      id: c.id,
+      senderId: c.senderId,
+      receiverId: c.receiverId,
+      content: typeof c.content === "string" ? c.content.slice(0, 240) : "",
+      timestamp: c.timestamp,
+      platform: c.platform || "portal",
+      read: c.read === true,
+    }));
+
+  const summary = buildAdminDataSummary({
+    users,
+    students,
+    branches: branches || [],
+    tasks: tasks || [],
+    activities: activities || [],
+    appointments: appointments || [],
+    countries: countries || [],
+    reqStudents: reqStudents || [],
+    chats: chats || [],
+  });
+
+  return {
+    summary,
+    branches: branches || [],
+    countries: countries || [],
+    users: users.map((u) => ({
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      role: u.role,
+      branch: u.branch,
+      country: u.country,
+      teamLeadId: u.teamLeadId || "",
+      teamLeadName: u.teamLeadName || "",
+      createdAt: u.createdAt,
+    })),
+    students: students.map((s) => ({
+      id: s.id,
+      name: s.name,
+      country: s.country,
+      branch: s.branch,
+      email: s.email,
+      phone: s.phone,
+      status: s.status,
+      priority: s.priority,
+      ielts: s.ielts,
+      gpa: s.gpa,
+      budget: s.budget,
+      counselor: s.counselor,
+      counselorName: s.counselorName,
+      stageEnteredAt: s.stageEnteredAt,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      notes: typeof s.notes === "string" ? s.notes.slice(0, 400) : s.notes,
+      documentsCount: Array.isArray(s.documents) ? s.documents.length : 0,
+      slaViolations: Array.isArray(s.slaViolations)
+        ? s.slaViolations.map((v) => ({
+            id: v.id,
+            stage: v.stage,
+            missingItems: v.missingItems,
+            timestamp: v.timestamp,
+            resolved: v.resolved === true,
+          }))
+        : [],
+    })),
+    tasks: (tasks || []).map((t) => ({
+      id: t.id,
+      task: t.task,
+      student_id: t.student_id,
+      assigned_to: t.assigned_to,
+      priority: t.priority,
+      status: t.status,
+      dueDate: t.dueDate,
+      tier: t.tier,
+      phase: t.phase,
+      isBlocking: t.isBlocking,
+      createdBy: t.createdBy,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    })),
+    appointments: (appointments || []).map((a) => ({
+      id: a.id,
+      counselorId: a.counselorId,
+      studentId: a.studentId,
+      title: a.title,
+      date: a.date,
+      time: a.time,
+      duration: a.duration,
+      type: a.type,
+      status: a.status,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    })),
+    reqStudents: reqStudents || [],
+    recentActivities,
+    recentChats,
+  };
+}
+
+async function callOpenAiChatCompletion({ messages, temperature = 0.2, maxTokens = 280 }) {
+  if (!OPENAI_API_KEY) {
+    return { ok: false, status: 500, error: "OpenAI API key is not configured. Add OPENAI_API_KEY to backend/.env." };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(OPENAI_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      logEvent("openai", `Request failed (${response.status})`, { detail: errText.slice(0, 400) });
+      return {
+        ok: false,
+        status: 502,
+        error: response.status === 401
+          ? "OpenAI rejected the API key. Check OPENAI_API_KEY in backend/.env."
+          : "OpenAI request failed.",
+      };
+    }
+    const data = await response.json();
+    const reply = data?.choices?.[0]?.message?.content?.trim() || "";
+    if (!reply) {
+      return { ok: false, status: 502, error: "Empty response from OpenAI." };
+    }
+    return { ok: true, reply, model: data.model || OPENAI_MODEL, usage: data.usage || null };
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      return { ok: false, status: 504, error: "OpenAI request timed out." };
+    }
+    logEvent("openai", "Unexpected error calling OpenAI", { message: String(error?.message || error) });
+    return { ok: false, status: 502, error: "Could not reach OpenAI." };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeAiHistory(history) {
+  if (!Array.isArray(history)) return [];
+  const cleaned = [];
+  for (const item of history) {
+    if (!item || typeof item !== "object") continue;
+    const role = item.role === "user" || item.role === "assistant" ? item.role : null;
+    const content = typeof item.content === "string" ? item.content.trim() : "";
+    if (!role || !content) continue;
+    cleaned.push({ role, content: content.slice(0, 4000) });
+  }
+  return cleaned.slice(-OPENAI_MAX_HISTORY_MESSAGES);
+}
+
+const ADMIN_AI_CHAT_MAX_MESSAGES = 200;
+const ADMIN_AI_CHAT_MAX_CONTENT = 32000;
+
+async function readAdminChatsStore() {
+  try {
+    const raw = await fs.readFile(ADMIN_CHATS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    if (error && error.code === "ENOENT") return {};
+    throw error;
+  }
+}
+
+async function writeAdminChatsStore(store) {
+  await fs.mkdir(path.dirname(ADMIN_CHATS_FILE), { recursive: true });
+  await fs.writeFile(ADMIN_CHATS_FILE, JSON.stringify(store, null, 2));
+}
+
+async function isAuthorizedAdminChatEmail(emailRaw) {
+  const email = normalizeEmail(emailRaw);
+  if (!email) return false;
+  if (ADMIN_EMAIL && email === ADMIN_EMAIL) return true;
+  const users = await readUsers();
+  return users.some((u) => normalizeEmail(u.email) === email && String(u.role || "").trim() === "Admin");
+}
+
+function sanitizeAdminAiMessagesForStore(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") continue;
+    const role = item.role === "user" || item.role === "assistant" ? item.role : null;
+    const id = String(item.id || "").trim().slice(0, 120);
+    let content = typeof item.content === "string" ? item.content : "";
+    content = content.slice(0, ADMIN_AI_CHAT_MAX_CONTENT);
+    if (!role || !id || !content.trim()) continue;
+    out.push({ id, role, content });
+    if (out.length >= ADMIN_AI_CHAT_MAX_MESSAGES) break;
+  }
+  return out;
+}
+
 function normalizeMeetingSettings(input) {
   const src = input && typeof input === "object" ? input : {};
   const meetingDurationMinutes = Number(src.meetingDurationMinutes);
@@ -552,6 +883,13 @@ function publicChatFileUrl(req, filePath) {
   return filePath;
 }
 
+function resolveChatFileDiskPath(filePath) {
+  if (!filePath || !String(filePath).startsWith("/chat-files/")) return "";
+  const fileName = path.basename(String(filePath || ""));
+  if (!fileName) return "";
+  return path.join(CHAT_FILES_DIR, fileName);
+}
+
 function publicStudentDocUrl(req, filePath) {
   if (!filePath) return filePath;
   if (filePath.startsWith("/student-docs/")) {
@@ -632,6 +970,18 @@ async function storeChatAttachmentDataUrl(dataUrl, originalName) {
     size: buffer.length,
     name: `${originalBase}.${ext}`,
   };
+}
+
+function isSupportedWhatsappMediaMime(mime) {
+  const allowed = new Set([
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+  ]);
+  return allowed.has(String(mime || "").toLowerCase());
 }
 
 async function storeStudentCvDataUrl(dataUrl, originalName) {
@@ -885,14 +1235,41 @@ async function sendForgotPasswordOtpEmail({ email, otpCode }) {
   }
 }
 
-function buildStudentPortalLoginUrl() {
-  if (!APP_PUBLIC_URL) return "";
+function resolveRequestPublicBaseUrl(req) {
+  if (!req || !req.headers) return "";
+  const headers = req.headers || {};
+  const forwardedProtoRaw = headers["x-forwarded-proto"];
+  const forwardedHostRaw = headers["x-forwarded-host"];
+  const hostRaw = headers.host;
+  const proto = String(Array.isArray(forwardedProtoRaw) ? forwardedProtoRaw[0] : forwardedProtoRaw || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const host = String(Array.isArray(forwardedHostRaw) ? forwardedHostRaw[0] : forwardedHostRaw || hostRaw || "")
+    .split(",")[0]
+    .trim();
+  if (!host) return "";
+  const protocol = proto === "https" || proto === "http" ? proto : "http";
+  return `${protocol}://${host}`;
+}
+
+function buildStudentPortalLoginUrl(req) {
+  const base = (APP_PUBLIC_URL || resolveRequestPublicBaseUrl(req) || "").trim().replace(/\/+$/, "");
+  if (!base) return "";
   const path = STUDENT_SIGN_IN_PATH.startsWith("/") ? STUDENT_SIGN_IN_PATH : `/${STUDENT_SIGN_IN_PATH}`;
-  return `${APP_PUBLIC_URL}${path}`;
+  return `${base}${path}`;
 }
 
 function isApplicationStage(value) {
   return String(value || "").trim().toLowerCase() === "application";
+}
+
+function isInquiryStage(value) {
+  return String(value || "").trim().toLowerCase() === "inquiry";
+}
+
+function isDocumentationStage(value) {
+  return String(value || "").trim().toLowerCase() === "documentation";
 }
 
 function normalizeStage(value) {
@@ -1367,6 +1744,24 @@ function normalizePhoneDigits(phone) {
   return String(phone || "").replace(/[^\d]/g, "");
 }
 
+function normalizeSriLankaStudentPhone(phone) {
+  const digitsOnly = normalizePhoneDigits(phone);
+  if (!digitsOnly) return "";
+
+  let localMobileDigits = "";
+  if (/^94[7]\d{8}$/.test(digitsOnly)) {
+    localMobileDigits = digitsOnly.slice(2);
+  } else if (/^0[7]\d{8}$/.test(digitsOnly)) {
+    localMobileDigits = digitsOnly.slice(1);
+  } else if (/^[7]\d{8}$/.test(digitsOnly)) {
+    localMobileDigits = digitsOnly;
+  } else {
+    return "";
+  }
+
+  return `+94${localMobileDigits}`;
+}
+
 async function resolveWhatsappThreadIdFromMessage(message) {
   try {
     if (!message || typeof message.getContact !== "function") return "";
@@ -1413,13 +1808,38 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   const incomingContactNumber = normalizePhoneDigits(numberPart);
   const student = await findStudentByWhatsappFrom(fromChatId);
   const content = String(message.body || "").trim();
-  if (!content) return;
+  let attachment = null;
+  if (message?.hasMedia === true && typeof message.downloadMedia === "function") {
+    try {
+      const media = await message.downloadMedia();
+      const mime = String(media?.mimetype || "").toLowerCase();
+      if (media?.data && isSupportedWhatsappMediaMime(mime)) {
+        const stored = await storeChatAttachmentDataUrl(
+          `data:${mime};base64,${media.data}`,
+          String(media?.filename || "whatsapp-media")
+        );
+        if (stored && !stored.error) {
+          attachment = {
+            name: stored.name,
+            mime: stored.mime,
+            size: stored.size,
+            url: stored.url,
+          };
+        }
+      }
+    } catch {
+      attachment = null;
+    }
+  }
+  const normalizedContent =
+    content || (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "");
+  if (!normalizedContent && !attachment) return;
   await appendWhatsappIncoming({
     id: `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
     counselorId: String(counselorId || ""),
     from: fromChatId,
     contactNumber: incomingContactNumber || numberPart || "",
-    message: content,
+    message: normalizedContent,
     timestamp: message.timestamp
       ? new Date(Number(message.timestamp) * 1000).toISOString()
       : new Date().toISOString(),
@@ -1435,13 +1855,13 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
     senderId: String(student.id),
     receiverId: String(counselorId),
-    content,
+    content: normalizedContent,
     timestamp: message.timestamp
       ? new Date(Number(message.timestamp) * 1000).toISOString()
       : new Date().toISOString(),
     read: false,
     platform: "whatsapp",
-    attachment: null,
+    attachment,
     whatsappMessageId: incomingId,
     whatsappDelivery: {
       attempted: true,
@@ -1453,7 +1873,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   await writeChats([...chats, chat]);
 }
 
-async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content }) {
+async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content, attachment = null }) {
   const sender = await resolveCounselor(senderId);
   if (!sender) {
     return { attempted: false, status: "skipped", reason: "Sender is not a counselor account." };
@@ -1478,7 +1898,38 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
     return { attempted: true, status: "failed", reason: "Counselor WhatsApp is not connected." };
   }
   try {
-    await senderState.client.sendMessage(chatId, String(content || ""));
+    const messageText = String(content || "").trim();
+    const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
+    if (outgoingAttachment && outgoingAttachment.url) {
+      const mime = String(outgoingAttachment.mime || "").toLowerCase();
+      if (!isSupportedWhatsappMediaMime(mime)) {
+        return {
+          attempted: false,
+          status: "skipped",
+          reason: "Only PDF and image attachments can be sent via WhatsApp.",
+        };
+      }
+      const mediaPath = resolveChatFileDiskPath(String(outgoingAttachment.url || ""));
+      if (!mediaPath) {
+        return {
+          attempted: false,
+          status: "skipped",
+          reason: "Attachment file path is invalid.",
+        };
+      }
+      const media = MessageMedia.fromFilePath(mediaPath);
+      await senderState.client.sendMessage(chatId, media, messageText ? { caption: messageText } : {});
+      logEvent("whatsapp", "media message sent", { from: sender.id, to: receiverId, chatId, mime });
+      return { attempted: true, status: "sent", channel: "whatsapp", chatId };
+    }
+    if (!messageText) {
+      return {
+        attempted: false,
+        status: "skipped",
+        reason: "Message text or attachment is required.",
+      };
+    }
+    await senderState.client.sendMessage(chatId, messageText);
     logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId });
     return { attempted: true, status: "sent", channel: "whatsapp", chatId };
   } catch (error) {
@@ -1529,7 +1980,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-        sendJson(res, 200, { ok: true, user: { id: "ADM001", username: "admin", email: ADMIN_EMAIL, role: "Admin" } });
+        sendJson(res, 200, {
+          ok: true,
+          user: {
+            id: "ADM001",
+            username: ADMIN_DISPLAY_NAME,
+            name: ADMIN_DISPLAY_NAME,
+            email: ADMIN_EMAIL,
+            role: "Admin",
+          },
+        });
         return;
       }
 
@@ -1810,10 +2270,11 @@ const server = http.createServer(async (req, res) => {
       const { adminRecord, others } = splitAdminRecord(users);
       const adminAccount = {
         id: "ADM001",
-        username: "admin",
+        username: ADMIN_DISPLAY_NAME,
+        name: ADMIN_DISPLAY_NAME,
         email: ADMIN_EMAIL || "admin@gmail.com",
         role: "Admin",
-        avatar: (adminRecord && adminRecord.avatar) || "/CEO.png",
+        avatar: (adminRecord && adminRecord.avatar) || DEFAULT_MALE_AVATAR_PATH,
       };
       const safeUsers = others.map(sanitizeAccount).map((u) => ({ ...u, avatar: publicAssetUrl(req, u.avatar) }));
       sendJson(res, 200, {
@@ -2976,11 +3437,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       let whatsappDelivery = null;
-      if (content && !attachment) {
+      if (content || attachment) {
         whatsappDelivery = await deliverCounselorMessageToStudentWhatsapp({
           senderId,
           receiverId,
           content,
+          attachment,
         });
       }
       const chats = await readChats();
@@ -3145,7 +3607,8 @@ const server = http.createServer(async (req, res) => {
       const country = String(body.country || "").trim();
       const branch = String(body.branch || "").trim();
       const email = normalizeEmail(body.email);
-      const phone = String(body.phone || "").trim();
+      const phoneInput = String(body.phone || "").trim();
+      const phone = normalizeSriLankaStudentPhone(phoneInput);
       const password = String(body.password || "").trim();
       const ielts = String(body.ielts || "").trim() || "Pending";
       const gpa = String(body.gpa || "").trim();
@@ -3159,8 +3622,12 @@ const server = http.createServer(async (req, res) => {
         String(body.lastEducationDate || "").trim() || new Date().toISOString().split("T")[0];
       const documents = Array.isArray(body.documents) ? body.documents : [];
 
-      if (!name || !country || !branch || !email || !phone || !gpa || !password) {
+      if (!name || !country || !branch || !email || !phoneInput || !gpa || !password) {
         sendJson(res, 400, { ok: false, error: "Name, country, branch, email, phone, GPA and password are required." });
+        return;
+      }
+      if (!phone) {
+        sendJson(res, 400, { ok: false, error: "Enter a valid Sri Lankan mobile number in +947XXXXXXXX format." });
         return;
       }
       const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -3181,16 +3648,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       let counselorName = "";
-      let counselorNameForEmail = "Not assigned yet";
       if (counselor && counselor !== "Unassigned") {
         if (counselorNameFromBody) {
           counselorName = counselorNameFromBody;
-          counselorNameForEmail = counselorNameFromBody;
         } else {
           const counselorUser = users.find((u) => String(u.id || "") === counselor);
           if (counselorUser) {
             counselorName = String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email);
-            counselorNameForEmail = counselorName;
           }
         }
       }
@@ -3225,21 +3689,9 @@ const server = http.createServer(async (req, res) => {
       };
       const updated = [...studemts, student];
       await writeStudemts(updated);
-      try {
-        if (!getSmtpConfigError()) {
-          const loginUrl = buildStudentPortalLoginUrl();
-          await sendStudentWelcomeEmail({
-            to: email,
-            studentName: name,
-            loginUrl,
-            emailAddress: email,
-            password,
-            counselorName: counselorNameForEmail,
-          });
-        }
-      } catch (mailErr) {
-        console.error("Student welcome email failed:", mailErr && mailErr.message ? mailErr.message : mailErr);
-      }
+      // Account details (email + WhatsApp) are intentionally NOT sent at
+      // registration. They are delivered when the counsellor advances the
+      // student to the "Documentation" stage. See PUT /api/students/:id.
       sendJson(res, 201, { ok: true, data: publicStudentRecord(req, student) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -3270,6 +3722,14 @@ const server = http.createServer(async (req, res) => {
         id: studemts[idx].id,
         updatedAt: nowIso,
       };
+      if (Object.prototype.hasOwnProperty.call(body, "phone")) {
+        const normalizedPhone = normalizeSriLankaStudentPhone(body.phone);
+        if (!normalizedPhone) {
+          sendJson(res, 400, { ok: false, error: "Enter a valid Sri Lankan mobile number in +947XXXXXXXX format." });
+          return;
+        }
+        merged.phone = normalizedPhone;
+      }
       const nextCounselor = String(merged?.counselor || "").trim();
       if (previousCounselor && nextCounselor && previousCounselor !== nextCounselor) {
         const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
@@ -3294,15 +3754,115 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const transitionedToApplication =
-        !isApplicationStage(previous?.status) && isApplicationStage(merged?.status);
-      const alreadySent = Boolean(previous?.applicationAccountDetailsSentAt || merged?.applicationAccountDetailsSentAt);
+      const transitionedToDocumentation =
+        !isDocumentationStage(previous?.status) && isDocumentationStage(merged?.status);
+      const alreadySent = Boolean(
+        previous?.accountDetailsSentAt ||
+          merged?.accountDetailsSentAt ||
+          previous?.applicationAccountDetailsSentAt ||
+          merged?.applicationAccountDetailsSentAt
+      );
 
-      if (transitionedToApplication && !alreadySent) {
+      const transitionedInquiryToApplication =
+        isInquiryStage(previous?.status) && isApplicationStage(merged?.status);
+
+      if (transitionedInquiryToApplication && !alreadySent) {
         const emailAddress = normalizeEmail(merged.email);
         const password = String(merged.password || "");
         const studentName = String(merged.name || "").trim();
-        const loginUrl = buildStudentPortalLoginUrl();
+        const loginUrl = buildStudentPortalLoginUrl(req);
+
+        const delivery = {
+          email: { attempted: false, status: "skipped", reason: "" },
+          whatsapp: { attempted: false, status: "skipped", reason: "" },
+        };
+
+        // Email (SMTP)
+        try {
+          const smtpError = getSmtpConfigError();
+          if (smtpError) {
+            delivery.email = { attempted: false, status: "skipped", reason: smtpError };
+          } else if (!emailAddress || !password) {
+            delivery.email = { attempted: false, status: "skipped", reason: "Missing student email or password." };
+          } else {
+            const users = await readUsers();
+            const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
+            const counselorUser = users.find((u) => String(u.id || "") === counselorId);
+            const counselorNameForEmail =
+              String(merged.counselorName || "").trim() ||
+              (counselorUser ? String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email) : "") ||
+              "Not assigned yet";
+            await sendStudentWelcomeEmail({
+              to: emailAddress,
+              studentName: studentName || emailAddress,
+              loginUrl,
+              emailAddress,
+              password,
+              counselorName: counselorNameForEmail,
+            });
+            delivery.email = { attempted: true, status: "sent", reason: "" };
+          }
+        } catch (error) {
+          console.error("Student inquiry->application email failed:", error);
+          delivery.email = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send email."),
+          };
+        }
+
+        // WhatsApp (sent from inquiry counselor's connected WhatsApp)
+        try {
+          const inquiryCounselorId = String(merged.inquiryCounselorId || "").trim();
+          const counselorId = inquiryCounselorId || String(merged.counselor || "").trim();
+          if (!counselorId || counselorId === "Unassigned") {
+            delivery.whatsapp = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
+          } else {
+            const message = buildStudentAccountDetailsWhatsappMessage({
+              studentName: studentName || emailAddress,
+              emailAddress,
+              password,
+              loginUrl,
+            });
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId: counselorId,
+              receiverId: studentId,
+              content: message,
+            });
+            if (result && result.attempted) {
+              delivery.whatsapp = {
+                attempted: true,
+                status: result.status || "failed",
+                reason: result.reason || "",
+              };
+            } else {
+              delivery.whatsapp = { attempted: false, status: "skipped", reason: result?.reason || "Not attempted." };
+            }
+          }
+        } catch (error) {
+          console.error("Student inquiry->application WhatsApp failed:", error);
+          delivery.whatsapp = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp message."),
+          };
+        }
+
+        merged.applicationAccountDetailsSentAt = nowIso;
+        merged.applicationAccountDetailsDelivery = delivery;
+        logEvent("student", "moved Inquiry -> Application: sent account details", {
+          studentId,
+          email: emailAddress,
+          counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
+          delivery,
+        });
+      }
+
+      if (transitionedToDocumentation && !alreadySent) {
+        const emailAddress = normalizeEmail(merged.email);
+        const password = String(merged.password || "");
+        const studentName = String(merged.name || "").trim();
+        const loginUrl = buildStudentPortalLoginUrl(req);
 
         const delivery = {
           email: { attempted: false, status: "skipped", reason: "" },
@@ -3335,7 +3895,7 @@ const server = http.createServer(async (req, res) => {
             delivery.email = { attempted: true, status: "sent", reason: "" };
           }
         } catch (error) {
-          console.error("Student application-stage email failed:", error);
+          console.error("Student documentation-stage email failed:", error);
           delivery.email = {
             attempted: true,
             status: "failed",
@@ -3372,7 +3932,7 @@ const server = http.createServer(async (req, res) => {
             }
           }
         } catch (error) {
-          console.error("Student application-stage WhatsApp failed:", error);
+          console.error("Student documentation-stage WhatsApp failed:", error);
           delivery.whatsapp = {
             attempted: true,
             status: "failed",
@@ -3380,9 +3940,9 @@ const server = http.createServer(async (req, res) => {
           };
         }
 
-        merged.applicationAccountDetailsSentAt = nowIso;
-        merged.applicationAccountDetailsDelivery = delivery;
-        logEvent("student", "moved to Application: sent account details", {
+        merged.accountDetailsSentAt = nowIso;
+        merged.accountDetailsDelivery = delivery;
+        logEvent("student", "moved to Documentation: sent account details", {
           studentId,
           email: emailAddress,
           counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
@@ -3394,6 +3954,83 @@ const server = http.createServer(async (req, res) => {
       updated[idx] = merged;
       await writeStudemts(updated);
       sendJson(res, 200, { ok: true, data: publicStudentRecord(req, merged) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname.startsWith("/api/students/") && url.pathname.endsWith("/move-to-requests")) {
+    try {
+      const studentId = decodeURIComponent(
+        url.pathname.replace("/api/students/", "").replace("/move-to-requests", "").trim()
+      ).replace(/\/+$/, "");
+      if (!studentId) {
+        sendJson(res, 400, { ok: false, error: "Student ID is required." });
+        return;
+      }
+      const body = await parseBody(req);
+      const nearestOfficeRaw = String(body.nearestOffice || body.branch || "").trim();
+      if (!nearestOfficeRaw) {
+        sendJson(res, 400, { ok: false, error: "Branch (nearest office) is required." });
+        return;
+      }
+
+      const branchesList = await readBranches();
+      const branchLocations = branchesList
+        .map((b) => String(b?.location || "").trim())
+        .filter(Boolean);
+      const matchedOffice = branchLocations.find(
+        (loc) => loc.toLowerCase() === nearestOfficeRaw.toLowerCase()
+      );
+      if (!matchedOffice) {
+        sendJson(res, 400, { ok: false, error: "Please choose a valid nearest office from the list." });
+        return;
+      }
+
+      const studemts = await readStudemts();
+      const idx = studemts.findIndex((s) => String(s.id || "") === studentId);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Student not found." });
+        return;
+      }
+      const student = studemts[idx];
+
+      const entry = {
+        id: `REQ-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        submittedAt: new Date().toISOString(),
+        name: String(student.name || "").trim(),
+        email: normalizeEmail(student.email),
+        phone: String(student.phone || "").trim(),
+        countryToVisit: String(student.countryToVisit || student.country || "").trim(),
+        city: String(student.city || "").trim() || null,
+        nearestOffice: matchedOffice,
+        currentEducationLevel: String(student.currentEducationLevel || "").trim(),
+        intendedProgram: String(student.intendedProgram || "").trim(),
+        message: String(student.message || "").trim() || null,
+        source: "counselor-reassignment",
+      };
+
+      if (!entry.name || !entry.email || !entry.phone || !entry.countryToVisit) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Student is missing required interest-form fields (name, email, phone, country).",
+        });
+        return;
+      }
+      if (!entry.currentEducationLevel || !entry.intendedProgram) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Student is missing education level or intended program.",
+        });
+        return;
+      }
+
+      await appendReqStudent(entry);
+      const updated = [...studemts];
+      updated.splice(idx, 1);
+      await writeStudemts(updated);
+      sendJson(res, 200, { ok: true, data: { requestId: entry.id, studentId, nearestOffice: matchedOffice } });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -3593,6 +4230,128 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 201, { ok: true, data: branch });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin-ai-chats") {
+    try {
+      const email = normalizeEmail(url.searchParams.get("email"));
+      if (!email) {
+        sendJson(res, 400, { ok: false, error: "email query parameter is required." });
+        return;
+      }
+      if (!(await isAuthorizedAdminChatEmail(email))) {
+        sendJson(res, 403, { ok: false, error: "Not authorized for this chat history." });
+        return;
+      }
+      const store = await readAdminChatsStore();
+      const entry = store[email];
+      const list = Array.isArray(entry?.messages) ? entry.messages : [];
+      sendJson(res, 200, { ok: true, data: list });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load admin chat history." });
+    }
+    return;
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/admin-ai-chats") {
+    try {
+      const body = await parseBody(req);
+      const email = normalizeEmail(body.email);
+      if (!email) {
+        sendJson(res, 400, { ok: false, error: "email is required." });
+        return;
+      }
+      if (!(await isAuthorizedAdminChatEmail(email))) {
+        sendJson(res, 403, { ok: false, error: "Not authorized for this chat history." });
+        return;
+      }
+      const messages = sanitizeAdminAiMessagesForStore(body.messages);
+      const store = await readAdminChatsStore();
+      store[email] = { messages, updatedAt: new Date().toISOString() };
+      await writeAdminChatsStore(store);
+      sendJson(res, 200, { ok: true, data: messages });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/admin-ai-chats") {
+    try {
+      const email = normalizeEmail(url.searchParams.get("email"));
+      if (!email) {
+        sendJson(res, 400, { ok: false, error: "email query parameter is required." });
+        return;
+      }
+      if (!(await isAuthorizedAdminChatEmail(email))) {
+        sendJson(res, 403, { ok: false, error: "Not authorized for this chat history." });
+        return;
+      }
+      const store = await readAdminChatsStore();
+      delete store[email];
+      await writeAdminChatsStore(store);
+      sendJson(res, 200, { ok: true });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to clear admin chat history." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ai/chat/status") {
+    sendJson(res, 200, {
+      ok: true,
+      enabled: Boolean(OPENAI_API_KEY),
+      model: OPENAI_MODEL,
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ai/chat") {
+    try {
+      if (!OPENAI_API_KEY) {
+        sendJson(res, 503, {
+          ok: false,
+          error: "AI assistant is disabled. Add OPENAI_API_KEY to backend/.env and restart the server.",
+        });
+        return;
+      }
+      const body = await parseBody(req);
+      const message = String(body.message || body.question || "").trim();
+      if (!message) {
+        sendJson(res, 400, { ok: false, error: "Message is required." });
+        return;
+      }
+      if (message.length > 4000) {
+        sendJson(res, 400, { ok: false, error: "Message is too long (max 4000 characters)." });
+        return;
+      }
+
+      const history = normalizeAiHistory(body.history);
+      const context = await buildAdminAiContext();
+      const systemPrompt = buildAdminAiSystemPrompt(context);
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...history,
+        { role: "user", content: message },
+      ];
+
+      const result = await callOpenAiChatCompletion({ messages });
+      if (!result.ok) {
+        sendJson(res, result.status || 502, { ok: false, error: result.error });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        reply: result.reply,
+        model: result.model,
+        usage: result.usage,
+      });
+    } catch (error) {
+      logEvent("openai", "Chat handler crashed", { message: String(error?.message || error) });
+      sendJson(res, 500, { ok: false, error: "Failed to process AI request." });
     }
     return;
   }

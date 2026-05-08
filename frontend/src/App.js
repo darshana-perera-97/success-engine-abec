@@ -27,7 +27,7 @@ import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
 import { Bell, X } from "lucide-react";
 import { filterTasksForCounselor } from "./counselorTaskScope";
-import { toAbsoluteAssetUrl } from "./apiConfig";
+import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "./apiConfig";
 import {
   computePipelineEscalations,
   filterEscalationsForCounselor,
@@ -58,7 +58,7 @@ function App({ initialView = "dashboard" }) {
   const navigate = useNavigate();
   const [authenticatedUser, setAuthenticatedUser] = useState(getLoginSessionUser());
   const [isAuthenticated, setIsAuthenticated] = useState(hasLoginSession);
-  const [adminAvatar, setAdminAvatar] = useState("/CEO.png");
+  const [adminAvatar, setAdminAvatar] = useState(DEFAULT_USER_AVATAR);
   const [students, setStudents] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -92,10 +92,12 @@ function App({ initialView = "dashboard" }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
+  const [assignmentAlerts, setAssignmentAlerts] = useState([]);
   const whatsappStatusFailuresRef = useRef(0);
   const hasStudentsHydratedRef = useRef(false);
   const hasRequestedStudentsHydratedRef = useRef(false);
   const requestedStudentsCountRef = useRef(0);
+  const previousStudentCounselorMapRef = useRef(new Map());
   const addNotification = (title, message, type = "info") => {
     const id = generateId("notif");
     const notification = { id, title, message, type, timestamp: new Date().toISOString() };
@@ -122,7 +124,7 @@ function App({ initialView = "dashboard" }) {
           branch: authenticatedUser.branch || "Colombo HQ",
           country: authenticatedUser.country || "",
           email: authenticatedUser.email || "",
-          avatar: authenticatedUser.role === "Admin" ? adminAvatar : authenticatedUser.avatar || "/CEO.png"
+          avatar: authenticatedUser.role === "Admin" ? adminAvatar : authenticatedUser.avatar || DEFAULT_USER_AVATAR
         };
       }
     }
@@ -138,7 +140,7 @@ function App({ initialView = "dashboard" }) {
         role: "Student",
         branch: authenticatedUser?.branch || "Colombo HQ",
         email: authenticatedUser?.email || "",
-          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/canadian.png",
+          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || DEFAULT_USER_AVATAR,
       };
     } else if (currentRole === "Counselor") {
       const authEmail = String(authenticatedUser?.email || "").toLowerCase();
@@ -149,7 +151,7 @@ function App({ initialView = "dashboard" }) {
           id: authenticatedUser?.id || byEmail.id,
           role: "Counselor",
           email: authenticatedUser?.email || byEmail.email,
-          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || "/assets/default-male-avatar.svg"
+          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || DEFAULT_USER_AVATAR
         };
       }
       return {
@@ -158,7 +160,7 @@ function App({ initialView = "dashboard" }) {
         role: "Counselor",
         branch: authenticatedUser?.branch || "Colombo HQ",
         email: authenticatedUser?.email || "",
-        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
+        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || DEFAULT_USER_AVATAR
       };
     } else if (currentRole === "Country Coordinator") {
       const authEmail = String(authenticatedUser?.email || "").toLowerCase();
@@ -170,7 +172,7 @@ function App({ initialView = "dashboard" }) {
           role: "Country Coordinator",
           email: authenticatedUser?.email || byEmail.email,
           country: byEmail.country || authenticatedUser?.country || "",
-          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || "/assets/default-male-avatar.svg"
+          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || DEFAULT_USER_AVATAR
         };
       }
       return {
@@ -180,7 +182,7 @@ function App({ initialView = "dashboard" }) {
         branch: authenticatedUser?.branch || "Colombo HQ",
         country: authenticatedUser?.country || "",
         email: authenticatedUser?.email || "",
-        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
+        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || DEFAULT_USER_AVATAR
       };
     } else if (currentRole === "Manager" || currentRole === "Team Lead") {
       const authEmail = String(authenticatedUser?.email || "").toLowerCase();
@@ -191,7 +193,7 @@ function App({ initialView = "dashboard" }) {
           id: authenticatedUser?.id || byEmail.id,
           role: currentRole,
           email: authenticatedUser?.email || byEmail.email,
-          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || "/assets/default-male-avatar.svg"
+          avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar || byEmail.avatar) || DEFAULT_USER_AVATAR
         };
       }
       return {
@@ -200,7 +202,7 @@ function App({ initialView = "dashboard" }) {
         role: currentRole,
         branch: authenticatedUser?.branch || "Colombo HQ",
         email: authenticatedUser?.email || "",
-        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || "/assets/default-male-avatar.svg"
+        avatar: toAbsoluteAssetUrl(authenticatedUser?.avatar) || DEFAULT_USER_AVATAR
       };
     } else {
       return {
@@ -209,7 +211,7 @@ function App({ initialView = "dashboard" }) {
         role: "Admin",
         branch: authenticatedUser?.branch || "",
         email: authenticatedUser?.email || "",
-        avatar: toAbsoluteAssetUrl(adminAvatar) || "/CEO.png"
+        avatar: toAbsoluteAssetUrl(adminAvatar) || DEFAULT_USER_AVATAR
       };
     }
   };
@@ -242,6 +244,51 @@ function App({ initialView = "dashboard" }) {
     currentUser?.name,
     employees
   ]);
+  useEffect(() => {
+    if (currentRole !== "Counselor") {
+      setAssignmentAlerts([]);
+      previousStudentCounselorMapRef.current = new Map();
+      return;
+    }
+    const nextMap = new Map(
+      (students || []).map((student) => [String(student.id || ""), normalizeIdentity(student.counselor)])
+    );
+    const previousMap = previousStudentCounselorMapRef.current;
+    if (!hasStudentsHydratedRef.current || previousMap.size === 0) {
+      previousStudentCounselorMapRef.current = nextMap;
+      return;
+    }
+    const nextAlerts = [];
+    (students || []).forEach((student) => {
+      const studentId = String(student.id || "").trim();
+      if (!studentId) return;
+      const currentCounselor = normalizeIdentity(student.counselor);
+      const previousCounselor = previousMap.get(studentId) || "";
+      const isAssignedNowToMe = counselorIdentitySet.has(currentCounselor);
+      const wasAssignedToMeBefore = counselorIdentitySet.has(previousCounselor);
+      if (!isAssignedNowToMe || wasAssignedToMeBefore) return;
+      const wasKnownStudent = previousMap.has(studentId);
+      nextAlerts.push({
+        id: `assign-alert-${studentId}-${Date.now()}`,
+        studentId,
+        studentName: student.name || studentId,
+        type: wasKnownStudent ? "reassigned" : "new"
+      });
+    });
+    if (nextAlerts.length > 0) {
+      setAssignmentAlerts((prev) => {
+        const merged = [...nextAlerts, ...prev];
+        const seen = new Set();
+        return merged.filter((item) => {
+          const key = `${item.studentId || item.studentName}-${item.type}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 10);
+      });
+    }
+    previousStudentCounselorMapRef.current = nextMap;
+  }, [students, currentRole, counselorIdentitySet]);
   const counselorScopedStudents = (() => {
     if (currentRole !== "Counselor") return students;
     if (counselorIdentitySet.size === 0) return [];
@@ -405,7 +452,7 @@ function App({ initialView = "dashboard" }) {
     counselorScopedEscalations.length,
     countryCoordinatorScopedEscalations.length
   ]);
-  const headerAvatar = currentRole === "Admin" ? toAbsoluteAssetUrl(adminAvatar) : toAbsoluteAssetUrl(currentUser?.avatar) || "/canadian.png";
+  const headerAvatar = currentRole === "Admin" ? toAbsoluteAssetUrl(adminAvatar) : toAbsoluteAssetUrl(currentUser?.avatar) || DEFAULT_USER_AVATAR;
 
   useEffect(() => {
     const loadEmployees = async () => {
@@ -422,7 +469,7 @@ function App({ initialView = "dashboard" }) {
         teamLeadId: account.teamLeadId || "",
         teamLeadName: account.teamLeadName || "",
         country: account.country || "",
-        avatar: toAbsoluteAssetUrl(account.avatar) || "/assets/default-male-avatar.svg"
+        avatar: toAbsoluteAssetUrl(account.avatar) || DEFAULT_USER_AVATAR
       }));
       setEmployees(mapped);
     };
@@ -633,6 +680,20 @@ function App({ initialView = "dashboard" }) {
     setSelectedTaskId(taskId);
     setCurrentView("tasks");
   };
+  const handleDismissAssignmentAlert = (alertId) => {
+    const id = String(alertId || "").trim();
+    if (!id) return;
+    setAssignmentAlerts((prev) => prev.filter((item) => String(item.id || "").trim() !== id));
+  };
+  const handleStudentMovedToRequests = (studentId) => {
+    const targetId = String(studentId || "").trim();
+    if (!targetId) return;
+    setStudents((prev) => prev.filter((s) => String(s.id || "").trim() !== targetId));
+    setTasks((prev) => prev.filter((t) => String(t.student_id || t.studentId || "").trim() !== targetId));
+    if (String(selectedStudent?.id || "").trim() === targetId) {
+      setSelectedStudent(null);
+    }
+  };
   const handleAddActivity = (act) => {
     const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
     const explicitActor = String(act.actorName || "").trim();
@@ -677,6 +738,29 @@ function App({ initialView = "dashboard" }) {
     const persisted = await updateStudent(payload.id, payload);
     if (!persisted.ok) {
       addNotification("Save failed", persisted.error || "Failed to save student changes.", "error");
+      return;
+    }
+    const savedStudent = persisted.data;
+    setStudents((prev) => prev.map((s) => s.id === savedStudent.id ? savedStudent : s));
+    if (selectedStudent?.id === savedStudent.id) {
+      setSelectedStudent(savedStudent);
+    }
+  };
+  const handleAssignStudentCounselor = async (student, counselorId, counselorName = "") => {
+    const targetId = String(student?.id || "").trim();
+    const nextCounselorId = String(counselorId || "").trim();
+    if (!targetId || !nextCounselorId) return;
+    setStudents((prev) => prev.map((s) => String(s.id || "").trim() === targetId ? {
+      ...s,
+      counselor: nextCounselorId,
+      counselorName: counselorName || s.counselorName || ""
+    } : s));
+    const persisted = await updateStudent(targetId, {
+      counselor: nextCounselorId,
+      counselorName: counselorName || ""
+    });
+    if (!persisted.ok) {
+      addNotification("Assignment failed", persisted.error || "Failed to assign counselor.", "error");
       return;
     }
     const savedStudent = persisted.data;
@@ -745,7 +829,7 @@ function App({ initialView = "dashboard" }) {
       phone: String(payload?.phone || "").trim(),
       teamLeadId: "",
       teamLeadName: "",
-      avatar: "/assets/default-male-avatar.svg"
+      avatar: DEFAULT_USER_AVATAR
     };
     setEmployees((prev) => [...prev, newEmployee]);
     addNotification("Counselor added", `${newEmployee.name} profile created and saved to accounts.`, "success");
@@ -1281,11 +1365,11 @@ function App({ initialView = "dashboard" }) {
       if (currentRole === "Counselor" && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts: [] });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees });
-      if (currentView === "student-detail") return selectedStudent && coordStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts: [] });
+      if (currentView === "student-detail") return selectedStudent && coordStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
     }
     if (currentRole === "Manager" || currentRole === "Team Lead") {
       const mgrStudents = currentRole === "Manager" && managerDataScope.active ? managerScopedStudents : students;
@@ -1299,7 +1383,7 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "" });
       if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
         return /* @__PURE__ */ jsxs(Fragment, {
@@ -1314,19 +1398,19 @@ function App({ initialView = "dashboard" }) {
           ]
         });
       }
-      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
       return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
     }
     switch (currentView) {
       case "dashboard":
-        return /* @__PURE__ */ jsx(AdminDashboard, { activities, tasks, students, invoices });
+        return /* @__PURE__ */ jsx(AdminDashboard, { activities, tasks, students, invoices, currentUser });
       case "counselors":
         return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students, employees, tasks, onTransferStudents: handleTransferStudents, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "" });
       case "accounts":
         return /* @__PURE__ */ jsx(AccountsManagement, {
           onAdminAvatarUpdated: (row) => {
-            setAdminAvatar(toAbsoluteAssetUrl(row.avatar) || "/CEO.png");
+            setAdminAvatar(toAbsoluteAssetUrl(row.avatar) || DEFAULT_USER_AVATAR);
             addNotification("Profile updated", "Admin profile photo updated.", "success");
           },
           onAccountCreated: (row) =>
@@ -1355,11 +1439,11 @@ function App({ initialView = "dashboard" }) {
       case "branch":
         return /* @__PURE__ */ jsx(BranchAnalytics, {});
       case "students":
-        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "requested-students":
         return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: null, onAddFromRequest: handleAddFromRequest });
       case "student-detail":
-        return selectedStudent ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return selectedStudent ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "tasks":
         return /* @__PURE__ */ jsxs(Fragment, {
           children: [

@@ -17,6 +17,7 @@ import {
   MessageSquare,
   PlusCircle,
   Clock,
+  Calendar,
   Download,
   Eye,
   Pencil,
@@ -237,6 +238,175 @@ const SpecializedNotes = ({ student, onUpdateStudent, currentUser, authenticated
       dialog.kind === "delete" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
         /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 bg-slate-50/80", children: [
           /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Delete note?" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "This cannot be undone." })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "p-4 max-h-40 overflow-y-auto", children: /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 whitespace-pre-wrap break-words", children: preview(dialog.note.text) }) }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            className: "bg-rose-600 hover:bg-rose-700 border-none text-white",
+            onClick: () => {
+              persistNotes(notes.filter((item) => item.id !== dialog.note.id));
+              setDialog(null);
+            },
+            children: "Delete"
+          })
+        ] })
+      ] })
+    ] }) })
+  ] });
+};
+const MeetingNotes = ({ student, onUpdateStudent, currentUser, authenticatedUser, userRole }) => {
+  const [addDraft, setAddDraft] = useState("");
+  const [addMeetingDate, setAddMeetingDate] = useState("");
+  const [dialog, setDialog] = useState(null);
+  const authorLabel = String(currentUser?.name || currentUser?.username || authenticatedUser?.username || authenticatedUser?.email || "Staff").trim() || "Staff";
+  const notes = Array.isArray(student?.meetingNotes) ? student.meetingNotes : [];
+  const persistNotes = (next) => {
+    onUpdateStudent?.({ ...student, meetingNotes: next });
+  };
+  const handleAddNote = () => {
+    const text = addDraft.trim();
+    if (!text) return;
+    const newNote = {
+      id: `mn-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+      text,
+      meetingDate: String(addMeetingDate || "").trim() || "",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      author: authorLabel,
+      authorId: currentUser?.id ? String(currentUser.id) : ""
+    };
+    persistNotes([newNote, ...notes]);
+    setAddDraft("");
+    setAddMeetingDate("");
+    setDialog(null);
+  };
+  const formatWhen = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+  };
+  const preview = (text) => {
+    const t = String(text || "").trim();
+    if (t.length <= 90) return t;
+    return `${t.slice(0, 87)}...`;
+  };
+  if (userRole === "Student") return null;
+  return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
+    /* @__PURE__ */ jsxs("h3", { className: "text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2", children: [
+      /* @__PURE__ */ jsx(Calendar, { size: 16, className: "text-indigo-600" }),
+      " Meeting Notes"
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "mb-3 flex flex-col items-start gap-2", children: [
+      /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500", children: "Log sessions, calls, and follow-ups. Stored on this student record." }),
+      /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-7 px-2.5 text-[11px] font-semibold", onClick: () => setDialog({ kind: "add" }), children: "Add meeting note" })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1", children: [
+      notes.length === 0 && /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No meeting notes yet." }),
+      notes.map((n) => /* @__PURE__ */ jsxs("button", { type: "button", className: "w-full text-left bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs transition hover:bg-white hover:border-slate-200", onClick: () => setDialog({ kind: "view", note: n }), children: [
+        /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+          n.meetingDate && /* @__PURE__ */ jsx("p", { className: "text-[10px] font-semibold text-indigo-600 mb-0.5", children: n.meetingDate }),
+          /* @__PURE__ */ jsx("p", { className: "text-slate-700 line-clamp-3", children: preview(n.text) }),
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-x-2 mt-1 text-[10px] text-slate-400", children: [
+            /* @__PURE__ */ jsx("span", { children: n.author || authorLabel }),
+            /* @__PURE__ */ jsx("span", { children: formatWhen(n.updatedAt || n.createdAt) })
+          ] })
+        ] })
+      ] }, n.id))
+    ] }),
+    dialog && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[140] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setDialog(null), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col", onClick: (e) => e.stopPropagation(), children: [
+      dialog.kind === "add" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Add meeting note" }),
+          /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+          /* @__PURE__ */ jsxs("label", { className: "block", children: [
+            /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Meeting date (optional)" }),
+            /* @__PURE__ */ jsx("input", {
+              type: "date",
+              className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500",
+              value: addMeetingDate,
+              onChange: (e) => setAddMeetingDate(e.target.value)
+            })
+          ] }),
+          /* @__PURE__ */ jsx("textarea", {
+            className: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[140px] focus:outline-none focus:border-indigo-500",
+            placeholder: "Add meeting notes in bullets or paragraphs...",
+            value: addDraft,
+            onChange: (e) => setAddDraft(e.target.value)
+          })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleAddNote, disabled: !String(addDraft || "").trim(), children: "Save note" })
+        ] })
+      ] }),
+      dialog.kind === "view" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Meeting note" }),
+          /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "p-4 overflow-y-auto flex-1", children: [
+          dialog.note.meetingDate && /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-indigo-600 mb-2", children: ["Date: ", dialog.note.meetingDate] }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-800 whitespace-pre-wrap break-words", children: dialog.note.text }),
+          /* @__PURE__ */ jsxs("div", { className: "mt-4 text-[11px] text-slate-500 space-y-1", children: [
+            /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Author: " }), dialog.note.author || "—"] }),
+            /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Created: " }), formatWhen(dialog.note.createdAt)] }),
+            dialog.note.updatedAt && /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Updated: " }), formatWhen(dialog.note.updatedAt)] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Close" })
+        ] })
+      ] }),
+      dialog.kind === "edit" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Edit meeting note" }),
+          /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+          /* @__PURE__ */ jsxs("label", { className: "block", children: [
+            /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Meeting date" }),
+            /* @__PURE__ */ jsx("input", {
+              type: "date",
+              className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500",
+              value: dialog.meetingDate || "",
+              onChange: (e) => setDialog({ ...dialog, meetingDate: e.target.value })
+            })
+          ] }),
+          /* @__PURE__ */ jsx("textarea", {
+            className: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[140px] focus:outline-none focus:border-indigo-500",
+            value: dialog.draft,
+            onChange: (e) => setDialog({ ...dialog, draft: e.target.value })
+          })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            onClick: () => {
+              const text = String(dialog.draft || "").trim();
+              if (!text) return;
+              const id = dialog.note.id;
+              const next = notes.map((item) => item.id === id ? {
+                ...item,
+                text,
+                meetingDate: String(dialog.meetingDate || "").trim(),
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              } : item);
+              persistNotes(next);
+              setDialog(null);
+            },
+            disabled: !String(dialog.draft || "").trim(),
+            children: "Save changes"
+          })
+        ] })
+      ] }),
+      dialog.kind === "delete" && /* @__PURE__ */ jsxs(React.Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Delete meeting note?" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "This cannot be undone." })
         ] }),
         /* @__PURE__ */ jsx("div", { className: "p-4 max-h-40 overflow-y-auto", children: /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 whitespace-pre-wrap break-words", children: preview(dialog.note.text) }) }),
@@ -776,7 +946,8 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
-            /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName })
+            /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
+            /* @__PURE__ */ jsx(MeetingNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole })
           ] })
         ] }),
         contactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [

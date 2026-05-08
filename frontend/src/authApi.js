@@ -673,6 +673,23 @@ export async function updateStudent(studentId, payload) {
   }
 }
 
+export async function moveStudentToRequests(studentId, nearestOffice) {
+  try {
+    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/move-to-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nearestOffice })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to move student to requested list." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function getUniversityPrograms(options = {}) {
   try {
     const includeHidden = options.includeHidden ? "?includeHidden=1" : "";
@@ -858,6 +875,98 @@ export async function getWhatsappIncoming(userId) {
     return {
       ok: false,
       error: "Cannot reach WhatsApp server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function getAdminAiStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/ai/chat/status`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, enabled: false, error: data.error || "Failed to load AI status." };
+    }
+    return { ok: true, enabled: Boolean(data.enabled), model: data.model || "" };
+  } catch {
+    return {
+      ok: false,
+      enabled: false,
+      error: "Cannot reach AI assistant. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function askAdminAi(message, history = []) {
+  try {
+    const res = await fetch(`${API_BASE}/api/ai/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.reply) {
+      return { ok: false, error: data.error || "AI assistant could not answer." };
+    }
+    return { ok: true, reply: String(data.reply), model: data.model || "", usage: data.usage || null };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach AI assistant. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function getAdminAiChats(email) {
+  try {
+    const query = new URLSearchParams({ email: String(email || "").trim().toLowerCase() });
+    const res = await fetch(`${API_BASE}/api/admin-ai-chats?${query.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load chat history.", data: [] };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach server. Is the backend running on port 3334?",
+      data: []
+    };
+  }
+}
+
+export async function saveAdminAiChats(email, messages) {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin-ai-chats`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: String(email || "").trim().toLowerCase(), messages: messages || [] })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save chat history." };
+    }
+    return { ok: true, data: data.data || [] };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function clearAdminAiChats(email) {
+  try {
+    const query = new URLSearchParams({ email: String(email || "").trim().toLowerCase() });
+    const res = await fetch(`${API_BASE}/api/admin-ai-chats?${query.toString()}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to clear chat history." };
+    }
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach server. Is the backend running on port 3334?"
     };
   }
 }
