@@ -2,6 +2,7 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
+  "homepage": "https://abec-dev.nexgenai.asia",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
