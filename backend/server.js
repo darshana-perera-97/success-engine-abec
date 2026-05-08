@@ -4511,6 +4511,8 @@ const server = http.createServer(async (req, res) => {
     const frontendRoot = await resolveFrontendRootDir();
     const decodedPath = decodeURIComponent(url.pathname || "/");
     const requestedPath = decodedPath === "/" ? "/index.html" : decodedPath;
+    const requestExt = path.extname(requestedPath).toLowerCase();
+    const isStaticAssetRequest = requestExt !== "";
     const normalizedPath = path
       .normalize(requestedPath)
       .replace(/^(\.\.[/\\])+/, "")
@@ -4524,6 +4526,12 @@ const server = http.createServer(async (req, res) => {
         await sendFrontendFile(res, absolutePath);
         return;
       } catch {
+        // Static asset requests should fail with 404 instead of serving index.html,
+        // otherwise browsers parse HTML as JS/CSS and crash with token '<' errors.
+        if (isStaticAssetRequest) {
+          sendJson(res, 404, { ok: false, error: "Frontend asset not found." });
+          return;
+        }
         // Fall through to SPA fallback for client-side routes.
       }
     }
