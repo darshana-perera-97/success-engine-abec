@@ -4526,9 +4526,17 @@ const server = http.createServer(async (req, res) => {
         await sendFrontendFile(res, absolutePath);
         return;
       } catch {
-        // Static asset requests should fail with 404 instead of serving index.html,
-        // otherwise browsers parse HTML as JS/CSS and crash with token '<' errors.
+        // If current frontend root misses a static file, try both known output dirs
+        // (`frontend/build` and `frontend/dist`) before returning 404.
         if (isStaticAssetRequest) {
+          const assetFromOtherBuild = await tryReadFrontendAssetFromBuildOutputs(requestedPath);
+          if (assetFromOtherBuild) {
+            res.statusCode = 200;
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.setHeader("Content-Type", getContentType(assetFromOtherBuild.filePath));
+            res.end(assetFromOtherBuild.file);
+            return;
+          }
           sendJson(res, 404, { ok: false, error: "Frontend asset not found." });
           return;
         }
