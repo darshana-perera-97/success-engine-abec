@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getBranches, getCountries, submitStudentRegistrationRequest } from "../authApi";
+import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
 import { Button } from "./Button";
 
 const EDUCATION_LEVELS = [
@@ -76,7 +76,7 @@ export function StudentRegistrationForm() {
     e.preventDefault();
     setFormError("");
     setIsSaving(true);
-    const result = await submitStudentRegistrationRequest({
+    const result = await submitStudentRegFormRequest({
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
@@ -244,10 +244,9 @@ export function StudentRegistrationForm() {
 
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Current education level <span className="text-rose-500">*</span>
+              Current education level
             </label>
             <select
-              required
               className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={form.currentEducationLevel}
               onChange={(e) => update("currentEducationLevel", e.target.value)}
@@ -263,11 +262,10 @@ export function StudentRegistrationForm() {
 
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Intended program of study <span className="text-rose-500">*</span>
+              Intended program of study
             </label>
             <input
               type="text"
-              required
               className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={form.intendedProgram}
               onChange={(e) => update("intendedProgram", e.target.value)}

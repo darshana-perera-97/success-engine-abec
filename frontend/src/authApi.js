@@ -342,6 +342,27 @@ export async function submitStudentRegistrationRequest(payload) {
   }
 }
 
+/** Public student-reg-form API alias. Same payload and behavior as student-registration. */
+export async function submitStudentRegFormRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/student-reg-form`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Submission failed." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach the server. Check your connection or try again later."
+    };
+  }
+}
+
 export async function createCountry(name) {
   try {
     const res = await fetch(`${API_BASE}/api/countries`, {

@@ -393,8 +393,11 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
                 }
               ),
               /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-full shadow-sm opacity-80 group-hover:opacity-100 transition-opacity w-fit", children: [
-                /* @__PURE__ */ jsx("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
-                /* @__PURE__ */ jsx("span", { className: "text-[10px] font-semibold text-slate-500 tracking-tight whitespace-nowrap", children: "Live" }),
+                /* @__PURE__ */ jsxs("span", { className: "relative inline-flex h-2 w-2 items-center justify-center", children: [
+                  /* @__PURE__ */ jsx("span", { className: "absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" }),
+                  /* @__PURE__ */ jsx("span", { className: "relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" }),
+                ] }),
+                /* @__PURE__ */ jsx("span", { className: "text-[10px] font-semibold text-slate-500 tracking-tight whitespace-nowrap animate-pulse", children: "Live" }),
               ] }),
             ] }),
           ] }),

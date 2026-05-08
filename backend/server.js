@@ -2630,7 +2630,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/student-registration") {
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/api/student-registration" || url.pathname === "/api/student-reg-form")
+  ) {
     try {
       const body = await parseBody(req);
       const name = String(body.name || "").trim();
@@ -2654,14 +2657,6 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: "Please enter a valid email address." });
         return;
       }
-      if (!currentEducationLevel || !intendedProgram) {
-        sendJson(res, 400, {
-          ok: false,
-          error: "Current education level and intended program of study are required.",
-        });
-        return;
-      }
-
       const countriesList = await readCountries();
       const matchedCountry = countriesList.find(
         (c) => String(c).trim().toLowerCase() === countryToVisitRaw.toLowerCase()
@@ -2709,8 +2704,8 @@ const server = http.createServer(async (req, res) => {
         countryToVisit: String(matchedCountry).trim(),
         city: city || null,
         nearestOffice,
-        currentEducationLevel,
-        intendedProgram,
+        currentEducationLevel: currentEducationLevel || null,
+        intendedProgram: intendedProgram || null,
         message: message || null,
         source: "student-reg-form",
       };
