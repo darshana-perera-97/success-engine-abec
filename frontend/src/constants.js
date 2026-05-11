@@ -1,4 +1,4 @@
-import { PIPELINE_STEPS } from "./pipeline";
+import { PIPELINE_STEPS } from "./pipeline.js";
 /** @deprecated Use STAGE_CONFIG in pipeline.js for SLA durations */
 const STAGE_SLA_DAYS = {
   Inquiry: 1 / 24,

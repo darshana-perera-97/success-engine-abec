@@ -3,14 +3,28 @@ import { useState, useMemo } from "react";
 import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp } from "lucide-react";
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
-const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUpdateTasks, onUploadDocument }) => {
+const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUpdateTasks, onUploadDocument, onUploadProfileOtherDocument }) => {
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
   const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [otherDocModal, setOtherDocModal] = useState({ open: false, slot: null, label: "", error: "" });
+  const [otherDocUploading, setOtherDocUploading] = useState(false);
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
   const studentDocuments = useMemo(() => student.documents || [], [student.documents]);
+  const profileOtherSlots = useMemo(() => {
+    const raw = student.profileOtherDocuments;
+    const out = [null, null, null];
+    if (Array.isArray(raw)) {
+      for (let i = 0; i < 3; i++) {
+        if (raw[i] && typeof raw[i] === "object" && raw[i].url) {
+          out[i] = raw[i];
+        }
+      }
+    }
+    return out;
+  }, [student.profileOtherDocuments]);
   const showWhatsappNotification = (message) => {
     setWhatsappNotification({ show: true, message });
     setTimeout(() => setWhatsappNotification({ show: false, message: "" }), 4e3);
@@ -78,6 +92,63 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
     }
     setUploadModal({ isOpen: false, docType: null });
     showWhatsappNotification(`Document "${uploadModal.docType}" uploaded successfully.`);
+  };
+  const handleProfileOtherFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    const slot = otherDocModal.slot;
+    const labelForUpload = otherDocModal.label.trim() || "Other document";
+    if (!file || slot == null) return;
+    if (!onUploadProfileOtherDocument) {
+      setOtherDocModal((prev) => ({ ...prev, error: "Document upload service is unavailable." }));
+      event.target.value = "";
+      return;
+    }
+    const allowedTypes = new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]);
+    if (!allowedTypes.has(file.type)) {
+      setOtherDocModal((prev) => ({ ...prev, error: "Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX." }));
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setOtherDocModal((prev) => ({ ...prev, error: "File must be under 10MB." }));
+      event.target.value = "";
+      return;
+    }
+    setOtherDocModal((prev) => ({ ...prev, error: "" }));
+    setOtherDocUploading(true);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("read_error"));
+      reader.readAsDataURL(file);
+    }).catch(() => "");
+    if (!dataUrl) {
+      setOtherDocUploading(false);
+      setOtherDocModal((prev) => ({ ...prev, error: "Unable to read file. Try again." }));
+      event.target.value = "";
+      return;
+    }
+    const result = await onUploadProfileOtherDocument({
+      studentId: student.id,
+      dataUrl,
+      fileName: file.name,
+      label: labelForUpload,
+      slot
+    });
+    setOtherDocUploading(false);
+    event.target.value = "";
+    if (!result?.ok) {
+      setOtherDocModal((prev) => ({ ...prev, error: result?.error || "Failed to upload document." }));
+      return;
+    }
+    setOtherDocModal({ open: false, slot: null, label: "", error: "" });
+    showWhatsappNotification(`Other document "${labelForUpload}" saved (slot ${slot}).`);
   };
   const handleReview = async (doc, status, reason) => {
     const updatedDoc = { ...doc, status, rejectionReason: status === "Rejected" ? reason : void 0 };
@@ -186,6 +257,46 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
         ] }) })
       ] }, docType)) })
     ] }, category.stage)) }),
+    /* @__PURE__ */ jsxs("div", { className: "mt-10 pt-8 border-t border-slate-200", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4", children: [
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Other documents" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Up to three files with your own labels. View or download anytime." })
+        ] }),
+        !onUploadProfileOtherDocument && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded-md", children: "Upload unavailable" })
+      ] }),
+      /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-3", children: [1, 2, 3].map((slotNum) => {
+        const entry = profileOtherSlots[slotNum - 1];
+        return /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+            /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", slotNum] }),
+            /* @__PURE__ */ jsx(Button, {
+              size: "sm",
+              variant: "secondary",
+              disabled: !onUploadProfileOtherDocument,
+              onClick: () => setOtherDocModal({
+                open: true,
+                slot: slotNum,
+                label: entry?.label || "",
+                error: ""
+              }),
+              children: entry ? "Replace" : "Upload"
+            })
+          ] }),
+          entry ? /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", title: entry.label, children: entry.label }),
+              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: entry.name, children: entry.name }),
+              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
+            ] }),
+            entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
+              /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+              /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+            ] })
+          ] }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic mt-1", children: "No file yet. Choose Upload, add a name, then pick a file." })
+        ] }, `profile-other-${slotNum}`);
+      }) })
+    ] }),
     rejectionModal.isOpen && rejectionModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-rose-900", children: "Rejection Reason" }),
@@ -210,6 +321,49 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
           /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setRejectionModal({ isOpen: false, doc: null }), children: "Cancel" }),
           /* @__PURE__ */ jsx(Button, { variant: "danger", disabled: !rejectionReason.trim(), onClick: () => handleReview(rejectionModal.doc, "Rejected", rejectionReason), children: "Confirm Rejection" })
         ] })
+      ] })
+    ] }) }),
+    otherDocModal.open && otherDocModal.slot != null && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Other document" }),
+          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+            "Slot ",
+            otherDocModal.slot,
+            " — name this file for your records."
+          ] })
+        ] }),
+        !otherDocUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOtherDocModal({ open: false, slot: null, label: "", error: "" }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
+        /* @__PURE__ */ jsxs("label", { className: "block", children: [
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Display name" }),
+          /* @__PURE__ */ jsx("input", {
+            type: "text",
+            value: otherDocModal.label,
+            onChange: (e) => setOtherDocModal((prev) => ({ ...prev, label: e.target.value, error: "" })),
+            disabled: otherDocUploading,
+            maxLength: 120,
+            placeholder: "e.g. Scholarship letter, Medical report…",
+            className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          })
+        ] }),
+        !otherDocUploading ? /* @__PURE__ */ jsxs(
+          "label",
+          {
+            className: "border-2 border-dashed border-indigo-200 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors",
+            children: [
+              /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleProfileOtherFileChange }),
+              /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
+              /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose file to upload" }),
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB" })
+            ]
+          }
+        ) : /* @__PURE__ */ jsxs("div", { className: "py-6 flex flex-col items-center text-center", children: [
+          /* @__PURE__ */ jsx("div", { className: "w-14 h-14 rounded-full mb-4 bg-indigo-100 text-indigo-600 flex items-center justify-center animate-pulse", children: /* @__PURE__ */ jsx(FileUp, { size: 22 }) }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Uploading…" })
+        ] }),
+        otherDocModal.error && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: otherDocModal.error })
       ] })
     ] }) }),
     uploadModal.isOpen && uploadModal.docType && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [

@@ -14,9 +14,12 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
+  Stamp,
+  ChevronRight,
 } from "lucide-react";
 import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearAdminAiChats } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
+import { normalizePipelineStatus } from "../pipeline";
 
 const SUGGESTED_PROMPTS = [
   "Which branch is underperforming this month?",
@@ -106,7 +109,7 @@ function deriveDisplayName(currentUser) {
   return "Admin";
 }
 
-const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUser = null }) => {
+const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUser = null, onSelectStudent }) => {
   const displayName = deriveDisplayName(currentUser);
   const adminEmail = String(currentUser?.email || "").trim().toLowerCase();
   const userAvatar = String(currentUser?.avatar || "").trim() || DEFAULT_USER_AVATAR;
@@ -138,6 +141,18 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
       }),
     []
   );
+  const visaOutcomeStudents = React.useMemo(() => {
+    const list = Array.isArray(students) ? students : [];
+    return list
+      .filter((s) => {
+        const stage = normalizePipelineStatus(s?.status);
+        return stage === "Visa" || stage === "Enrolled";
+      })
+      .slice()
+      .sort((a, b) =>
+        String(a?.name || a?.id || "").localeCompare(String(b?.name || b?.id || ""), undefined, { sensitivity: "base" })
+      );
+  }, [students]);
 
   const [messages, setMessages] = React.useState([]);
   const [inputValue, setInputValue] = React.useState("");
@@ -503,7 +518,7 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
 
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-5 pb-2", children: [
-      /* @__PURE__ */ jsx("div", { className: "w-16 h-16 rounded-full p-[1.5px] bg-gradient-to-br from-[#0F172A] via-[#1E293B] to-[#334155] shadow-md flex-shrink-0", children: /* @__PURE__ */ jsx(
+      /* @__PURE__ */ jsx("div", { className: "w-16 h-16 rounded-full p-[0.15px] bg-gradient-to-br from-[#0F172A] via-[#1E293B] to-[#334155] shadow-md flex-shrink-0", children: /* @__PURE__ */ jsx(
         "img",
         {
           src: userAvatar,
@@ -568,9 +583,57 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
         renderChatPanel(false),
         /* @__PURE__ */ jsx(Dashboard, { students, invoices }),
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col h-full", children: [
-        /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Global Audit Log" }),
-        /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-y-auto max-h-[600px] pr-2", children: /* @__PURE__ */ jsx(ActivityFeed, { activities }) }),
+      /* @__PURE__ */ jsxs("div", { className: "space-y-8 w-full min-w-0 self-start flex flex-col", children: [
+        /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col w-full", children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Global Audit Log" }),
+          /* @__PURE__ */ jsx("div", { className: "overflow-y-auto max-h-[600px] pr-2", children: /* @__PURE__ */ jsx(ActivityFeed, { activities, metaTimestampOnly: true }) }),
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col w-full", children: [
+          /* @__PURE__ */ jsxs("div", { className: "mb-4", children: [
+            /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900", children: "Visa outcomes" }),
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+              "Students at ",
+              /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Visa" }),
+              " or ",
+              /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Enrolled" }),
+              " across all branches (",
+              visaOutcomeStudents.length,
+              ").",
+            ] }),
+          ] }),
+          visaOutcomeStudents.length === 0
+            ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "No students at Visa or Enrolled yet." })
+            : /* @__PURE__ */ jsx("div", { className: "overflow-y-auto max-h-[480px] pr-1 -mr-1", children: /* @__PURE__ */ jsx("ul", { className: "space-y-2", children: visaOutcomeStudents.map((s) => {
+              const canonical = normalizePipelineStatus(s?.status);
+              const raw = String(s?.status || "").trim() || canonical;
+              const interactive = typeof onSelectStudent === "function";
+              const rowKey = String(s?.id || "").trim() || `visa-row-${raw}-${String(s?.name || "").slice(0, 48)}`;
+              return /* @__PURE__ */ jsx("li", {
+                key: rowKey,
+                children: /* @__PURE__ */ jsxs("button", {
+                  type: "button",
+                  disabled: !interactive,
+                  onClick: interactive ? () => onSelectStudent(s) : void 0,
+                  className: interactive
+                    ? "w-full text-left flex items-start gap-3 p-3 rounded-lg border border-transparent hover:border-gray-200 hover:bg-slate-50 transition-colors group"
+                    : "w-full text-left flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-slate-50/50",
+                  children: [
+                    /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5", children: /* @__PURE__ */ jsx(Stamp, { size: 16, className: "text-emerald-700" }) }),
+                    /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
+                      /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", children: s?.name || s?.id || "Student" }),
+                      /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5", children: [
+                        s?.branch ? /* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx(MapPin, { size: 11, className: "inline mr-0.5 -mt-0.5 text-slate-400" }), s.branch] }) : null,
+                        s?.country ? /* @__PURE__ */ jsx("span", { children: s.country }) : null,
+                        s?.counselorName ? /* @__PURE__ */ jsxs("span", { className: "text-slate-400", children: ["• ", s.counselorName] }) : null,
+                      ] }),
+                      /* @__PURE__ */ jsx("span", { className: "inline-block mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded", children: raw }),
+                    ] }),
+                    interactive ? /* @__PURE__ */ jsx(ChevronRight, { size: 16, className: "text-slate-300 group-hover:text-indigo-500 flex-shrink-0 mt-1 transition-colors" }) : null,
+                  ],
+                }),
+              });
+            }) }) }),
+        ] }),
       ] }),
     ] }),
     isFullscreen && /* @__PURE__ */ jsx(

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -1422,6 +1422,19 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: updatedStudent, document: result.document || null };
   };
+  const handleUploadStudentProfileOtherDocument = async ({ studentId, dataUrl, fileName, label, slot }) => {
+    if (!studentId) return { ok: false, error: "Student account not found." };
+    if (!dataUrl) return { ok: false, error: "No document file selected." };
+    if (!slot || slot < 1 || slot > 3) return { ok: false, error: "Choose a document slot (1–3)." };
+    const result = await uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot });
+    if (!result.ok) return result;
+    const updatedStudent = result.data;
+    setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
+    if (selectedStudent?.id === updatedStudent.id) {
+      setSelectedStudent(updatedStudent);
+    }
+    return { ok: true, data: updatedStudent, profileOtherDocument: result.profileOtherDocument || null };
+  };
   const handleOpenCreateTaskModal = (student) => {
     setTaskModalStudent(student);
     setCreateTaskModalOpen(true);
@@ -1443,7 +1456,12 @@ function App({ initialView = "dashboard" }) {
       return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees });
     }
     if (currentView === "resume") {
-      return /* @__PURE__ */ jsx(AIResumeBuilder, { onNavigate: handleNavigate, onSaveCV: handleSaveCV, currentStudent: currentRole === "Student" ? currentUser : null, onUploadStudentCv: handleUploadStudentCv });
+      return /* @__PURE__ */ jsx(AIResumeBuilder, {
+        onNavigate: handleNavigate,
+        onSaveCV: handleSaveCV,
+        currentStudent: currentRole === "Student" ? currentUser : selectedStudent || null,
+        onUploadStudentCv: handleUploadStudentCv
+      });
     }
     if (currentView === "university") {
       return /* @__PURE__ */ jsx(UniversityKnowledgeBase, { onNavigate: handleNavigate, currentRole, students });
@@ -1485,6 +1503,7 @@ function App({ initialView = "dashboard" }) {
       onNavigate: handleNavigate,
       onUpdateStudent: handleUpdateStudent,
       onAddActivity: handleAddActivity,
+      onNotify: addNotification,
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
       invoices,
       onCreateInvoice: handleCreateInvoice,
@@ -1495,6 +1514,8 @@ function App({ initialView = "dashboard" }) {
       onUpdateTasks: handleUpdateTasks,
       activities,
       onUploadStudentDocument: handleUploadStudentDocument,
+      onUploadStudentProfileOtherDocument: handleUploadStudentProfileOtherDocument,
+      onUploadStudentCv: handleUploadStudentCv,
       currentUser,
       authenticatedUser
     };
@@ -1572,7 +1593,7 @@ function App({ initialView = "dashboard" }) {
     }
     switch (currentView) {
       case "dashboard":
-        return /* @__PURE__ */ jsx(AdminDashboard, { activities, tasks, students, invoices, currentUser });
+        return /* @__PURE__ */ jsx(AdminDashboard, { activities, tasks, students, invoices, currentUser, onSelectStudent: handleSelectStudent });
       case "counselors":
         return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students, employees, tasks, onTransferStudents: handleTransferStudents, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
       case "accounts":

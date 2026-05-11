@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Upload, CheckCircle, XCircle, AlertTriangle, Shield, Clock } from "lucide-react";
-const ActivityFeed = ({ activities, limit, showRoleBadge = true }) => {
+const ActivityFeed = ({ activities, limit, showRoleBadge = true, metaTimestampOnly = false }) => {
   const displayActivities = limit ? activities.slice(0, limit) : activities;
   const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
   const resolveActorName = (activity) => {
@@ -61,20 +61,17 @@ const ActivityFeed = ({ activities, limit, showRoleBadge = true }) => {
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900", children: act.target })
             ]
           }),
-        /* @__PURE__ */ jsxs("div", {
-            className: "flex items-center gap-2 mt-1", children: [
+        /* @__PURE__ */ jsx("div", {
+            className: "flex items-center gap-2 mt-1",
+            children: metaTimestampOnly ? /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: formatActivityTime(act) }) : [
               showRoleBadge ? /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-medium", children: act.role }) : null,
               resolveCounselorName(act) ? /* @__PURE__ */ jsxs("span", {
-                className: "text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold", children: [
-
-                  resolveCounselorName(act)
-                ]
+                className: "text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold",
+                children: [resolveCounselorName(act)]
               }) : null,
-          /* @__PURE__ */ jsxs("span", {
-                className: "text-xs text-slate-400", children: [
-                  "\u2022 ",
-                  formatActivityTime(act)
-                ]
+              /* @__PURE__ */ jsxs("span", {
+                className: "text-xs text-slate-400",
+                children: ["\u2022 ", formatActivityTime(act)]
               })
             ]
           })

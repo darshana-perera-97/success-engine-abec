@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Button } from "./Button";
 import {
@@ -29,7 +29,9 @@ import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
 import { VisaPilot } from "./VisaPilot";
+import { AIResumeBuilder } from "./AIResumeBuilder";
 import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
+import { getEnrolledAdvanceBlockReasons } from "../studentEnrolledGate.js";
 function normalizeBranchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -488,9 +490,12 @@ const StudentProfile = ({
   onUpdateInvoice,
   onCreateInvoice,
   onUploadStudentDocument,
+  onUploadStudentProfileOtherDocument,
+  onUploadStudentCv,
   employees = [],
   currentUser = null,
-  authenticatedUser = null
+  authenticatedUser = null,
+  onNotify
 }) => {
   const [localStudent, setLocalStudent] = useState(student);
   const [activeTab, setActiveTab] = useState("pipeline");
@@ -511,6 +516,10 @@ const StudentProfile = ({
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
+  const enrolledAdvanceBlockReasons = useMemo(
+    () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, invoices) : []),
+    [nextStep, localStudent, invoices]
+  );
   const remainingStudentTasks = tasks.filter((task) => task.student_id === localStudent.id && task.status !== "Completed");
   const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
   const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
@@ -550,6 +559,23 @@ const StudentProfile = ({
     }
     setLocalStudent(updated);
     onUpdateStudent?.(updated);
+  };
+  const handleResumeSaveCV = (cvData) => {
+    handleUpdateStudentLocal({
+      ...localStudent,
+      generatedCV: cvData
+    });
+    onNotify?.("Resume saved", `${localStudent.name}'s AI resume was saved.`, "success");
+  };
+  const handleProfileUploadCv = async (payload) => {
+    if (!onUploadStudentCv) {
+      return { ok: false, error: "Student CV upload is not available." };
+    }
+    const result = await onUploadStudentCv(payload);
+    if (result?.ok && result.data) {
+      handleUpdateStudentLocal(result.data);
+    }
+    return result;
   };
   const handleAdvancePipeline = () => {
     if (!nextStep) return;
@@ -605,6 +631,13 @@ const StudentProfile = ({
   };
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
+      if (nextStep === "Enrolled") {
+        const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, invoices);
+        if (blockReasons.length > 0) {
+          onNotify?.("Cannot move to Enrolled", blockReasons.join("\n\n"), "error");
+          return;
+        }
+      }
       const countryChecklist = COUNTRY_CHECKLISTS[localStudent.country] || COUNTRY_CHECKLISTS["Default"];
       const studentDocs = localStudent.documents || [];
       const checkStageRequirements = (stageName) => {
@@ -837,7 +870,7 @@ const StudentProfile = ({
             });
           }
           return persistResult;
-        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument });
+        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument });
       case "show-money":
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent });
       case "visa-pilot":
@@ -845,70 +878,12 @@ const StudentProfile = ({
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice });
       case "resume":
-        return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
-          localStudent.cvFile ? /* @__PURE__ */ jsxs("div", { className: "bg-white border border-emerald-200 rounded-xl p-5 flex items-center justify-between", children: [
-            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-              /* @__PURE__ */ jsx("div", { className: "h-10 w-10 rounded-lg bg-emerald-600 text-white flex items-center justify-center", children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
-              /* @__PURE__ */ jsxs("div", { children: [
-                /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: localStudent.cvFile.name || "Uploaded CV" }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Student uploaded CV (Update Old CV)" })
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-              /* @__PURE__ */ jsx("a", { href: localStudent.cvFile.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "flex items-center gap-2", children: [
-                /* @__PURE__ */ jsx(Eye, { size: 16 }),
-                " View"
-              ] }) }),
-              /* @__PURE__ */ jsx("a", { href: localStudent.cvFile.url, target: "_blank", rel: "noopener noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "flex items-center gap-2", children: [
-                /* @__PURE__ */ jsx(Download, { size: 16 }),
-                " Download"
-              ] }) })
-            ] })
-          ] }) : null,
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between", children: [
-            /* @__PURE__ */ jsx("h3", { className: "text-lg font-bold text-slate-900", children: "AI-Optimized Resume" }),
-            localStudent.generatedCV && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "flex items-center gap-2", children: [
-              /* @__PURE__ */ jsx(Download, { size: 16 }),
-              " Download PDF"
-            ] })
-          ] }),
-          localStudent.generatedCV ? /* @__PURE__ */ jsx("div", { className: "bg-slate-50 border border-slate-200 rounded-xl p-8 max-w-2xl mx-auto shadow-inner", children: /* @__PURE__ */ jsxs("div", { className: "bg-white p-8 shadow-lg border border-gray-100 min-h-[600px] flex flex-col gap-6 font-serif", children: [
-            /* @__PURE__ */ jsxs("div", { className: "border-b-2 border-slate-900 pb-4 flex justify-between items-start", children: [
-              /* @__PURE__ */ jsxs("div", { children: [
-                /* @__PURE__ */ jsx("h2", { className: "text-2xl font-bold text-slate-900 uppercase tracking-tight", children: localStudent.generatedCV.personalInfo.fullName }),
-                /* @__PURE__ */ jsxs("div", { className: "text-sm text-slate-600 mt-1 flex flex-wrap gap-x-4", children: [
-                  /* @__PURE__ */ jsx("span", { children: localStudent.generatedCV.personalInfo.email }),
-                  /* @__PURE__ */ jsx("span", { children: localStudent.generatedCV.personalInfo.phone }),
-                  /* @__PURE__ */ jsx("span", { children: localStudent.generatedCV.personalInfo.location })
-                ] })
-              ] }),
-              localStudent.generatedCV.personalInfo.profilePicture && /* @__PURE__ */ jsx("div", { className: "w-20 h-20 rounded-lg overflow-hidden border border-slate-200", children: /* @__PURE__ */ jsx("img", { src: localStudent.generatedCV.personalInfo.profilePicture, alt: "Profile", className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h4", { className: "text-xs font-bold text-slate-900 uppercase tracking-widest mb-2 border-b border-slate-200 pb-1", children: "Professional Summary" }),
-              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-700 leading-relaxed", children: localStudent.generatedCV.summary })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h4", { className: "text-xs font-bold text-slate-900 uppercase tracking-widest mb-3 border-b border-slate-200 pb-1", children: "Experience" }),
-              /* @__PURE__ */ jsx("div", { className: "space-y-4", children: localStudent.generatedCV.experience.map((exp, i) => /* @__PURE__ */ jsxs("div", { children: [
-                /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-baseline", children: [
-                  /* @__PURE__ */ jsx("h5", { className: "text-sm font-bold text-slate-800", children: exp.role }),
-                  /* @__PURE__ */ jsx("span", { className: "text-xs font-medium text-slate-500", children: exp.period })
-                ] }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-indigo-600 mb-1", children: exp.company }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 leading-relaxed", children: exp.description })
-              ] }, i)) })
-            ] }),
-            localStudent.generatedCV.customSections?.map((section, i) => /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h4", { className: "text-xs font-bold text-slate-900 uppercase tracking-widest mb-2 border-b border-slate-200 pb-1", children: section.title }),
-              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-700 leading-relaxed", children: section.content })
-            ] }, i))
-          ] }) }) : /* @__PURE__ */ jsxs("div", { className: "text-center py-20 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200", children: [
-            /* @__PURE__ */ jsx("div", { className: "w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm", children: /* @__PURE__ */ jsx(FileText, { size: 32, className: "text-slate-300" }) }),
-            /* @__PURE__ */ jsx("h4", { className: "text-slate-900 font-bold", children: "No AI Resume Generated" }),
-            /* @__PURE__ */ jsx("p", { className: "text-slate-500 text-sm mt-1 max-w-xs mx-auto", children: "The student hasn't used the ABEC Premier AI Resume Builder yet. You can encourage them to generate one from their dashboard." })
-          ] })
-        ] });
+        return /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-slate-100 bg-slate-50/50 -mx-1 px-1 py-3 sm:mx-0 sm:px-0", children: /* @__PURE__ */ jsx(AIResumeBuilder, {
+          embedMode: true,
+          onSaveCV: handleResumeSaveCV,
+          currentStudent: localStudent,
+          onUploadStudentCv: onUploadStudentCv ? handleProfileUploadCv : void 0
+        }) });
       default:
         return null;
     }
@@ -931,15 +906,7 @@ const StudentProfile = ({
                 /* @__PURE__ */ jsx(PriorityBadge, { priority: localStudent.priority })
               ] }),
               /* @__PURE__ */ jsxs("div", { className: "text-sm text-slate-500 font-medium flex items-center gap-x-3 mt-1 flex-wrap", children: [
-                /* @__PURE__ */ jsx(
-                  "select",
-                  {
-                    value: localStudent.country,
-                    onChange: (e) => handleUpdateStudentLocal({ ...localStudent, country: e.target.value }),
-                    className: "text-sm font-medium text-slate-500 bg-transparent border-none p-0 focus:ring-0 cursor-pointer hover:text-nexgenai-navy transition-colors",
-                    children: ["UK", "Canada", "Australia", "New Zealand", "USA", "Japan", "Singapore"].map((c) => /* @__PURE__ */ jsx("option", { value: c, children: c }, c))
-                  }
-                ),
+                /* @__PURE__ */ jsx("span", { className: "text-slate-700", children: String(localStudent.country || "").trim() || "—" }),
                 /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "\u2022" }),
                 /* @__PURE__ */ jsxs("span", { children: [
                   "GPA: ",
@@ -1086,6 +1053,11 @@ const StudentProfile = ({
               /* @__PURE__ */ jsxs("p", { className: "font-semibold", children: ["Upcoming stage: ", nextStep || "N/A"] }),
               /* @__PURE__ */ jsx("p", { className: "mt-1", children: "Review pending tasks and assign who will continue counseling for remaining stages." })
             ] }),
+            nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
+              /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Enrolled is blocked until:" }),
+              /* @__PURE__ */ jsx("ul", { className: "list-disc pl-4 space-y-1", children: enrolledAdvanceBlockReasons.map((r, i) => /* @__PURE__ */ jsx("li", { className: "whitespace-pre-wrap", children: r }, i)) }),
+              /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: "Complete pipeline documents (all checklist stages), the Visa tab checklist, and pay every invoice (Paid status)." })
+            ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Remaining tasks" }),
               remainingStudentTasks.length > 0 ? /* @__PURE__ */ jsx("div", { className: "max-h-56 overflow-y-auto space-y-2 pr-1", children: remainingStudentTasks.map((task) => /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs space-y-2", children: [
@@ -1128,7 +1100,7 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white", children: [
             /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId, children: "Confirm & Continue" })
+            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0, children: "Confirm & Continue" })
           ] })
         ] }) })
       ]

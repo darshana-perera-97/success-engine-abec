@@ -242,6 +242,23 @@ export async function uploadStudentDocument(studentId, { dataUrl, fileName, docT
   }
 }
 
+export async function uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot }) {
+  try {
+    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/profile-other-documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, fileName, label, slot })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to upload document." };
+    }
+    return { ok: true, data: data.data, profileOtherDocument: data.profileOtherDocument || null };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function getBranches() {
   try {
     const res = await fetch(`${API_BASE}/api/branches`);

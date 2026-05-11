@@ -80,6 +80,7 @@ const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor",
 const DEFAULT_COUNTRY_NAMES = ["UK", "USA", "Canada", "Australia", "New Zealand"];
 const COUNSELOR_ROLES = new Set(["Counselor", "Consultor"]);
 const whatsappSessions = new Map();
+const whatsappSessionRecoveryChains = new Map();
 const WHATSAPP_RECONNECT_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
 function logEvent(scope, message, meta = null) {
@@ -425,6 +426,31 @@ async function readInvoices() {
 async function writeInvoices(invoices) {
   await fs.mkdir(path.dirname(INVOICES_FILE), { recursive: true });
   await fs.writeFile(INVOICES_FILE, JSON.stringify(invoices, null, 2));
+}
+
+const { pathToFileURL } = require("url");
+
+let enrolledTransitionModulesPromise = null;
+async function loadEnrolledTransitionModules() {
+  if (!enrolledTransitionModulesPromise) {
+    enrolledTransitionModulesPromise = Promise.all([
+      import(pathToFileURL(path.join(__dirname, "..", "frontend", "src", "pipeline.js")).href),
+      import(pathToFileURL(path.join(__dirname, "..", "frontend", "src", "studentEnrolledGate.js")).href),
+    ]);
+  }
+  return enrolledTransitionModulesPromise;
+}
+
+/** When moving into Enrolled, returns an error string or null if allowed. */
+async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent) {
+  const [{ normalizePipelineStatus }, gate] = await loadEnrolledTransitionModules();
+  const prevStage = normalizePipelineStatus(previousStudent?.status);
+  const nextStage = normalizePipelineStatus(mergedStudent?.status);
+  if (nextStage !== "Enrolled" || prevStage === "Enrolled") return null;
+  const invoices = await readInvoices();
+  const reasons = gate.getEnrolledAdvanceBlockReasons(mergedStudent, invoices);
+  if (!reasons.length) return null;
+  return reasons.join(" ");
 }
 
 async function readTasks() {
@@ -941,7 +967,40 @@ function publicStudentRecord(req, student) {
       };
     });
   }
+  if (Array.isArray(next.profileOtherDocuments)) {
+    next.profileOtherDocuments = next.profileOtherDocuments.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      return {
+        ...entry,
+        url: publicStudentDocUrl(req, String(entry.url || "")),
+      };
+    });
+  }
   return next;
+}
+
+function normalizeProfileOtherDocumentsSlots(value) {
+  const out = [null, null, null];
+  if (!Array.isArray(value)) return out;
+  for (let i = 0; i < 3; i++) {
+    const entry = value[i];
+    if (entry && typeof entry === "object" && String(entry.url || "").trim()) {
+      out[i] = entry;
+    }
+  }
+  return out;
+}
+
+async function safeUnlinkStoredPermissionDoc(storedUrl) {
+  const s = String(storedUrl || "").trim();
+  if (!s.startsWith("/student-docs/permissions/")) return;
+  const base = path.basename(s);
+  if (!base || base.includes("..")) return;
+  try {
+    await fs.unlink(path.join(STUDENT_PERMISSIONS_DIR, base));
+  } catch {
+    // ignore
+  }
 }
 
 function getDataUrlMime(dataUrl) {
@@ -1837,6 +1896,59 @@ async function reconnectActiveWhatsappSessions() {
   }
 }
 
+function isWhatsappPuppeteerStaleSessionError(error) {
+  const msg = String(error?.message || error || "").toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("detached frame") ||
+    msg.includes("execution context was destroyed") ||
+    msg.includes("navigating frame was detached") ||
+    msg.includes("target closed") ||
+    msg.includes("session closed") ||
+    (msg.includes("protocol error") && msg.includes("target"))
+  );
+}
+
+async function waitForWhatsappSessionConnected(userId, timeoutMs = 120000) {
+  const key = String(userId || "").trim();
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = ensureWhatsappState(key);
+    const ready =
+      state.client && (state.status === "connected" || state.status === "authenticated");
+    if (ready) return;
+    const terminal = state.status === "error" || state.status === "auth_failed";
+    if (terminal) {
+      throw new Error(String(state.error || "WhatsApp session failed after recovery."));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  throw new Error("WhatsApp did not finish reconnecting in time.");
+}
+
+async function restartWhatsappBrowserSession(userId) {
+  const key = String(userId || "").trim();
+  if (!key) throw new Error("Counselor user id is required.");
+  const previous = whatsappSessionRecoveryChains.get(key) || Promise.resolve();
+  const recovery = previous.then(async () => {
+    const state = ensureWhatsappState(key);
+    if (state.client) {
+      try {
+        await state.client.destroy();
+      } catch {
+        // Ignore; session object may already be unusable.
+      }
+      state.client = null;
+    }
+    state.status = "disconnected";
+    state.error = "";
+    await startWhatsappSession(key);
+    await waitForWhatsappSessionConnected(key, 120000);
+  });
+  whatsappSessionRecoveryChains.set(key, recovery.catch(() => {}));
+  await recovery;
+}
+
 function toWhatsAppChatId(phone) {
   const digitsOnly = String(phone || "").replace(/[^\d]/g, "");
   if (!digitsOnly) return "";
@@ -1996,46 +2108,90 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
   if (!chatId) {
     return { attempted: false, status: "skipped", reason: "Student phone number is missing." };
   }
+  const messageText = String(content || "").trim();
+  const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
+  let preparedMedia = null;
+  let preparedMediaMime = "";
+  if (outgoingAttachment && outgoingAttachment.url) {
+    preparedMediaMime = String(outgoingAttachment.mime || "").toLowerCase();
+    if (!isSupportedWhatsappMediaMime(preparedMediaMime)) {
+      return {
+        attempted: false,
+        status: "skipped",
+        reason: "Only PDF and image attachments can be sent via WhatsApp.",
+      };
+    }
+    const mediaPath = resolveChatFileDiskPath(String(outgoingAttachment.url || ""));
+    if (!mediaPath) {
+      return {
+        attempted: false,
+        status: "skipped",
+        reason: "Attachment file path is invalid.",
+      };
+    }
+    preparedMedia = MessageMedia.fromFilePath(mediaPath);
+  } else if (!messageText) {
+    return {
+      attempted: false,
+      status: "skipped",
+      reason: "Message text or attachment is required.",
+    };
+  }
+
   const senderState = ensureWhatsappState(sender.id);
   if (!senderState.client || (senderState.status !== "connected" && senderState.status !== "authenticated")) {
     return { attempted: true, status: "failed", reason: "Counselor WhatsApp is not connected." };
   }
+
+  const performSend = async () => {
+    const live = ensureWhatsappState(sender.id);
+    if (!live.client || (live.status !== "connected" && live.status !== "authenticated")) {
+      throw new Error("Counselor WhatsApp is not connected.");
+    }
+    if (preparedMedia) {
+      await live.client.sendMessage(chatId, preparedMedia, messageText ? { caption: messageText } : {});
+    } else {
+      await live.client.sendMessage(chatId, messageText);
+    }
+  };
+
+  const logSent = () => {
+    if (preparedMedia) {
+      logEvent("whatsapp", "media message sent", { from: sender.id, to: receiverId, chatId, mime: preparedMediaMime });
+    } else {
+      logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId });
+    }
+  };
+
   try {
-    const messageText = String(content || "").trim();
-    const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
-    if (outgoingAttachment && outgoingAttachment.url) {
-      const mime = String(outgoingAttachment.mime || "").toLowerCase();
-      if (!isSupportedWhatsappMediaMime(mime)) {
-        return {
-          attempted: false,
-          status: "skipped",
-          reason: "Only PDF and image attachments can be sent via WhatsApp.",
-        };
-      }
-      const mediaPath = resolveChatFileDiskPath(String(outgoingAttachment.url || ""));
-      if (!mediaPath) {
-        return {
-          attempted: false,
-          status: "skipped",
-          reason: "Attachment file path is invalid.",
-        };
-      }
-      const media = MessageMedia.fromFilePath(mediaPath);
-      await senderState.client.sendMessage(chatId, media, messageText ? { caption: messageText } : {});
-      logEvent("whatsapp", "media message sent", { from: sender.id, to: receiverId, chatId, mime });
-      return { attempted: true, status: "sent", channel: "whatsapp", chatId };
-    }
-    if (!messageText) {
-      return {
-        attempted: false,
-        status: "skipped",
-        reason: "Message text or attachment is required.",
-      };
-    }
-    await senderState.client.sendMessage(chatId, messageText);
-    logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId });
+    await performSend();
+    logSent();
     return { attempted: true, status: "sent", channel: "whatsapp", chatId };
   } catch (error) {
+    if (isWhatsappPuppeteerStaleSessionError(error)) {
+      logEvent("whatsapp", "stale session detected; restarting client", {
+        from: sender.id,
+        to: receiverId,
+        reason: String(error?.message || ""),
+      });
+      try {
+        await restartWhatsappBrowserSession(sender.id);
+        await performSend();
+        logSent();
+        return { attempted: true, status: "sent", channel: "whatsapp", chatId };
+      } catch (errorAfter) {
+        logEvent("whatsapp", "message send failed", {
+          from: sender.id,
+          to: receiverId,
+          reason: String(errorAfter?.message || ""),
+        });
+        return {
+          attempted: true,
+          status: "failed",
+          reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
+        };
+      }
+    }
     logEvent("whatsapp", "message send failed", { from: sender.id, to: receiverId, reason: String(error?.message || "") });
     return {
       attempted: true,
@@ -4214,6 +4370,12 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      const enrolledTransitionError = await getBlockedEnrolledTransitionError(previous, merged);
+      if (enrolledTransitionError) {
+        sendJson(res, 400, { ok: false, error: enrolledTransitionError });
+        return;
+      }
+
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
@@ -4460,6 +4622,84 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         data: publicStudentRecord(req, merged),
         document: { ...newDocument, url: publicStudentDocUrl(req, newDocument.url) },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname.startsWith("/api/students/") && url.pathname.endsWith("/profile-other-documents")) {
+    try {
+      const studentId = decodeURIComponent(
+        url.pathname.replace("/api/students/", "").replace("/profile-other-documents", "").trim()
+      ).replace(/\/+$/, "");
+      if (!studentId) {
+        sendJson(res, 400, { ok: false, error: "Student ID is required." });
+        return;
+      }
+      const body = await parseBody(req);
+      const dataUrl = String(body.dataUrl || "");
+      const fileName = String(body.fileName || "document");
+      const slotNum = Number(body.slot);
+      if (!Number.isFinite(slotNum) || slotNum < 1 || slotNum > 3 || Math.floor(slotNum) !== slotNum) {
+        sendJson(res, 400, { ok: false, error: "Slot must be 1, 2, or 3." });
+        return;
+      }
+      const slotIndex = slotNum - 1;
+      let label = String(body.label || "").trim().replace(/\s+/g, " ");
+      if (!label) label = "Other document";
+      if (label.length > 120) label = label.slice(0, 120);
+      if (!dataUrl.startsWith("data:")) {
+        sendJson(res, 400, { ok: false, error: "Invalid document payload." });
+        return;
+      }
+      const stored = await storeStudentPermissionDataUrl(dataUrl, fileName);
+      if (!stored) {
+        sendJson(res, 400, { ok: false, error: "Unsupported document format. Use PDF, JPG, PNG, DOC, or DOCX." });
+        return;
+      }
+      if (stored.error) {
+        sendJson(res, 400, { ok: false, error: stored.error });
+        return;
+      }
+      const studemts = await readStudemts();
+      const idx = studemts.findIndex((s) => String(s.id || "") === studentId);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Student not found." });
+        return;
+      }
+      const slots = normalizeProfileOtherDocumentsSlots(studemts[idx].profileOtherDocuments);
+      const previous = slots[slotIndex];
+      if (previous && previous.url) {
+        await safeUnlinkStoredPermissionDoc(String(previous.url));
+      }
+      const newEntry = {
+        id: `pod-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+        slot: slotIndex + 1,
+        label,
+        name: stored.name,
+        mime: stored.mime,
+        size: stored.size,
+        url: stored.url,
+        uploadedAt: new Date().toISOString(),
+      };
+      slots[slotIndex] = newEntry;
+      const merged = {
+        ...studemts[idx],
+        profileOtherDocuments: slots,
+        updatedAt: new Date().toISOString(),
+      };
+      const updated = [...studemts];
+      updated[idx] = merged;
+      await writeStudemts(updated);
+      sendJson(res, 200, {
+        ok: true,
+        data: publicStudentRecord(req, merged),
+        profileOtherDocument: {
+          ...newEntry,
+          url: publicStudentDocUrl(req, newEntry.url),
+        },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });

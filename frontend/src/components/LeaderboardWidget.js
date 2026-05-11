@@ -28,7 +28,8 @@ const LeaderboardWidget = ({ students = [], employees = [], currentUserId = "", 
     let visas = 0;
     myStudents.forEach((s) => {
       const x = normalizePipelineStatus(s.status);
-      if (x === "Visa" || s.status === "Visa Pilot") {
+      const hasVisaOutcome = x === "Visa" || x === "Enrolled" || s.status === "Visa Pilot";
+      if (hasVisaOutcome) {
         score += 50;
         visas++;
       } else if (x === "Interview training" || s.status === "Offer Received") score += 10;

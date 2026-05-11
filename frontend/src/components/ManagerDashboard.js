@@ -5,16 +5,31 @@ import { EscalationDesk } from "./EscalationDesk";
 import { IncentiveCalculator } from "./IncentiveCalculator";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { formatLKR } from "../utils";
+import { normalizePipelineStatus } from "../pipeline";
+import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { AlertOctagon, TrendingUp, ArrowRight, Zap, CheckSquare, Banknote } from "lucide-react";
 import { Button } from "./Button";
 const ManagerDashboard = ({ activities, tasks, students = [], employees = [], currentUser, onNavigate }) => {
   const [activeTab, setActiveTab] = useState("escalations");
   const totalRevenue = students.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 0.1, 0);
   const overdueTasks = tasks.filter((t) => t.status === "Overdue").length;
+  const unresolvedSlaViolations = students.reduce((acc, s) => acc + (s.slaViolations?.filter((v) => !v.resolved).length || 0), 0);
+  const tasksPastDueDate = (tasks || []).filter((t) => isTaskOverdueByDate(t)).length;
+  const slaBreachTotal = unresolvedSlaViolations + tasksPastDueDate;
+  const slaBreachTrend = slaBreachTotal === 0 ? "All Clear" : `${unresolvedSlaViolations} open stage notice${unresolvedSlaViolations === 1 ? "" : "s"} · ${tasksPastDueDate} overdue task${tasksPastDueDate === 1 ? "" : "s"}`;
   const pendingReviews = tasks.filter((t) => t.status === "In Review").length;
-  const visaGrantedCount = students.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length;
-  const visaProcessingCount = students.filter((s) => ["Visa", "Visa Pilot"].includes(s.status)).length;
-  const successRate = visaProcessingCount ? Math.round(visaGrantedCount / visaProcessingCount * 100) : 0;
+  const inActivePipeline = students.filter((s) => {
+    const x = normalizePipelineStatus(s.status);
+    return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
+  }).length;
+  const visaSuccessCount = students.filter((s) => {
+    const x = normalizePipelineStatus(s.status);
+    return x === "Visa" || x === "Enrolled";
+  }).length;
+  const successRate = inActivePipeline ? Math.round(visaSuccessCount / inActivePipeline * 100) : 0;
+  const visaTrendLabel = inActivePipeline === 0 ? "No students past inquiry" : `${visaSuccessCount} of ${inActivePipeline} at visa or enrolled`;
+  const visaTrendTier = successRate >= 75 ? "Top tier" : successRate >= 40 ? "On track" : inActivePipeline === 0 ? "" : "Building pipeline";
+  const visaTrendDisplay = visaTrendTier ? `${visaTrendLabel} · ${visaTrendTier}` : visaTrendLabel;
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -37,11 +52,11 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
         DashboardCard,
         {
           title: "SLA Breaches",
-          value: overdueTasks.toString(),
+          value: String(slaBreachTotal),
           icon: /* @__PURE__ */ jsx(AlertOctagon, { size: 20 }),
-          trend: overdueTasks > 0 ? "Requires Attention" : "All Clear",
-          trendColor: overdueTasks > 0 ? "text-rose-600" : "text-emerald-600",
-          highlight: overdueTasks > 0,
+          trend: slaBreachTrend,
+          trendColor: slaBreachTotal > 0 ? "text-rose-600" : "text-emerald-600",
+          highlight: slaBreachTotal > 0,
           onClick: () => onNavigate("tasks")
         }
       ),
@@ -63,8 +78,8 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
           title: "Visa Success Rate",
           value: `${successRate}%`,
           icon: /* @__PURE__ */ jsx(TrendingUp, { size: 20 }),
-          trend: "Top Tier",
-          trendColor: "text-indigo-600"
+          trend: visaTrendDisplay,
+          trendColor: successRate >= 40 ? "text-emerald-600" : inActivePipeline === 0 ? "text-slate-500" : "text-amber-600"
         }
       )
     ] }),

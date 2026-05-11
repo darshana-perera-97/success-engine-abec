@@ -32,7 +32,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Button } from "./Button";
-const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudentCv }) => {
+const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudentCv, embedMode = false }) => {
   const [step, setStep] = useState("initial");
   const [activeFlow, setActiveFlow] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -244,16 +244,18 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     }
     if (step === "success") {
       const timer = setTimeout(() => {
-        if (onNavigate) {
-          onNavigate("dashboard");
-        } else {
-          window.location.hash = "#dashboard";
+        if (!embedMode) {
+          if (onNavigate) {
+            onNavigate("dashboard");
+          } else {
+            window.location.hash = "#dashboard";
+          }
         }
         reset();
       }, 3e3);
       return () => clearTimeout(timer);
     }
-  }, [step, onNavigate, reset]);
+  }, [step, onNavigate, reset, embedMode]);
   const handleRefineSubmit = () => {
     setStep("refining");
     setProgress(0);
@@ -1139,9 +1141,9 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
             ) }),
             /* @__PURE__ */ jsxs("div", { className: "text-center", children: [
               /* @__PURE__ */ jsx("h2", { className: "text-4xl font-black text-slate-900 uppercase tracking-tighter", children: "Success!" }),
-              /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2", children: "Your CV has been updated and saved to your profile." })
+              /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2", children: embedMode ? "The resume was saved to this student's profile." : "Your CV has been updated and saved to your profile." })
             ] }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 animate-pulse", children: "Exiting in 3 seconds..." })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 animate-pulse", children: embedMode ? "Returning to the builder in 3 seconds..." : "Exiting in 3 seconds..." })
           ]
         },
         "success"
