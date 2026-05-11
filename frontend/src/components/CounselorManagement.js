@@ -24,6 +24,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { Button } from "./Button";
+import { QuietPageSkeleton } from "./LoadingPlaceholder";
 import { normalizePipelineStatus } from "../pipeline";
 import {
   XAxis,
@@ -35,7 +36,7 @@ import {
   Area
 } from "recharts";
 const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
-const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "" }) => {
+const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "", resetSignal = 0 }) => {
   const [selectedCounselorId, setSelectedCounselorId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -46,27 +47,40 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const [accounts, setAccounts] = useState([]);
   const [targetCounselorId, setTargetCounselorId] = useState("");
   const [newCounselor, setNewCounselor] = useState({ name: "", email: "", branch: "", role: "Senior Counselor", phone: "", password: "" });
+  const [pageLoads, setPageLoads] = useState({ accounts: false, branches: false });
+  const counselorPageReady = pageLoads.accounts && pageLoads.branches;
   const teamLeadOptions = useMemo(() => accounts.filter((a) => String(a.role || "") === "Team Lead"), [accounts]);
   useEffect(() => {
     const loadAccounts = async () => {
-      const result = await getAccounts();
-      if (!result.ok) return;
-      setAccounts(result.data);
+      try {
+        const result = await getAccounts();
+        if (!result.ok) return;
+        setAccounts(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, accounts: true }));
+      }
     };
     loadAccounts();
   }, []);
   useEffect(() => {
     const loadBranches = async () => {
-      const result = await getBranches();
-      if (!result.ok) return;
-      const locations = result.data.map((b) => String(b.location || "").trim()).filter(Boolean);
-      setBranchOptions(locations);
-      if (locations.length > 0) {
-        setNewCounselor((prev) => ({ ...prev, branch: locations[0] }));
+      try {
+        const result = await getBranches();
+        if (!result.ok) return;
+        const locations = result.data.map((b) => String(b.location || "").trim()).filter(Boolean);
+        setBranchOptions(locations);
+        if (locations.length > 0) {
+          setNewCounselor((prev) => ({ ...prev, branch: locations[0] }));
+        }
+      } finally {
+        setPageLoads((p) => ({ ...p, branches: true }));
       }
     };
     loadBranches();
   }, []);
+  useEffect(() => {
+    setSelectedCounselorId(null);
+  }, [resetSignal]);
   const handleAddCounselor = async (e) => {
     e.preventDefault();
     if (!newCounselor.name || !newCounselor.email || !newCounselor.branch || !newCounselor.password) return;
@@ -135,7 +149,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         return assignedTo.some((assignee) => counselorIdentities.has(normalizeIdentity(assignee)));
       });
       const activeStudents = myStudents.length;
-      const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length;
+      const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Enrolled").length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
       const maxCapacity = 35;
       const capacityLoad = Math.round(activeStudents / maxCapacity * 100);
@@ -296,11 +310,11 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         /* @__PURE__ */ jsx(
           MetricCard,
           {
-            title: "Student Satisfaction",
-            value: `${counselor.metrics.npsScore}`,
+            title: "Visa Granted",
+            value: `${counselor.metrics.visaGranted}`,
             icon: /* @__PURE__ */ jsx(ThumbsUp, { size: 18 }),
-            subtext: "NPS Score",
-            color: counselor.metrics.npsScore > 80 ? "text-emerald-600" : "text-amber-600"
+            subtext: "Students with Visa Stage",
+            color: "text-emerald-600"
           }
         ),
         /* @__PURE__ */ jsx(
@@ -427,6 +441,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         ] })
       ] })
     ] });
+  }
+  if (!counselorPageReady) {
+    return /* @__PURE__ */ jsx(QuietPageSkeleton, {});
   }
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4", children: [

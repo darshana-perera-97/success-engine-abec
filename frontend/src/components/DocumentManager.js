@@ -77,11 +77,18 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
       }
     }
     setUploadModal({ isOpen: false, docType: null });
-    showWhatsappNotification(`Document "${uploadModal.docType}" uploaded successfully. WhatsApp notification sent to student.`);
+    showWhatsappNotification(`Document "${uploadModal.docType}" uploaded successfully.`);
   };
-  const handleReview = (doc, status, reason) => {
+  const handleReview = async (doc, status, reason) => {
     const updatedDoc = { ...doc, status, rejectionReason: status === "Rejected" ? reason : void 0 };
-    onUpdateDocument(updatedDoc);
+    setRejectionModal({ isOpen: false, doc: null });
+    setRejectionReason("");
+    const actionText = status === "Verified" ? "approved" : "rejected";
+    const persistResult = await onUpdateDocument?.(updatedDoc);
+    if (persistResult && persistResult.ok === false) {
+      showWhatsappNotification(`Save failed: ${persistResult.error || "Could not save changes."}`);
+      return;
+    }
     if (status === "Verified" && onUpdateTasks) {
       const linkedTask = tasks.find(
         (t) => t.student_id === student.id && t.documentType === doc.type && t.status !== "Completed"
@@ -90,10 +97,17 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
         onUpdateTasks([{ ...linkedTask, status: "Completed" }]);
       }
     }
-    setRejectionModal({ isOpen: false, doc: null });
-    setRejectionReason("");
-    const actionText = status === "Verified" ? "approved" : "rejected";
-    showWhatsappNotification(`Document "${doc.name}" was ${actionText}. WhatsApp notification sent to student.`);
+    const notifs = persistResult?.documentWhatsappNotifications || [];
+    const mine = notifs.find((n) => String(n.docId) === String(updatedDoc.id));
+    const ws = mine?.whatsapp;
+    if (ws?.status === "sent") {
+      showWhatsappNotification(`Document "${doc.name}" was ${actionText}. WhatsApp sent to the student from your linked account.`);
+    } else if (ws?.status === "failed" || ws?.status === "skipped") {
+      const detail = ws.reason ? ` ${ws.reason}` : "";
+      showWhatsappNotification(`Document "${doc.name}" was ${actionText}. WhatsApp was not sent.${detail}`);
+    } else {
+      showWhatsappNotification(`Document "${doc.name}" was ${actionText}.`);
+    }
   };
   const checklist = useMemo(() => {
     const countryChecklist = COUNTRY_CHECKLISTS[student.country] || COUNTRY_CHECKLISTS["Default"];

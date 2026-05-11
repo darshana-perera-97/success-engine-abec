@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import { createUniversityProgram, deleteUniversityProgram, getUniversityPrograms, updateUniversityProgramVisibility } from "../authApi";
 import { Search, BookOpen, MapPin, GraduationCap, CheckCircle, ArrowRight, Loader2, Sparkles, EyeOff, Eye, Trash2, PlusCircle, X, CalendarDays, Award } from "lucide-react";
 import { Button } from "./Button";
+import { InlineLoading } from "./LoadingPlaceholder";
 const UniversityKnowledgeBase = ({ currentRole, students = [] }) => {
   const [programs, setPrograms] = useState([]);
   const [isLoadingPrograms, setIsLoadingPrograms] = useState(true);
@@ -230,10 +231,7 @@ const UniversityKnowledgeBase = ({ currentRole, students = [] }) => {
         }, children: "Reset Filters" })
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-6", children: isLoadingPrograms ? /* @__PURE__ */ jsxs("div", { className: "col-span-full text-center py-20 text-slate-400", children: [
-      /* @__PURE__ */ jsx(Loader2, { size: 48, className: "mx-auto mb-4 animate-spin opacity-30" }),
-      /* @__PURE__ */ jsx("p", { children: "Loading university programs..." })
-    ] }) : programLoadError ? /* @__PURE__ */ jsxs("div", { className: "col-span-full text-center py-20 text-rose-500", children: [
+    /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-6", children: isLoadingPrograms ? /* @__PURE__ */ jsx("div", { className: "col-span-full", children: /* @__PURE__ */ jsx(InlineLoading, { label: "Loading university programs..." }) }) : programLoadError ? /* @__PURE__ */ jsxs("div", { className: "col-span-full text-center py-20 text-rose-500", children: [
       /* @__PURE__ */ jsx(BookOpen, { size: 48, className: "mx-auto mb-4 opacity-40" }),
       /* @__PURE__ */ jsx("p", { children: programLoadError })
     ] }) : filteredPrograms.length === 0 ? /* @__PURE__ */ jsxs("div", { className: "col-span-full text-center py-20 text-slate-400", children: [

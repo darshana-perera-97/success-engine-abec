@@ -5,6 +5,7 @@ import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-r
 import { Button } from "./Button";
 import { createBranch, getAccounts, getBranches, getStudents } from "../authApi";
 import { normalizePipelineStatus } from "../pipeline";
+import { QuietPageSkeleton } from "./LoadingPlaceholder";
 
 const BranchAnalytics = ({ scopeBranch = null }) => {
   const formatRevenueNumber = (value) => {
@@ -20,6 +21,12 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
   const [students, setStudents] = useState([]);
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [pageLoads, setPageLoads] = useState({
+    branches: false,
+    managers: false,
+    students: false
+  });
+  const branchPageReady = pageLoads.branches && pageLoads.managers && pageLoads.students;
 
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
 
@@ -30,33 +37,45 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
 
   useEffect(() => {
     const loadBranches = async () => {
-      const result = await getBranches();
-      if (!result.ok) return;
-      setBranches(result.data);
+      try {
+        const result = await getBranches();
+        if (!result.ok) return;
+        setBranches(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, branches: true }));
+      }
     };
     loadBranches();
   }, []);
 
   useEffect(() => {
     const loadManagers = async () => {
-      const result = await getAccounts();
-      if (!result.ok) return;
-      let managers = result.data.filter((acc) => acc.role === "Manager" && acc.branch);
-      if (scopeKey) {
-        managers = managers.filter(
-          (acc) => String(acc.branch || "").trim().toLowerCase() === scopeKey
-        );
+      try {
+        const result = await getAccounts();
+        if (!result.ok) return;
+        let managers = result.data.filter((acc) => acc.role === "Manager" && acc.branch);
+        if (scopeKey) {
+          managers = managers.filter(
+            (acc) => String(acc.branch || "").trim().toLowerCase() === scopeKey
+          );
+        }
+        setManagerAccounts(managers);
+      } finally {
+        setPageLoads((p) => ({ ...p, managers: true }));
       }
-      setManagerAccounts(managers);
     };
     loadManagers();
   }, [scopeKey]);
 
   useEffect(() => {
     const loadStudents = async () => {
-      const result = await getStudents();
-      if (!result.ok) return;
-      setStudents(result.data);
+      try {
+        const result = await getStudents();
+        if (!result.ok) return;
+        setStudents(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, students: true }));
+      }
     };
     loadStudents();
   }, []);
@@ -72,6 +91,10 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
           const x = normalizePipelineStatus(student.status);
           return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
         }).length;
+        const visaGrantedCount = branchStudents.filter((student) => {
+          const stage = normalizePipelineStatus(student.status);
+          return stage === "Visa" || stage === "Enrolled";
+        }).length;
         const liveRevenue = branchStudents.reduce((sum, student) => {
           const numericBudget = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
           return Number.isFinite(numericBudget) ? sum + numericBudget : sum;
@@ -82,6 +105,7 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
           students: studentsCount,
           revenue,
           conversions: conversionsCount,
+          visaGranted: visaGrantedCount,
           conversionRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0
         };
       }),
@@ -140,6 +164,10 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
       setIsExporting(false);
     }
   };
+
+  if (!branchPageReady) {
+    return <QuietPageSkeleton />;
+  }
 
   return (
     <>
@@ -245,6 +273,21 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-gray-100">
+              <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Visa granted students</h4>
+              <div className="space-y-3">
+                {revenueRankedData.map((data, idx) => (
+                  <div key={`${data.name}-visa`} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="text-xs font-mono text-slate-400 w-4">{idx + 1}</div>
+                      <p className="text-sm font-medium text-slate-700">{data.name}</p>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">{data.visaGranted}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="mt-8 pt-6 border-t border-gray-100">

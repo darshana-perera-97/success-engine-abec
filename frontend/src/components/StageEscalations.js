@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight } from "lucide-react";
+import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight, ShieldAlert } from "lucide-react";
 
 function formatOverdue(ms) {
   const m = Math.max(0, ms);
@@ -13,6 +13,7 @@ function formatOverdue(ms) {
 
 const StageEscalations = ({
   escalations = [],
+  requirementViolations = [],
   employees = [],
   variant = "admin",
   onOpenStudent
@@ -23,6 +24,12 @@ const StageEscalations = ({
       : variant === "manager"
         ? "No overdue stages for your branch."
         : "No overdue pipeline stages across branches.";
+  const requirementNoticeCopy =
+    variant === "counselor"
+      ? "These students were advanced through stages without completing all mandatory requirements. This will impact your SLA score until resolved."
+      : variant === "manager"
+        ? "Students on your branch advanced through stages without completing all mandatory requirements. Each open notice impacts the assigned counselor's SLA score."
+        : "Students advanced through stages without completing all mandatory requirements. Each open notice impacts the assigned counselor's SLA score.";
   return /* @__PURE__ */ jsxs("div", {
     className: "space-y-4 animate-in fade-in duration-500",
     children: [
@@ -50,6 +57,121 @@ const StageEscalations = ({
               escalations.length,
               " overdue"
             ]
+          })
+        ]
+      }),
+      requirementViolations.length > 0 && /* @__PURE__ */ jsxs("div", {
+        className: "bg-rose-50 border border-rose-200 rounded-2xl p-4 shadow-sm",
+        children: [
+          /* @__PURE__ */ jsxs("div", {
+            className: "flex items-start gap-3",
+            children: [
+              /* @__PURE__ */ jsx("div", {
+                className: "bg-rose-100 p-2 rounded-xl text-rose-600",
+                children: /* @__PURE__ */ jsx(ShieldAlert, { size: 20 })
+              }),
+              /* @__PURE__ */ jsxs("div", {
+                className: "flex-1 min-w-0",
+                children: [
+                  /* @__PURE__ */ jsxs("div", {
+                    className: "flex items-center justify-between gap-2 flex-wrap",
+                    children: [
+                      /* @__PURE__ */ jsx("h3", {
+                        className: "text-sm font-bold text-rose-900",
+                        children: "SLA Requirement Notice"
+                      }),
+                      /* @__PURE__ */ jsxs("span", {
+                        className: "inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/70 border border-rose-200 text-rose-800 text-[11px] font-semibold",
+                        children: [
+                          /* @__PURE__ */ jsx(AlertTriangle, { size: 12 }),
+                          requirementViolations.length,
+                          " open"
+                        ]
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx("p", {
+                    className: "text-xs text-rose-700 mt-1",
+                    children: requirementNoticeCopy
+                  })
+                ]
+              })
+            ]
+          }),
+          /* @__PURE__ */ jsx("ul", {
+            className: "mt-3 space-y-2",
+            children: requirementViolations.map((row) => {
+              const assignedCounselor = (employees || []).find(
+                (employee) => String(employee.id || "").trim() === String(row.counselorId || "").trim()
+              );
+              const counselorLabel = assignedCounselor
+                ? assignedCounselor.name || assignedCounselor.username || assignedCounselor.email || row.counselorId
+                : row.counselorId || "—";
+              const missingLabel = (row.missingItems || []).length > 0
+                ? row.missingItems.join(", ")
+                : "Required items";
+              return /* @__PURE__ */ jsxs(
+                "li",
+                {
+                  className: "bg-white/70 border border-rose-100 rounded-xl px-3 py-2 flex items-start justify-between gap-3",
+                  children: [
+                    /* @__PURE__ */ jsxs("div", {
+                      className: "min-w-0",
+                      children: [
+                        /* @__PURE__ */ jsxs("div", {
+                          className: "flex items-center gap-2 flex-wrap",
+                          children: [
+                            /* @__PURE__ */ jsx("span", {
+                              className: "text-xs font-semibold text-slate-900 truncate",
+                              children: row.studentName
+                            }),
+                            /* @__PURE__ */ jsx("span", {
+                              className: "text-[10px] font-mono text-slate-400",
+                              children: row.studentId
+                            }),
+                            row.branch && /* @__PURE__ */ jsxs("span", {
+                              className: "inline-flex items-center gap-1 text-[10px] text-slate-500",
+                              children: [
+                                /* @__PURE__ */ jsx(Building2, { size: 10 }),
+                                row.branch
+                              ]
+                            }),
+                            (variant === "admin" || variant === "manager") && /* @__PURE__ */ jsxs("span", {
+                              className: "text-[10px] text-slate-500",
+                              children: ["• ", counselorLabel]
+                            })
+                          ]
+                        }),
+                        /* @__PURE__ */ jsxs("p", {
+                          className: "text-[11px] font-semibold text-rose-800 mt-1",
+                          children: [
+                            row.stage,
+                            ": Missing ",
+                            missingLabel,
+                            row.duplicateCount > 1 && /* @__PURE__ */ jsxs("span", {
+                              className: "ml-2 inline-flex items-center px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px] font-bold",
+                              children: ["×", row.duplicateCount]
+                            })
+                          ]
+                        })
+                      ]
+                    }),
+                    typeof onOpenStudent === "function"
+                      ? /* @__PURE__ */ jsxs("button", {
+                          type: "button",
+                          onClick: () => onOpenStudent(row.studentId),
+                          className: "inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 hover:text-rose-900 whitespace-nowrap",
+                          children: [
+                            "Resolve",
+                            /* @__PURE__ */ jsx(ChevronRight, { size: 12 })
+                          ]
+                        })
+                      : null
+                  ]
+                },
+                row.violationId
+              );
+            })
           })
         ]
       }),

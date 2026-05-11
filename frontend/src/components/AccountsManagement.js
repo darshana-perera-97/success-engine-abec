@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
 import { KeyRound, Plus, Search, X } from "lucide-react";
 import { createAccount, getAccounts, getBranches, getCountries, updateAdminAvatar } from "../authApi";
+import { QuietPageSkeleton } from "./LoadingPlaceholder";
 
 function roleBadgeClass(role) {
   switch (role) {
@@ -44,31 +45,49 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     country: ""
   });
   const [newAccountAvatar, setNewAccountAvatar] = useState("");
+  const [pageLoads, setPageLoads] = useState({
+    accounts: false,
+    branches: false,
+    countries: false
+  });
+  const accountsPageReady = pageLoads.accounts && pageLoads.branches && pageLoads.countries;
 
   useEffect(() => {
     const load = async () => {
-      const result = await getAccounts();
-      if (!result.ok) {
-        setLoadError(result.error);
-        return;
+      try {
+        const result = await getAccounts();
+        if (!result.ok) {
+          setLoadError(result.error);
+          return;
+        }
+        setRows(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, accounts: true }));
       }
-      setRows(result.data);
     };
     load();
   }, []);
   useEffect(() => {
     const loadBranches = async () => {
-      const result = await getBranches();
-      if (!result.ok) return;
-      setBranchOptions(result.data.map((b) => b.location));
+      try {
+        const result = await getBranches();
+        if (!result.ok) return;
+        setBranchOptions(result.data.map((b) => b.location));
+      } finally {
+        setPageLoads((p) => ({ ...p, branches: true }));
+      }
     };
     loadBranches();
   }, []);
   useEffect(() => {
     const loadCountries = async () => {
-      const result = await getCountries();
-      if (!result.ok) return;
-      setCountryOptions(result.data);
+      try {
+        const result = await getCountries();
+        if (!result.ok) return;
+        setCountryOptions(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, countries: true }));
+      }
     };
     loadCountries();
   }, []);
@@ -118,6 +137,10 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     setRows((prev) => prev.map((row) => row.id === "ADM001" ? result.data : row));
     onAdminAvatarUpdated?.(result.data);
   };
+
+  if (!accountsPageReady) {
+    return /* @__PURE__ */ jsx(QuietPageSkeleton, {});
+  }
 
   return /* @__PURE__ */ jsxs("div", {
     className: "space-y-6",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Clock, Users, CheckCircle, ArrowRight, CheckSquare, X } from "lucide-react";
 import { Button } from "./Button";
@@ -7,6 +7,34 @@ import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getBranches, getChats, getCountries, moveStudentToRequests } from "../authApi";
 import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
 import { normalizePipelineStatus } from "../pipeline";
+const INQUIRY_SLA_MS = 60 * 60 * 1000;
+function parseIsoMs(value) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+function formatIntakeRemaining(ms) {
+  if (ms <= 0) {
+    const overdue = -ms;
+    const days = Math.floor(overdue / 86400000);
+    const hours = Math.floor((overdue % 86400000) / 3600000);
+    const mins = Math.floor((overdue % 3600000) / 60000);
+    if (days > 0) return { tone: "overdue", text: `Overdue by ${days}d ${hours}h` };
+    if (hours > 0) return { tone: "overdue", text: `Overdue by ${hours}h ${mins}m` };
+    return { tone: "overdue", text: `Overdue by ${Math.max(1, mins)}m` };
+  }
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  if (days > 0) return { tone: days >= 3 ? "ok" : "soon", text: `${days}d ${hours}h left` };
+  if (hours > 0) return { tone: hours >= 6 ? "soon" : "urgent", text: `${hours}h ${mins}m ${secs}s left` };
+  if (mins > 0) return { tone: "urgent", text: `${mins}m ${secs}s left` };
+  return { tone: "urgent", text: `${secs}s left` };
+}
+function isNewStudentIntakeTask(task) {
+  return /new student intake/i.test(String(task?.task || ""));
+}
 const EDUCATION_LEVELS = [
   "High school",
   "Foundation / pathway",
@@ -19,6 +47,7 @@ const EDUCATION_LEVELS = [
 ];
 const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask, assignmentAlerts = [], onDismissAssignmentAlert, onUpdateStudent, onStudentMovedToRequests }) => {
   const [chatMessages, setChatMessages] = useState([]);
+  const [clockTick, setClockTick] = useState(0);
   const [countries, setCountries] = useState([]);
   const [offices, setOffices] = useState([]);
   const [inquiryAlert, setInquiryAlert] = useState(null);
@@ -32,9 +61,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
     currentEducationLevel: "",
     intendedProgram: "",
     message: "",
-    status: "Inquiry",
-    priority: "Medium",
-    notes: ""
+    priority: "Medium"
   });
   const [isSavingInquiry, setIsSavingInquiry] = useState(false);
   const [inquiryError, setInquiryError] = useState("");
@@ -45,6 +72,10 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
   const [summaryBranch, setSummaryBranch] = useState("");
   const [isSavingSummary, setIsSavingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState("");
+  useEffect(() => {
+    const id = setInterval(() => setClockTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     const uid = String(currentUser?.id || "").trim();
@@ -124,7 +155,55 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
     return acc;
   }, { inquiries: 0, docsPending: 0, visa: 0 });
   const inquiryStageStudents = myStudents.filter((student) => normalizePipelineStatus(student?.status) === "Inquiry");
+  const studentById = useMemo(() => {
+    const map = new Map();
+    for (const s of allStudents || []) {
+      const sid = String(s?.id || "").trim();
+      if (sid) map.set(sid, s);
+    }
+    return map;
+  }, [allStudents]);
+  const reassignedAlertStudentIds = useMemo(() => {
+    const set = /* @__PURE__ */ new Set();
+    for (const a of assignmentAlerts || []) {
+      if (a?.type === "reassigned") set.add(String(a.studentId || "").trim());
+    }
+    return set;
+  }, [assignmentAlerts]);
+  const assignmentAlertsForPanel = useMemo(() => {
+    const inquiryIds = new Set(
+      inquiryStageStudents.map((s) => String(s.id || "").trim()).filter(Boolean)
+    );
+    return (assignmentAlerts || []).filter((a) => {
+      const sid = String(a.studentId || "").trim();
+      if (!sid) return true;
+      if (a.type === "new" && inquiryIds.has(sid)) return false;
+      return true;
+    });
+  }, [assignmentAlerts, inquiryStageStudents]);
+  const inquiryStageStudentsForPanel = useMemo(() => {
+    return inquiryStageStudents.filter((s) => {
+      const sid = String(s.id || "").trim();
+      return !reassignedAlertStudentIds.has(sid);
+    });
+  }, [inquiryStageStudents, reassignedAlertStudentIds]);
   const pipelineDenominator = Math.max(1, myStudents.length);
+  const nowMs = useMemo(() => Date.now(), [clockTick]);
+  const getInquirySlaBadge = (startedAt) => {
+    const startMs = parseIsoMs(startedAt);
+    if (startMs == null) return null;
+    const deadlineMs = startMs + INQUIRY_SLA_MS;
+    const { tone, text } = formatIntakeRemaining(deadlineMs - nowMs);
+    const toneClass =
+      tone === "overdue"
+        ? "text-rose-700 font-semibold"
+        : tone === "urgent"
+          ? "text-amber-700 font-semibold"
+          : tone === "soon"
+            ? "text-amber-600 font-medium"
+            : "text-emerald-700 font-medium";
+    return /* @__PURE__ */ jsx("span", { className: `text-xs tabular-nums ${toneClass}`, children: text });
+  };
   const inquiriesPct = Math.max(8, Math.round(pipelineTotals.inquiries / pipelineDenominator * 100));
   const docsPendingPct = Math.max(8, Math.round(pipelineTotals.docsPending / pipelineDenominator * 100));
   const visaPct = Math.max(8, Math.round(pipelineTotals.visa / pipelineDenominator * 100));
@@ -152,9 +231,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
       currentEducationLevel: String(student.currentEducationLevel || ""),
       intendedProgram: String(student.intendedProgram || ""),
       message: String(student.message || ""),
-      status: String(student.status || "Inquiry") || "Inquiry",
-      priority: String(student.priority || "Medium") || "Medium",
-      notes: String(student.notes || "")
+      priority: String(student.priority || "Medium") || "Medium"
     });
   };
   const closeInquiryPopup = () => {
@@ -187,9 +264,9 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
       message: String(inquiryForm.message || "").trim(),
       country: String(inquiryForm.countryToVisit || "").trim() || existingStudent.country,
       branch: String(inquiryForm.nearestOffice || "").trim() || existingStudent.branch,
-      status: String(inquiryForm.status || "").trim() || existingStudent.status,
+      status: existingStudent.status,
       priority: String(inquiryForm.priority || "").trim() || existingStudent.priority,
-      notes: String(inquiryForm.notes || "")
+      notes: existingStudent.notes
     };
     if (!updatedStudent.name || !updatedStudent.email || !updatedStudent.phone || !updatedStudent.countryToVisit || !updatedStudent.nearestOffice || !updatedStudent.currentEducationLevel || !updatedStudent.intendedProgram) {
       setIsSavingInquiry(false);
@@ -362,68 +439,92 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
               ] }),
               /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", onClick: () => onNavigate("tasks"), children: "Fix Now" })
             ] }),
-            assignmentAlerts.map((alert) => /* @__PURE__ */ jsxs(
-              "div",
-              {
-                className: "p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex justify-between items-center",
-                children: [
-                  /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-                    /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-indigo-500 animate-pulse" }),
-                    /* @__PURE__ */ jsxs("div", { children: [
-                      /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-indigo-900", children: alert.type === "reassigned" ? `${alert.studentName} was reassigned to you` : `${alert.studentName} is a newly added student` }),
-                      /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700", children: "Reach out and start onboarding actions." })
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", onClick: () => openInquiryPopup(alert), children: "Start Inquiry" })
-                ]
-              },
-              alert.id
-            )),
-            inquiryStageStudents.map((student) => {
+            assignmentAlertsForPanel.map((alert) => {
+              const sid = String(alert.studentId || "").trim();
+              const sourceStudent = sid ? studentById.get(sid) : null;
+              const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
+              const titleLine =
+                alert.type === "reassigned"
+                  ? `${alert.studentName || "Student"} was reassigned to you`
+                  : `${alert.studentName || "Student"} is in Inquiry stage`;
+              return /* @__PURE__ */ jsxs(
+                "div",
+                {
+                  className: "p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap",
+                  children: [
+                    /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                      /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
+                      /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-amber-900", children: titleLine }),
+                        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                          /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
+                          inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                            "Inquiry SLA ",
+                            getInquirySlaBadge(inquiryStartedAt)
+                          ] })
+                        ] })
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", className: "shrink-0", onClick: () => openInquiryPopup(alert), children: "Start Inquiry" })
+                  ]
+                },
+                alert.id
+              );
+            }),
+            inquiryStageStudentsForPanel.map((student) => {
               const inquiryAlertPayload = {
                 id: `inquiry-student-${student.id}`,
                 studentId: String(student.id || ""),
                 studentName: student.name || String(student.id || ""),
                 type: "new"
               };
+              const sid = String(student.id || "").trim();
+              const sourceStudent = sid ? studentById.get(sid) || student : student;
+              const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
               return /* @__PURE__ */ jsxs(
                 "div",
                 {
-                  className: "p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center",
+                  className: "p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap",
                   children: [
-                    /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-                      /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse" }),
-                      /* @__PURE__ */ jsxs("div", { children: [
+                    /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                      /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
+                      /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
                         /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
                           student.name || "Student",
                           " is in Inquiry stage"
                         ] }),
-                        /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." })
+                        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                          /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
+                          inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                            "Inquiry SLA ",
+                            getInquirySlaBadge(inquiryStartedAt)
+                          ] })
+                        ] })
                       ] })
                     ] }),
-                    /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", onClick: () => openInquiryPopup(inquiryAlertPayload), children: "Start Inquiry" })
+                    /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", className: "shrink-0", onClick: () => openInquiryPopup(inquiryAlertPayload), children: "Start Inquiry" })
                   ]
                 },
                 `inquiry-stage-${student.id}`
               );
             }),
-            pendingTasks.slice(0, 3).map((task) => /* @__PURE__ */ jsxs(
+            pendingTasks.filter((task) => !isNewStudentIntakeTask(task)).slice(0, 3).map((task) => /* @__PURE__ */ jsxs(
               "div",
               {
-                className: "flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg border border-transparent hover:border-gray-100 transition-all group cursor-pointer",
+                className: "flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg border border-transparent hover:border-gray-100 transition-all group cursor-pointer gap-2",
                 onClick: () => onSelectTask && onSelectTask(task.id),
                 children: [
-                  /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
-                    /* @__PURE__ */ jsx("div", { className: "w-5 h-5 mt-0.5 rounded border-2 border-slate-300 group-hover:border-indigo-500 transition-colors" }),
-                    /* @__PURE__ */ jsxs("div", { children: [
+                  /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
+                    /* @__PURE__ */ jsx("div", { className: "w-5 h-5 mt-0.5 rounded border-2 border-slate-300 group-hover:border-indigo-500 transition-colors shrink-0" }),
+                    /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
                       /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 group-hover:text-indigo-900", children: task.task }),
-                      /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400", children: [
+                      isNewStudentIntakeTask(task) ? null : task.dueDate ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-0.5", children: [
                         "Due: ",
                         task.dueDate
-                      ] })
+                      ] }) : null
                     ] })
                   ] }),
-                  /* @__PURE__ */ jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full ${task.priority === "High" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`, children: task.priority })
+                  /* @__PURE__ */ jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${task.priority === "High" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`, children: task.priority })
                 ]
               },
               task.id
@@ -567,20 +668,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
             /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Additional message" }),
             /* @__PURE__ */ jsx("textarea", { rows: 3, className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500", value: inquiryForm.message, onChange: (e) => setInquiryForm((prev) => ({ ...prev, message: e.target.value })) })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "sm:col-span-2", children: [
-            /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Status" }),
-            /* @__PURE__ */ jsxs("select", { className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500", value: inquiryForm.status, onChange: (e) => setInquiryForm((prev) => ({ ...prev, status: e.target.value })), children: [
-              /* @__PURE__ */ jsx("option", { value: "Inquiry", children: "Inquiry" }),
-              /* @__PURE__ */ jsx("option", { value: "Documentation", children: "Documentation" }),
-              /* @__PURE__ */ jsx("option", { value: "Application", children: "Application" }),
-              /* @__PURE__ */ jsx("option", { value: "Interview training", children: "Interview training" }),
-              /* @__PURE__ */ jsx("option", { value: "Visa", children: "Visa" })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxs("div", { className: "sm:col-span-2", children: [
-            /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Notes" }),
-            /* @__PURE__ */ jsx("textarea", { rows: 3, className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500", value: inquiryForm.notes, onChange: (e) => setInquiryForm((prev) => ({ ...prev, notes: e.target.value })) })
-          ] })
+          
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-2 border-t border-gray-100", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: closeInquiryPopup, disabled: isSavingInquiry, children: "Cancel" }),

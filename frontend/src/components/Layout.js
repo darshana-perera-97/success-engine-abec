@@ -47,8 +47,10 @@ const Layout = ({
   pipelineEscalationBadge = "",
   counselorStageEscalationBadge = "",
   counselorStudentsBadge = "",
-  whatsappConnectionStatus = "disconnected"
+  whatsappConnectionStatus = "disconnected",
+  pageLoading = false
 }) => {
+  void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);

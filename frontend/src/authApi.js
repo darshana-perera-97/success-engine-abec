@@ -688,7 +688,13 @@ export async function updateStudent(studentId, payload) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to update student." };
     }
-    return { ok: true, data: data.data };
+    return {
+      ok: true,
+      data: data.data,
+      documentWhatsappNotifications: Array.isArray(data.documentWhatsappNotifications)
+        ? data.documentWhatsappNotifications
+        : [],
+    };
   } catch {
     return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
   }

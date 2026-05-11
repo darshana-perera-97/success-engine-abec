@@ -1,9 +1,48 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts } from "../authApi";
-import { Filter, ChevronDown, UserPlus, Globe2, Users2 } from "lucide-react";
+import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp } from "lucide-react";
+import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
+import { TableSkeletonRows } from "./LoadingPlaceholder";
+
+const STUDENT_LIST_SORT_KEY = "successEngine.studentList.sort";
+
+function loadSortPrefs() {
+  const defaults = { sortBy: "time", sortDirection: "asc" };
+  try {
+    const raw = localStorage.getItem(STUDENT_LIST_SORT_KEY);
+    if (!raw) return defaults;
+    const data = JSON.parse(raw);
+    const sortBy = ["name", "time", "stage"].includes(data.sortBy) ? data.sortBy : defaults.sortBy;
+    const sortDirection = data.sortDirection === "desc" ? "desc" : "asc";
+    return { sortBy, sortDirection };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveSortPrefs(prefs) {
+  try {
+    localStorage.setItem(STUDENT_LIST_SORT_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore */
+  }
+}
+
+function pipelineStageOrder(status) {
+  const canonical = normalizePipelineStatus(status);
+  const idx = PIPELINE_STEPS.indexOf(canonical);
+  return idx === -1 ? PIPELINE_STEPS.length + 1 : idx;
+}
+
+function studentTimeMs(student) {
+  const raw = student.updatedAt || student.createdAt || "";
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
 const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssignStudentCounselor, onNavigate, onAddStudent, userRole, currentUser, authenticatedUser }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
@@ -12,23 +51,50 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
   const [accountCounselors, setAccountCounselors] = useState([]);
   const [assigningStudentId, setAssigningStudentId] = useState(null);
   const [managerTargetCounselorId, setManagerTargetCounselorId] = useState("");
+  const [counselorMetaReady, setCounselorMetaReady] = useState(false);
+  const [sortPrefs, setSortPrefs] = useState(() => loadSortPrefs());
+  const { sortBy, sortDirection } = sortPrefs;
+  useEffect(() => {
+    saveSortPrefs(sortPrefs);
+  }, [sortPrefs]);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef(null);
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const onDoc = (e) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) setSortMenuOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setSortMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sortMenuOpen]);
   const assigningStudent = useMemo(
     () => students.find((student) => student.id === assigningStudentId) || null,
     [students, assigningStudentId]
   );
   useEffect(() => {
     const loadCounselorAccounts = async () => {
-      const result = await getAccounts();
-      if (!result.ok) return;
-      const options = result.data.filter((row) => {
-        const role = String(row.role || "").toLowerCase();
-        return role === "consultor" || role === "counselor";
-      }).map((row) => ({
-        id: row.id,
-        name: row.username || row.email,
-        email: row.email || ""
-      }));
-      setAccountCounselors(options);
+      try {
+        const result = await getAccounts();
+        if (!result.ok) return;
+        const options = result.data.filter((row) => {
+          const role = String(row.role || "").toLowerCase();
+          return role === "consultor" || role === "counselor";
+        }).map((row) => ({
+          id: row.id,
+          name: row.username || row.email,
+          email: row.email || ""
+        }));
+        setAccountCounselors(options);
+      } finally {
+        setCounselorMetaReady(true);
+      }
     };
     loadCounselorAccounts();
   }, []);
@@ -87,6 +153,28 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
       }
     );
   }, [students, filterText, counselorFilter, countryFilter, userRole, activeCounselorIdentity]);
+  const sortedFilteredStudents = useMemo(() => {
+    const list = [...filteredStudents];
+    const dir = sortDirection === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      if (sortBy === "name") {
+        return dir * String(a.name || "").localeCompare(String(b.name || ""), void 0, { sensitivity: "base" });
+      }
+      if (sortBy === "time") {
+        const ta = studentTimeMs(a);
+        const tb = studentTimeMs(b);
+        if (ta === null && tb === null) return 0;
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return dir * (ta - tb);
+      }
+      const sa = pipelineStageOrder(a.status);
+      const sb = pipelineStageOrder(b.status);
+      if (sa !== sb) return dir * (sa - sb);
+      return dir * String(a.status || "").localeCompare(String(b.status || ""), void 0, { sensitivity: "base" });
+    });
+    return list;
+  }, [filteredStudents, sortBy, sortDirection]);
   const handleAddStudent = async (newStudent) => {
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);
@@ -209,9 +297,79 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
           ),
           /* @__PURE__ */ jsx(Filter, { size: 14, className: "absolute right-2.5 top-3 text-gray-400" })
         ] }),
-        /* @__PURE__ */ jsxs(Button, { onClick: () => setIsAddModalOpen(true), className: "bg-[#0F172A] hover:bg-slate-800", children: [
-          /* @__PURE__ */ jsx(UserPlus, { size: 16, className: "mr-2" }),
-          "Add Student"
+        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 shrink-0", children: [
+          /* @__PURE__ */ jsxs("div", { className: "relative shrink-0", ref: sortMenuRef, children: [
+            /* @__PURE__ */ jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setSortMenuOpen((open) => !open),
+                className: `inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-slate-200 ${sortMenuOpen ? "ring-2 ring-slate-300 border-slate-300" : ""}`,
+                "aria-expanded": sortMenuOpen,
+                "aria-haspopup": "dialog",
+                "aria-label": "Sort students",
+                title: "Sort list",
+                children: /* @__PURE__ */ jsx(ArrowDownUp, { size: 18, className: "text-slate-600" })
+              }
+            ),
+            sortMenuOpen && /* @__PURE__ */ jsxs(
+              "div",
+              {
+                className: "absolute right-0 top-full z-50 mt-2 w-[min(100vw-2rem,17rem)] rounded-xl border border-slate-200 bg-white p-4 shadow-lg",
+                role: "dialog",
+                "aria-label": "Sort options",
+                onMouseDown: (e) => e.stopPropagation(),
+                children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-xs font-bold uppercase tracking-wider text-slate-500 mb-3", children: "Sort list" }),
+                  /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+                    /* @__PURE__ */ jsxs("div", { children: [
+                      /* @__PURE__ */ jsx("label", { className: "block text-xs font-semibold text-slate-600 mb-1.5", htmlFor: "student-list-sort-by", children: "Sort by" }),
+                      /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+                        /* @__PURE__ */ jsx(
+                          "select",
+                          {
+                            id: "student-list-sort-by",
+                            value: sortBy,
+                            onChange: (e) => setSortPrefs((p) => ({ ...p, sortBy: e.target.value })),
+                            className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200",
+                            children: [
+                              /* @__PURE__ */ jsx("option", { value: "name", children: "Name" }),
+                              /* @__PURE__ */ jsx("option", { value: "time", children: "Time (updated)" }),
+                              /* @__PURE__ */ jsx("option", { value: "stage", children: "Stage" })
+                            ]
+                          }
+                        ),
+                        /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" })
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ jsxs("div", { children: [
+                      /* @__PURE__ */ jsx("label", { className: "block text-xs font-semibold text-slate-600 mb-1.5", htmlFor: "student-list-sort-order", children: "Order" }),
+                      /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+                        /* @__PURE__ */ jsx(
+                          "select",
+                          {
+                            id: "student-list-sort-order",
+                            value: sortDirection,
+                            onChange: (e) => setSortPrefs((p) => ({ ...p, sortDirection: e.target.value })),
+                            className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200",
+                            children: [
+                              /* @__PURE__ */ jsx("option", { value: "asc", children: "Ascending" }),
+                              /* @__PURE__ */ jsx("option", { value: "desc", children: "Descending" })
+                            ]
+                          }
+                        ),
+                        /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" })
+                      ] })
+                    ] })
+                  ] })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxs(Button, { onClick: () => setIsAddModalOpen(true), className: "bg-[#0F172A] hover:bg-slate-800", children: [
+            /* @__PURE__ */ jsx(UserPlus, { size: 16, className: "mr-2" }),
+            "Add Student"
+          ] })
         ] })
       ] })
     ] }),
@@ -226,7 +384,7 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Counselor" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 text-right", children: "Academic" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: filteredStudents.map((student) => /* @__PURE__ */ jsxs(
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: counselorMetaReady ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
           "tr",
           {
             onClick: () => onSelectStudent(student),
@@ -268,14 +426,14 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
             ]
           },
           student.id
-        )) })
+        )) : /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 8, cols: 7 }) })
       ] }) }),
       /* @__PURE__ */ jsxs("div", { className: "px-6 py-3 border-t border-gray-200 bg-gray-50 text-xs text-slate-500 flex justify-between items-center", children: [
         /* @__PURE__ */ jsxs("span", { children: [
           "Showing ",
-          filteredStudents.length,
+          counselorMetaReady ? sortedFilteredStudents.length : "—",
           " of ",
-          students.length,
+          counselorMetaReady ? students.length : "—",
           " students"
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [

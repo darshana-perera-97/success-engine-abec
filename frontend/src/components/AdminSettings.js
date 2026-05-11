@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Globe, Save, Settings } from "lucide-react";
 import { Button } from "./Button";
 import { createCountry, getCountries } from "../authApi";
+import { TableSkeletonRows } from "./LoadingPlaceholder";
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -23,19 +24,24 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
   const [meetingSuccess, setMeetingSuccess] = useState("");
   const [isSavingMeetingSettings, setIsSavingMeetingSettings] = useState(false);
   const [countries, setCountries] = useState([]);
+  const [countriesReady, setCountriesReady] = useState(false);
   const [newCountryName, setNewCountryName] = useState("");
   const [countryError, setCountryError] = useState("");
   const [countrySuccess, setCountrySuccess] = useState("");
   const [isSavingCountry, setIsSavingCountry] = useState(false);
 
   const loadCountries = async () => {
-    const result = await getCountries();
-    if (!result.ok) {
-      setCountryError(result.error || "Failed to load countries.");
-      return;
+    try {
+      const result = await getCountries();
+      if (!result.ok) {
+        setCountryError(result.error || "Failed to load countries.");
+        return;
+      }
+      setCountries(result.data);
+      setCountryError("");
+    } finally {
+      setCountriesReady(true);
     }
-    setCountries(result.data);
-    setCountryError("");
   };
 
   useEffect(() => {
@@ -211,12 +217,12 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings }) => {
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: "Count" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 5, cols: 2 }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right text-slate-500 tabular-nums", children: "—" })
         ] }, c)) })
       ] }) }),
-      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: `${countries.length} countr${countries.length === 1 ? "y" : "ies"} in the list.` })
+      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: countriesReady ? `${countries.length} countr${countries.length === 1 ? "y" : "ies"} in the list.` : "Loading countries…" })
     ] })
   ] });
 };

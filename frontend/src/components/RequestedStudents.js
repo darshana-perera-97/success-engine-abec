@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClipboardList, RefreshCw, UserPlus, X, Eye } from "lucide-react";
 import { getAccounts, getReqStudents } from "../authApi";
 import { Button } from "./Button";
+import { InlineLoading } from "./LoadingPlaceholder";
 
 function formatSubmittedAt(iso) {
   if (!iso) return "—";
@@ -107,6 +108,9 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
   const [modalSaving, setModalSaving] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
   const [pipelinePriority, setPipelinePriority] = useState("Medium");
+  const counselorFetchSeq = useRef(0);
+  const onAddFromRequestRef = useRef(onAddFromRequest);
+  onAddFromRequestRef.current = onAddFromRequest;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,38 +129,50 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
     load();
   }, [load]);
 
+  const loadPipelineCounselors = useCallback(
+    async ({ preserveCounselorSelection = false } = {}) => {
+      if (!pipelineRow) return;
+      const seq = ++counselorFetchSeq.current;
+      setAccountsLoading(true);
+      setModalError("");
+      if (!preserveCounselorSelection) setCounselorId("");
+      try {
+        const res = await getAccounts();
+        if (seq !== counselorFetchSeq.current) return;
+        if (!res.ok) {
+          setCounselorRows([]);
+          setModalError(res.error || "Could not load counselors.");
+          return;
+        }
+        const filtered = counselorOptionsForRow(userRole, scopeBranch, pipelineRow, res.data);
+        setCounselorRows(filtered);
+        if (preserveCounselorSelection) {
+          setCounselorId((prev) => {
+            const ok = filtered.some((c) => String(c.id) === String(prev));
+            if (ok) return prev;
+            if (filtered.length === 1) return String(filtered[0].id || "");
+            return "";
+          });
+        } else if (filtered.length === 1) {
+          setCounselorId(String(filtered[0].id || ""));
+        }
+      } finally {
+        if (seq === counselorFetchSeq.current) setAccountsLoading(false);
+      }
+    },
+    [pipelineRow, userRole, scopeBranch]
+  );
+
   useEffect(() => {
-    if (!pipelineRow || !onAddFromRequest) {
+    if (!pipelineRow || !onAddFromRequestRef.current) {
       setCounselorRows([]);
       setCounselorId("");
       setModalError("");
       return;
     }
     setPipelinePriority("Medium");
-    let cancelled = false;
-    (async () => {
-      setAccountsLoading(true);
-      setModalError("");
-      setCounselorId("");
-      const res = await getAccounts();
-      if (cancelled) return;
-      if (!res.ok) {
-        setCounselorRows([]);
-        setModalError(res.error || "Could not load counselors.");
-        setAccountsLoading(false);
-        return;
-      }
-      const filtered = counselorOptionsForRow(userRole, scopeBranch, pipelineRow, res.data);
-      setCounselorRows(filtered);
-      if (filtered.length === 1) {
-        setCounselorId(String(filtered[0].id || ""));
-      }
-      setAccountsLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pipelineRow, userRole, scopeBranch]);
+    loadPipelineCounselors({ preserveCounselorSelection: false });
+  }, [pipelineRow, userRole, scopeBranch, loadPipelineCounselors]);
 
   const closeModal = () => {
     setPipelineRow(null);
@@ -230,7 +246,7 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         {loading ? (
-          <div className="px-6 py-16 text-center text-sm text-slate-500">Loading…</div>
+          <InlineLoading label="Loading requests…" className="py-16" />
         ) : rows.length === 0 ? (
           <div className="px-6 py-16 text-center text-sm text-slate-500">
             No form submissions yet{scopeBranch ? " for your branch." : "."}
@@ -420,11 +436,25 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Assign counselor
-                </label>
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Assign counselor
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="inline-flex shrink-0 items-center gap-1.5 text-slate-600"
+                    onClick={() => loadPipelineCounselors({ preserveCounselorSelection: true })}
+                    disabled={modalSaving}
+                    aria-label="Reload counselor list"
+                  >
+                    <RefreshCw size={14} className={accountsLoading ? "animate-spin" : ""} />
+                    Reload
+                  </Button>
+                </div>
                 <p className="mb-2 text-xs text-slate-500">{filterDescription}</p>
-                {accountsLoading ? (
+                {accountsLoading && counselorRows.length === 0 ? (
                   <p className="text-sm text-slate-500">Loading counselors…</p>
                 ) : counselorRows.length === 0 ? (
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -434,9 +464,10 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                 ) : (
                   <select
                     required
+                    disabled={accountsLoading}
                     value={counselorId}
                     onChange={(e) => setCounselorId(e.target.value)}
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30"
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <option value="">Select counselor…</option>
                     {counselorRows.map((c) => (

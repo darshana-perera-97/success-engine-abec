@@ -434,8 +434,29 @@ async function readTasks() {
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
+    if (error instanceof SyntaxError) {
+      try {
+        const raw = await fs.readFile(TASKS_FILE, "utf8");
+        const start = raw.indexOf("[");
+        const end = raw.lastIndexOf("]");
+        if (start !== -1 && end !== -1 && end > start) {
+          const salvaged = JSON.parse(raw.slice(start, end + 1));
+          return Array.isArray(salvaged) ? salvaged : [];
+        }
+      } catch {
+        // Fall through to throw original parse error.
+      }
+    }
     throw error;
   }
+}
+
+let tasksMutationQueue = Promise.resolve();
+
+function withTasksMutationLock(operation) {
+  const run = tasksMutationQueue.then(() => operation(), () => operation());
+  tasksMutationQueue = run.catch(() => {});
+  return run;
 }
 
 async function readWhatsappIncoming() {
@@ -458,7 +479,10 @@ async function appendWhatsappIncoming(entry) {
 
 async function writeTasks(tasks) {
   await fs.mkdir(path.dirname(TASKS_FILE), { recursive: true });
-  await fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2));
+  const payload = `${JSON.stringify(tasks, null, 2)}\n`;
+  const tempFile = `${TASKS_FILE}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(tempFile, payload, "utf8");
+  await fs.rename(tempFile, TASKS_FILE);
 }
 
 async function readSafe(reader, fallback) {
@@ -1305,6 +1329,85 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
     `Meeting Link: ${meetingLink || ""}`,
     "",
     "Please join on time.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function buildInvoiceWhatsappMessage({ studentName, invoiceId, currency, amount, description, dueDate }) {
+  const lines = [
+    "ABEC Premier - Invoice Generated",
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "A new invoice has been generated for your application.",
+    `Invoice ID: ${invoiceId || ""}`,
+    `Amount: ${currency || "LKR"} ${Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    `Due Date: ${dueDate || ""}`,
+    description ? `Description: ${description}` : "",
+    "",
+    "Please complete the payment before the due date.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function collectDocumentVerificationTransitions(previousDocs, nextDocs) {
+  const prevById = new Map(
+    (Array.isArray(previousDocs) ? previousDocs : []).map((d) => [String(d.id || "").trim(), d])
+  );
+  const out = [];
+  for (const doc of Array.isArray(nextDocs) ? nextDocs : []) {
+    const id = String(doc.id || "").trim();
+    if (!id) continue;
+    const prev = prevById.get(id);
+    const nextStatus = String(doc.status || "").trim().toLowerCase();
+    const prevStatus = prev ? String(prev.status || "").trim().toLowerCase() : "";
+    if (nextStatus === "verified" && prevStatus !== "verified") {
+      out.push({
+        docId: id,
+        docName: String(doc.name || doc.type || "Document"),
+        docType: String(doc.type || ""),
+        decision: "verified",
+        rejectionReason: "",
+      });
+    }
+    if (nextStatus === "rejected" && prevStatus !== "rejected") {
+      out.push({
+        docId: id,
+        docName: String(doc.name || doc.type || "Document"),
+        docType: String(doc.type || ""),
+        decision: "rejected",
+        rejectionReason: String(doc.rejectionReason || "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
+function buildDocumentDecisionWhatsappMessage({ studentName, docName, docType, decision, rejectionReason }) {
+  const friendlyDoc = docType ? `${docName} (${docType})` : docName;
+  if (decision === "verified") {
+    const lines = [
+      "ABEC Premier — Document update",
+      "",
+      `Hi ${studentName || "Student"},`,
+      "",
+      "Good news: your document has been approved (verified).",
+      `Document: ${friendlyDoc}`,
+      "",
+      "Log in to your student portal to review your checklist.",
+    ];
+    return lines.join("\n");
+  }
+  const lines = [
+    "ABEC Premier — Document update",
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your document could not be approved and needs to be re-uploaded.",
+    `Document: ${friendlyDoc}`,
+    rejectionReason ? `Reason: ${rejectionReason}` : "",
+    "",
+    "Please sign in to the student portal, review the feedback, and upload a corrected file.",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -2942,6 +3045,9 @@ const server = http.createServer(async (req, res) => {
       const taskName = String(body.task || "").trim();
       const studentId = String(body.student_id || "").trim();
       const assignedTo = Array.isArray(body.assigned_to) ? body.assigned_to.map((id) => String(id || "").trim()).filter(Boolean) : [];
+      const counselorIds = Array.isArray(body.counselor_ids)
+        ? body.counselor_ids.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
       const priority = String(body.priority || "Medium").trim() || "Medium";
       const status = String(body.status || "Pending").trim() || "Pending";
       const dueDate = String(body.dueDate || "").trim();
@@ -2960,6 +3066,7 @@ const server = http.createServer(async (req, res) => {
         task: taskName,
         student_id: studentId,
         assigned_to: assignedTo,
+        counselor_ids: Array.from(new Set(counselorIds)),
         priority,
         status,
         dueDate,
@@ -2972,12 +3079,15 @@ const server = http.createServer(async (req, res) => {
         createdAt: String(body.createdAt || nowIso),
         updatedAt: nowIso
       };
-      const tasks = await readTasks();
-      await writeTasks([task, ...tasks]);
+      await withTasksMutationLock(async () => {
+        const tasks = await readTasks();
+        await writeTasks([task, ...tasks]);
+      });
       logEvent("task", "created", { taskId: task.id, studentId: task.student_id, assignedToCount: task.assigned_to.length });
       sendJson(res, 201, { ok: true, data: task });
-    } catch {
-      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    } catch (error) {
+      console.error("Task create failed:", error);
+      sendJson(res, 400, { ok: false, error: String(error?.message || "Failed to create task.") });
     }
     return;
   }
@@ -2990,25 +3100,32 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      const tasks = await readTasks();
-      const idx = tasks.findIndex((item) => String(item.id || "") === taskId);
-      if (idx === -1) {
+      const merged = await withTasksMutationLock(async () => {
+        const tasks = await readTasks();
+        const idx = tasks.findIndex((item) => String(item.id || "") === taskId);
+        if (idx === -1) {
+          return null;
+        }
+        const next = {
+          ...tasks[idx],
+          ...body,
+          id: tasks[idx].id,
+          updatedAt: new Date().toISOString()
+        };
+        const updatedTasks = [...tasks];
+        updatedTasks[idx] = next;
+        await writeTasks(updatedTasks);
+        return next;
+      });
+      if (!merged) {
         sendJson(res, 404, { ok: false, error: "Task not found." });
         return;
       }
-      const merged = {
-        ...tasks[idx],
-        ...body,
-        id: tasks[idx].id,
-        updatedAt: new Date().toISOString()
-      };
-      const updatedTasks = [...tasks];
-      updatedTasks[idx] = merged;
-      await writeTasks(updatedTasks);
       logEvent("task", "updated", { taskId: merged.id, studentId: merged.student_id, status: merged.status });
       sendJson(res, 200, { ok: true, data: merged });
-    } catch {
-      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    } catch (error) {
+      console.error("Task update failed:", error);
+      sendJson(res, 400, { ok: false, error: String(error?.message || "Failed to update task.") });
     }
     return;
   }
@@ -3042,6 +3159,62 @@ const server = http.createServer(async (req, res) => {
         paymentProofName: body.paymentProofName ? String(body.paymentProofName) : undefined,
         updatedAt: new Date().toISOString(),
       };
+      let receiptAttachment = null;
+      if (body.receiptImageDataUrl) {
+        const storedReceipt = await storeChatAttachmentDataUrl(
+          String(body.receiptImageDataUrl || ""),
+          String(body.receiptImageName || `${invoice.id}-invoice.png`)
+        );
+        if (storedReceipt && !storedReceipt.error) {
+          receiptAttachment = {
+            name: storedReceipt.name,
+            mime: storedReceipt.mime,
+            size: storedReceipt.size,
+            url: storedReceipt.url,
+          };
+          invoice.generatedReceiptUrl = publicChatFileUrl(req, storedReceipt.url);
+        }
+      }
+      let whatsappDelivery = { attempted: false, status: "skipped", reason: "Not attempted." };
+      try {
+        const students = await readStudemts();
+        const student = students.find((item) => String(item.id || "") === studentId);
+        const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+        if (!student) {
+          whatsappDelivery = { attempted: false, status: "skipped", reason: "Student record not found." };
+        } else if (!counselorId || counselorId === "Unassigned") {
+          whatsappDelivery = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
+        } else {
+          const result = await deliverCounselorMessageToStudentWhatsapp({
+            senderId: counselorId,
+            receiverId: studentId,
+            content: buildInvoiceWhatsappMessage({
+              studentName: String(student.name || "").trim(),
+              invoiceId: invoice.id,
+              currency: invoice.currency,
+              amount: invoice.amount,
+              description: invoice.description,
+              dueDate: invoice.dueDate,
+            }),
+            attachment: receiptAttachment,
+          });
+          whatsappDelivery = {
+            attempted: Boolean(result?.attempted),
+            status: result?.status || "skipped",
+            reason: result?.reason || "",
+            sentAt: new Date().toISOString(),
+          };
+        }
+      } catch (error) {
+        whatsappDelivery = {
+          attempted: true,
+          status: "failed",
+          reason: String(error?.message || "Failed to send invoice via WhatsApp."),
+          sentAt: new Date().toISOString(),
+        };
+        console.error("Invoice WhatsApp send failed:", error);
+      }
+      invoice.whatsappDelivery = whatsappDelivery;
       const invoices = await readInvoices();
       await writeInvoices([invoice, ...invoices]);
       sendJson(res, 201, { ok: true, data: invoice });
@@ -3174,6 +3347,44 @@ const server = http.createServer(async (req, res) => {
       if (upcomingScheduledForStudent >= 3) {
         sendJson(res, 400, { ok: false, error: "Students can only have up to 3 upcoming meetings." });
         return;
+      }
+      const meetingLinkOnCreate = String(appointment.meetingLink || "").trim();
+      if (meetingLinkOnCreate) {
+        try {
+          const students = await readStudemts();
+          const student = students.find((item) => String(item.id || "") === String(appointment.studentId || ""));
+          const result = await deliverCounselorMessageToStudentWhatsapp({
+            senderId: String(appointment.counselorId || "").trim(),
+            receiverId: String(appointment.studentId || "").trim(),
+            content: buildAppointmentLinkWhatsappMessage({
+              studentName: student?.name || "",
+              title: appointment.title || "Session",
+              date: appointment.date || "",
+              time: appointment.time || "",
+              meetingLink: meetingLinkOnCreate,
+            }),
+          });
+          appointment.meetingLinkWhatsappDelivery = {
+            attempted: Boolean(result?.attempted),
+            status: result?.status || "skipped",
+            reason: result?.reason || "",
+            sentAt: new Date().toISOString(),
+          };
+          logEvent("appointment", "meeting link sent to student via whatsapp", {
+            appointmentId: appointment.id,
+            counselorId: appointment.counselorId,
+            studentId: appointment.studentId,
+            status: appointment.meetingLinkWhatsappDelivery.status,
+          });
+        } catch (error) {
+          appointment.meetingLinkWhatsappDelivery = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp meeting link."),
+            sentAt: new Date().toISOString(),
+          };
+          console.error("Meeting link WhatsApp send failed (create):", error);
+        }
       }
       await writeAppointments([...appointments, appointment]);
       sendJson(res, 201, { ok: true, data: appointment });
@@ -3616,6 +3827,10 @@ const server = http.createServer(async (req, res) => {
       const lastEducationDate =
         String(body.lastEducationDate || "").trim() || new Date().toISOString().split("T")[0];
       const documents = Array.isArray(body.documents) ? body.documents : [];
+      const city = String(body.city || "").trim();
+      const currentEducationLevel = String(body.currentEducationLevel || "").trim();
+      const intendedProgram = String(body.intendedProgram || "").trim();
+      const message = String(body.message || "").trim();
 
       if (!name || !country || !branch || !email || !phoneInput || !gpa || !password) {
         sendJson(res, 400, { ok: false, error: "Name, country, branch, email, phone, GPA and password are required." });
@@ -3679,6 +3894,10 @@ const server = http.createServer(async (req, res) => {
         notes,
         lastEducationDate,
         documents,
+        city: city || null,
+        currentEducationLevel: currentEducationLevel || null,
+        intendedProgram: intendedProgram || null,
+        message: message || null,
         createdAt: nowIso,
         stageEnteredAt: nowIso
       };
@@ -3945,10 +4164,64 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      const documentWhatsappNotifications = [];
+      if (Array.isArray(merged.documents)) {
+        const transitions = collectDocumentVerificationTransitions(previous.documents, merged.documents);
+        const studentName = String(merged.name || "").trim();
+        const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
+        for (const t of transitions) {
+          if (!counselorId || counselorId === "Unassigned") {
+            documentWhatsappNotifications.push({
+              docId: t.docId,
+              decision: t.decision,
+              whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
+            });
+            continue;
+          }
+          const message = buildDocumentDecisionWhatsappMessage({
+            studentName,
+            docName: t.docName,
+            docType: t.docType,
+            decision: t.decision,
+            rejectionReason: t.rejectionReason,
+          });
+          try {
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId: counselorId,
+              receiverId: studentId,
+              content: message,
+            });
+            documentWhatsappNotifications.push({
+              docId: t.docId,
+              decision: t.decision,
+              whatsapp: {
+                attempted: Boolean(result?.attempted),
+                status: String(result?.status || "failed"),
+                reason: String(result?.reason || ""),
+              },
+            });
+          } catch (error) {
+            documentWhatsappNotifications.push({
+              docId: t.docId,
+              decision: t.decision,
+              whatsapp: {
+                attempted: true,
+                status: "failed",
+                reason: String(error?.message || "Failed to send WhatsApp message."),
+              },
+            });
+          }
+        }
+      }
+
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
-      sendJson(res, 200, { ok: true, data: publicStudentRecord(req, merged) });
+      sendJson(res, 200, {
+        ok: true,
+        data: publicStudentRecord(req, merged),
+        documentWhatsappNotifications,
+      });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }

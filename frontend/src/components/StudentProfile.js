@@ -481,6 +481,7 @@ const StudentProfile = ({
   onAddActivity,
   onOpenCreateTaskModal,
   tasks = [],
+  onAddTasks,
   onUpdateTasks,
   activities = [],
   invoices = [],
@@ -610,35 +611,93 @@ const StudentProfile = ({
         const stageReqs = countryChecklist.find((c) => c.stage === stageName);
         if (!stageReqs) return [];
         const missingDocs = stageReqs.items.filter((item) => {
-          const hasUploaded = studentDocs.some(
-            (d) => (d.type === item.docType || d.type.includes(item.docType) || item.docType.includes(d.type)) && d.status !== "Rejected"
-          );
+          const hasUploaded = studentDocs.some((d) => {
+            const dt = String(d?.type || "");
+            const req = String(item.docType || "");
+            const typeMatch = dt === req || dt.includes(req) || req.includes(dt);
+            return typeMatch && String(d?.status || "").trim() !== "Rejected";
+          });
           return !hasUploaded;
         });
         return missingDocs.map((m) => m.docType);
       };
       let allMissingItems = [];
       const st = normalizePipelineStatus(localStudent.status);
-      if (st === "Documentation") {
-        allMissingItems = checkStageRequirements("Documentation");
-      } else if (st === "Application") {
-        allMissingItems = checkStageRequirements("Uni Application");
-      } else if (st === "Interview training") {
-        allMissingItems = checkStageRequirements("Offer Received");
+      const requiredChecklistByStage = {
+        Application: "Documentation",
+        "Interview training": "Uni Application",
+        Documentation: "Offer Received"
+      };
+      const requiredChecklistStage = requiredChecklistByStage[st];
+      if (requiredChecklistStage) {
+        allMissingItems = checkStageRequirements(requiredChecklistStage);
       }
-      const updatedViolations = [...localStudent.slaViolations || []];
+      const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
+      const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
+      const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
+      const docTaskCounselorId = nextCounselorId || String(localStudent.counselor || "").trim() || currentCounselorId;
+      const relatedCounselorIds = Array.from(
+        new Set(
+          [
+            String(localStudent.counselor || "").trim(),
+            String(localStudent.inquiryCounselorId || "").trim(),
+            String(currentCounselorId || "").trim(),
+            String(nextCounselorId || "").trim(),
+            ...(Array.isArray(localStudent.counselorHistory) ? localStudent.counselorHistory : []).map((id) => String(id || "").trim())
+          ].filter((id) => id && id !== "Unassigned")
+        )
+      );
+      const buildDueDate = (daysFromNow = 3) => {
+        const due = new Date();
+        due.setDate(due.getDate() + daysFromNow);
+        return due.toISOString().split("T")[0];
+      };
+      let updatedViolations = [...localStudent.slaViolations || []];
       if (allMissingItems.length > 0) {
-        updatedViolations.push({
+        const existingTaskTypes = new Set(
+          (tasks || [])
+            .filter((t) => String(t.student_id || "").trim() === String(localStudent.id || "").trim() && t.status !== "Completed")
+            .map((t) => String(t.documentType || "").trim())
+            .filter(Boolean)
+        );
+        const now = Date.now();
+        const docTasks = allMissingItems
+          .filter((docType) => !existingTaskTypes.has(String(docType || "").trim()))
+          .map((docType, idx) => ({
+            id: `T-DOC-${localStudent.id}-${now}-${idx}`,
+            task: `Upload ${docType}`,
+            assigned_to: relatedCounselorIds.length > 0 ? relatedCounselorIds : docTaskCounselorId ? [docTaskCounselorId] : [],
+            counselor_ids: relatedCounselorIds,
+            student_id: localStudent.id,
+            priority: "High",
+            status: "Pending",
+            dueDate: buildDueDate(3),
+            tier: "Global",
+            phase: 1,
+            isBlocking: true,
+            isPrivate: true,
+            documentType: docType
+          }));
+        if (docTasks.length > 0) {
+          onAddTasks?.(docTasks);
+        }
+        updatedViolations = [...updatedViolations, {
           id: `SLA-${Date.now()}`,
           stage: localStudent.status,
           missingItems: allMissingItems,
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           resolved: false
+        }];
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "advanced stage with missing required documents",
+          target: `${requiredChecklistStage || st} requirements (${localStudent.name})`,
+          type: "system",
+          studentName: localStudent.name,
+          studentId: localStudent.id
         });
       }
-      const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
-      const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
-      const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
       const taskUpdates = remainingStudentTasks.map((task) => {
         const selectedAction = advanceDialog.taskActions?.[task.id] || "assign-me";
         const actionType = !shouldAssignAnother && selectedAction === "assign-next" ? "assign-me" : selectedAction;
@@ -674,14 +733,39 @@ const StudentProfile = ({
       onAddActivity?.({
         user: userRole,
         role: userRole,
-        action: allMissingItems.length > 0 ? "advanced pipeline with SLA violation" : "moved pipeline to",
+        action: "moved pipeline to",
         target: `${nextStep} (${localStudent.name})`,
-        type: allMissingItems.length > 0 ? "system" : "approval",
+        type: "approval",
         studentName: localStudent.name,
         studentId: localStudent.id
       });
       if (taskUpdates.length > 0) {
         onUpdateTasks?.(taskUpdates);
+      }
+      if (nextStep === "Interview training") {
+        const interviewTask = {
+          id: `T-INT-${localStudent.id}-${Date.now()}`,
+          task: "Create Interview for student",
+          assigned_to: [shouldAssignAnother ? advanceDialog.counselorId : currentCounselorId].filter(Boolean),
+          student_id: localStudent.id,
+          priority: "High",
+          status: "Pending",
+          dueDate: buildDueDate(2),
+          tier: "Global",
+          phase: 1,
+          isBlocking: false,
+          isPrivate: true
+        };
+        onAddTasks?.([interviewTask]);
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "created interview setup task",
+          target: `${localStudent.name} (Interview training)`,
+          type: "task",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
       }
       if (shouldAssignAnother && selectedCounselor) {
         onAddActivity?.({
@@ -723,11 +807,14 @@ const StudentProfile = ({
   const renderContent = () => {
     switch (activeTab) {
       case "pipeline":
-        return /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: (doc) => {
+        return /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: async (doc) => {
           const updatedDocs = localStudent.documents?.map((d) => d.id === doc.id ? doc : d) || [];
           const updatedStudent = { ...localStudent, documents: updatedDocs };
           setLocalStudent(updatedStudent);
-          onUpdateStudent?.(updatedStudent);
+          const persistResult = await onUpdateStudent?.(updatedStudent);
+          if (persistResult && persistResult.ok === false) {
+            return persistResult;
+          }
           if (doc.status === "Rejected") {
             onAddActivity?.({
               user: userRole,
@@ -749,11 +836,12 @@ const StudentProfile = ({
               studentId: localStudent.id
             });
           }
+          return persistResult;
         }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument });
       case "show-money":
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent });
       case "visa-pilot":
-        return /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal });
+        return /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument });
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice });
       case "resume":
@@ -881,25 +969,43 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-bold text-rose-900", children: "SLA Requirement Notice" }),
             /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-1", children: "This student was advanced through stages without completing all mandatory requirements. This will impact the counselor's SLA score until resolved." }),
-            /* @__PURE__ */ jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: localStudent.slaViolations.filter((v) => !v.resolved).map((v) => /* @__PURE__ */ jsxs("div", { className: "bg-white/60 border border-rose-100 px-2 py-1 rounded-lg text-[10px] font-bold text-rose-800", children: [
-              v.stage,
-              ": Missing ",
-              v.missingItems.join(", ")
-            ] }, v.id)) })
+            /* @__PURE__ */ jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: (() => {
+              const seen = new Map();
+              for (const v of localStudent.slaViolations) {
+                if (!v || v.resolved) continue;
+                const items = Array.isArray(v.missingItems) ? v.missingItems.filter(Boolean) : [];
+                const key = `${v.stage || ""}::${[...items].map((s) => String(s).trim().toLowerCase()).sort().join("|")}`;
+                const existing = seen.get(key);
+                if (existing) {
+                  existing.count += 1;
+                  continue;
+                }
+                seen.set(key, { key, id: v.id || key, stage: v.stage, missingItems: items, count: 1 });
+              }
+              return [...seen.values()].map((v) => /* @__PURE__ */ jsxs("div", { className: "bg-white/60 border border-rose-100 px-2 py-1 rounded-lg text-[10px] font-bold text-rose-800 inline-flex items-center gap-1", children: [
+                /* @__PURE__ */ jsxs("span", { children: [
+                  v.stage,
+                  ": Missing ",
+                  v.missingItems.join(", ")
+                ] }),
+                v.count > 1 && /* @__PURE__ */ jsxs("span", { className: "ml-1 px-1 rounded bg-rose-100 text-rose-700 text-[9px]", children: ["x", v.count] })
+              ] }, v.id));
+            })() })
           ] }),
           /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", className: "border-rose-200 text-rose-700 hover:bg-rose-100", children: "Resolve Now" })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm flex flex-col lg:flex-row items-stretch overflow-hidden", children: [
           /* @__PURE__ */ jsxs("div", { className: "w-full lg:w-3/4 p-4 overflow-x-auto hide-scrollbar border-b lg:border-b-0 lg:border-r border-gray-100", children: [
-            /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between mb-3 px-1", children: [
-              /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-widest", children: "Staging Progress" }),
-              /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-indigo-600 uppercase tracking-widest", children: [
+            /* @__PURE__ */ jsx("div", { className: "flex items-center mb-3 px-1", children: /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold uppercase tracking-widest", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "Staging Progress" }),
+              /* @__PURE__ */ jsx("span", { className: "mx-1 text-slate-300", children: "|" }),
+              /* @__PURE__ */ jsxs("span", { className: "text-indigo-600", children: [
                 currentStepIndex + 1,
                 " / ",
                 PIPELINE_STEPS.length,
                 " Steps"
               ] })
-            ] }),
+            ] }) }),
             /* @__PURE__ */ jsx("nav", { className: "flex items-center gap-2 min-w-max pb-1", children: PIPELINE_STEPS.map((step, idx) => {
               const isCompleted = idx < currentStepIndex;
               const isCurrent = idx === currentStepIndex;

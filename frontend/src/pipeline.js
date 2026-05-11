@@ -152,3 +152,69 @@ export function filterEscalationsForCounselor(escalations, currentUser, students
   );
   return escalations.filter((e) => ownedIds.has(String(e.studentId || "").trim()));
 }
+
+/**
+ * Builds a flat list of unresolved SLA requirement-violation rows from students.
+ * These are students who were advanced through a stage without completing all
+ * mandatory requirements (recorded in `student.slaViolations`).
+ *
+ * @returns {Array<{ studentId: string, studentName: string, branch: string, counselorId: string, stage: string, missingItems: string[], timestamp: string, violationId: string }>}
+ */
+export function computeRequirementViolations(students = []) {
+  const list = Array.isArray(students) ? students : [];
+  const out = [];
+  for (const student of list) {
+    const violations = Array.isArray(student?.slaViolations) ? student.slaViolations : [];
+    const seen = new Map();
+    for (const v of violations) {
+      if (!v || v.resolved) continue;
+      const missingItems = Array.isArray(v.missingItems) ? v.missingItems.filter(Boolean) : [];
+      const stage = v.stage || normalizePipelineStatus(student.status) || "";
+      const dedupeKey = `${stage}::${[...missingItems].map((s) => String(s).trim().toLowerCase()).sort().join("|")}`;
+      const existing = seen.get(dedupeKey);
+      if (existing) {
+        const existingTs = existing.timestamp ? new Date(existing.timestamp).getTime() : 0;
+        const currentTs = v.timestamp ? new Date(v.timestamp).getTime() : 0;
+        if (currentTs > existingTs) {
+          existing.timestamp = v.timestamp || existing.timestamp;
+          existing.violationId = v.id || existing.violationId;
+        }
+        existing.duplicateCount = (existing.duplicateCount || 1) + 1;
+        continue;
+      }
+      const row = {
+        studentId: student.id,
+        studentName: student.name || student.id,
+        branch: student.branch || "",
+        counselorId: student.counselor || "",
+        stage,
+        missingItems,
+        timestamp: v.timestamp || "",
+        violationId: v.id || `${student.id}-${stage || "stage"}`,
+        duplicateCount: 1
+      };
+      seen.set(dedupeKey, row);
+      out.push(row);
+    }
+  }
+  return out.sort((a, b) => {
+    const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    return tb - ta;
+  });
+}
+
+export function filterRequirementViolationsForManager(rows, managerBranch) {
+  const branch = String(managerBranch || "").trim();
+  if (!branch) return rows;
+  return rows.filter((r) => branchesMatch(r.branch, branch));
+}
+
+export function filterRequirementViolationsForCounselor(rows, currentUser, students) {
+  const ownedIds = new Set(
+    (students || [])
+      .filter((s) => counselorOwnsStudent(s, currentUser))
+      .map((s) => String(s.id || "").trim())
+  );
+  return rows.filter((r) => ownedIds.has(String(r.studentId || "").trim()));
+}

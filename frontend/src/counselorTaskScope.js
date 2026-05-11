@@ -41,9 +41,11 @@ export function filterTasksForCounselor(tasks, currentUser, monitoredStudents) {
   const studentIds = buildMonitoredStudentIdSet(monitoredStudents);
   return (tasks || []).filter((task) => {
     const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+    const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
     const isAssigned = assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
+    const isRelatedCounselorTask = relatedCounselorIds.some((counselorId) => identitySet.has(normalize(counselorId)));
     const isMonitoredStudentTask = studentIds.has(String(task.student_id || "").trim());
-    return isAssigned || isMonitoredStudentTask;
+    return isAssigned || isRelatedCounselorTask || isMonitoredStudentTask;
   });
 }
 

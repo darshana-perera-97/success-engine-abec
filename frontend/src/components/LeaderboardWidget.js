@@ -2,12 +2,28 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { Trophy, Medal, TrendingUp, Star, Crown } from "lucide-react";
 import { normalizePipelineStatus } from "../pipeline";
 const LeaderboardWidget = ({ students = [], employees = [], currentUserId = "", currentUserEmail = "" }) => {
+  const normalize = (value) => String(value || "").trim().toLowerCase();
   const counselors = employees.filter((employee) => {
-    const role = String(employee.role || "").toLowerCase();
-    return role === "counselor" || role === "consultor";
+    const role = normalize(employee.role);
+    return role === "counselor" || role === "consultor" || role === "counsellor";
   });
   const leaderboard = counselors.map((counselor) => {
-    const myStudents = students.filter((student) => student.counselor === counselor.id);
+    const counselorId = normalize(counselor.id);
+    const counselorEmail = normalize(counselor.email);
+    const counselorName = normalize(counselor.name || counselor.username);
+    const myStudents = students.filter((student) => {
+      const studentCounselorId = normalize(student.counselor || student.inquiryCounselorId);
+      const studentCounselorName = normalize(student.counselorName);
+      if (studentCounselorId && studentCounselorId === counselorId) return true;
+      if (studentCounselorName && counselorName && studentCounselorName === counselorName) return true;
+      if (Array.isArray(student.counselorHistory) && counselorId) {
+        return student.counselorHistory.some((id) => normalize(id) === counselorId);
+      }
+      if (studentCounselorName && counselorEmail) {
+        return studentCounselorName === counselorEmail;
+      }
+      return false;
+    });
     let score = 0;
     let visas = 0;
     myStudents.forEach((s) => {

@@ -15,6 +15,14 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const [busyReasonOther, setBusyReasonOther] = useState("");
   const [busyError, setBusyError] = useState("");
   const [isSavingBusy, setIsSavingBusy] = useState(false);
+  const [meetingStudentId, setMeetingStudentId] = useState("");
+  const [meetingDate, setMeetingDate] = useState("");
+  const [meetingTime, setMeetingTime] = useState("");
+  const [meetingType, setMeetingType] = useState("Counseling");
+  const [meetingLink, setMeetingLink] = useState("");
+  const [meetingCreateError, setMeetingCreateError] = useState("");
+  const [isSavingMeeting, setIsSavingMeeting] = useState(false);
+  const [meetingCreateModalOpen, setMeetingCreateModalOpen] = useState(false);
   const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
   const [selectedAptId, setSelectedAptId] = useState(null);
   const [outcomeStatus, setOutcomeStatus] = useState("Completed");
@@ -178,6 +186,87 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     }
     setBusyReason("Leave");
     setBusyReasonOther("");
+  };
+  const counselorStudents = studentPool.filter((student) => {
+    if (currentRole !== "Counselor") return false;
+    return String(student?.counselor || "") === String(currentUser?.id || "");
+  });
+  const handleCreateMeetingForStudent = async () => {
+    if (currentRole !== "Counselor") return;
+    setMeetingCreateError("");
+    const counselorId = String(currentUser?.id || "").trim();
+    const studentId = String(meetingStudentId || "").trim();
+    const date = String(meetingDate || "").trim();
+    const time = String(meetingTime || "").trim();
+    const link = String(meetingLink || "").trim();
+    if (!counselorId) {
+      setMeetingCreateError("Counselor account not found.");
+      return;
+    }
+    if (!studentId || !date || !time || !link) {
+      setMeetingCreateError("Select student, date, time, and meeting link.");
+      return;
+    }
+    if (!/^https?:\/\//i.test(link)) {
+      setMeetingCreateError("Meeting link must start with http:// or https://");
+      return;
+    }
+    const minTime = Date.now() + 5 * 60 * 1e3;
+    if (toSriLankaTimestamp(date, time) < minTime) {
+      setMeetingCreateError("Meeting time must be in the future.");
+      return;
+    }
+    const slotMinutes = toMinutes(time);
+    const slotDuration = Number(meetingSettings?.meetingDurationMinutes || 30);
+    const slotEnd = slotMinutes + slotDuration;
+    const sameCounselorDayAppointments = appointments.filter((item) => {
+      return String(item.counselorId || "") === counselorId && String(item.date || "") === date && String(item.status || "") !== "Cancelled";
+    });
+    const hasAppointmentConflict = sameCounselorDayAppointments.some((item) => {
+      const aptStart = toMinutes(item.time);
+      const aptEnd = aptStart + Number(item.duration || slotDuration);
+      return isRangeOverlap(slotMinutes, slotEnd, aptStart, aptEnd);
+    });
+    if (hasAppointmentConflict) {
+      setMeetingCreateError("You already have another meeting at this time.");
+      return;
+    }
+    const sameCounselorDayBusyBlocks = bookingBlocks.filter((block) => {
+      return String(block.counselorId || "") === counselorId && String(block.date || "") === date;
+    });
+    const blocked = sameCounselorDayBusyBlocks.some((block) => {
+      return isRangeOverlap(slotMinutes, slotEnd, toMinutes(block.startTime), toMinutes(block.endTime));
+    });
+    if (blocked) {
+      setMeetingCreateError("This time is blocked in busy schedule.");
+      return;
+    }
+    setIsSavingMeeting(true);
+    const payload = {
+      id: `APT-${Date.now()}`,
+      counselorId,
+      studentId,
+      title: `${meetingType} Session`,
+      date,
+      time,
+      duration: slotDuration,
+      type: meetingType,
+      status: "Scheduled",
+      meetingLink: link
+    };
+    const result = await onBookAppointment?.(payload);
+    setIsSavingMeeting(false);
+    if (!result?.ok) {
+      setMeetingCreateError(result?.error || "Failed to create meeting.");
+      return;
+    }
+    setMeetingStudentId("");
+    setMeetingDate("");
+    setMeetingTime("");
+    setMeetingType("Counseling");
+    setMeetingLink("");
+    setSelectedDate(new Date(`${date}T00:00:00`));
+    setMeetingCreateModalOpen(false);
   };
   const dayBusyBlocks = selectedDate ? bookingBlocks.filter((block) => {
     const targetCounselor = currentRole === "Counselor" ? currentUser.id : selectedCounselorId;
@@ -402,6 +491,14 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             }, children: "Remove" })
           ] }, block.id)) })
         ] }),
+        currentRole === "Counselor" && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Add meeting for student" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Create a student meeting and send details via WhatsApp." }),
+          /* @__PURE__ */ jsx("div", { className: "mt-3 flex justify-end", children: /* @__PURE__ */ jsx(Button, { onClick: () => {
+            setMeetingCreateError("");
+            setMeetingCreateModalOpen(true);
+          }, children: "Add Meeting for Student" }) })
+        ] }),
         (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Country Coordinator") && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Counselor Blocked Times" }),
           roleVisibleBusyBlocks.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400", children: "No blocked times found." }) : /* @__PURE__ */ jsx("div", { className: "space-y-2 max-h-64 overflow-y-auto", children: roleVisibleBusyBlocks.map((block) => {
@@ -556,6 +653,32 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4", children: [
         /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setMeetingLinkModalOpen(false), children: "Cancel" }),
         /* @__PURE__ */ jsx(Button, { onClick: handleSaveMeetingLink, isLoading: isSavingMeetingLink, children: "Save Link" })
+      ] })
+    ] }) }),
+    meetingCreateModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Add meeting for student" }),
+      meetingCreateError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: meetingCreateError }),
+      /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3", children: [
+        /* @__PURE__ */ jsxs("select", { value: meetingStudentId, onChange: (e) => setMeetingStudentId(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white", children: [
+          /* @__PURE__ */ jsx("option", { value: "", children: "Select student" }),
+          ...counselorStudents.map((student) => /* @__PURE__ */ jsx("option", { value: student.id, children: student.name || student.id }, student.id))
+        ] }),
+        /* @__PURE__ */ jsxs("select", { value: meetingType, onChange: (e) => setMeetingType(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white", children: [
+          /* @__PURE__ */ jsx("option", { value: "Counseling", children: "Counseling" }),
+          /* @__PURE__ */ jsx("option", { value: "Visa Check", children: "Visa Check" }),
+          /* @__PURE__ */ jsx("option", { value: "Mock Interview", children: "Mock Interview" })
+        ] }),
+        /* @__PURE__ */ jsx("input", { type: "date", value: meetingDate, onChange: (e) => setMeetingDate(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md" }),
+        /* @__PURE__ */ jsx("input", { type: "time", step: 1800, value: meetingTime, onChange: (e) => setMeetingTime(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md" }),
+        /* @__PURE__ */ jsx("input", { type: "url", value: meetingLink, onChange: (e) => setMeetingLink(e.target.value), placeholder: "https://meet.google.com/...", className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md sm:col-span-2" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "mt-3 text-xs text-slate-500", children: "This creates a scheduled meeting on the calendar and sends details to the student via WhatsApp." }),
+      /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => {
+          if (isSavingMeeting) return;
+          setMeetingCreateModalOpen(false);
+        }, children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { onClick: handleCreateMeetingForStudent, isLoading: isSavingMeeting, children: "Create Meeting" })
       ] })
     ] }) })
   ] });

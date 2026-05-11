@@ -15,13 +15,32 @@ const TaskManager = ({
   onUpdateTasks,
   onAddTask,
   monitoredStudents = [],
-  employees = []
+  employees = [],
+  onSelectStudent,
+  onNavigate
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const studentLookup = (monitoredStudents || []).reduce((acc, studentItem) => {
     acc[String(studentItem?.id || "").trim()] = studentItem;
     return acc;
   }, {});
+  const employeeLookup = (employees || []).reduce((acc, employee) => {
+    acc[String(employee?.id || "").trim()] = employee;
+    return acc;
+  }, {});
+  const getAssigneeLabel = (assigneeId) => {
+    const key = String(assigneeId || "").trim();
+    if (!key) return "Unknown";
+    const employee = employeeLookup[key];
+    if (employee) {
+      return String(employee.name || employee.username || employee.email || key).trim() || key;
+    }
+    const studentItem = studentLookup[key];
+    if (studentItem) {
+      return String(studentItem.name || studentItem.email || key).trim() || key;
+    }
+    return key;
+  };
   const filteredTasks = (() => {
     if (userRole === "Admin") return tasks;
     if (userRole === "Manager") {
@@ -40,6 +59,7 @@ const TaskManager = ({
     return [];
   })();
   const handleStatusChange = (task, newStatus) => {
+    if (String(task?.status || "") === "Completed") return;
     const updatedTask = { ...task, status: newStatus };
     if (onUpdateTasks) {
       onUpdateTasks([updatedTask]);
@@ -91,6 +111,13 @@ const TaskManager = ({
     setIsCreateModalOpen(false);
     return { ok: true };
   };
+  const handleOpenTaskContext = (task, studentContext) => {
+    const sid = String(task?.student_id || task?.studentId || "").trim();
+    const targetStudent = studentContext || (sid ? studentLookup[sid] : null);
+    if (!targetStudent || !onSelectStudent || !onNavigate) return;
+    onSelectStudent(targetStudent);
+    onNavigate("student-detail");
+  };
   const getPriorityColor = (priority) => {
     switch (priority) {
       case "High":
@@ -101,7 +128,13 @@ const TaskManager = ({
         return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
-  const studentTasks = userRole === "Student" ? filteredTasks.sort((a, b) => (a.phase || 9) - (b.phase || 9)) : filteredTasks;
+  const studentTasks = [...filteredTasks].sort((a, b) => {
+    const aDone = String(a?.status || "") === "Completed";
+    const bDone = String(b?.status || "") === "Completed";
+    if (aDone !== bDone) return aDone ? 1 : -1;
+    if (userRole === "Student") return (a.phase || 9) - (b.phase || 9);
+    return 0;
+  });
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -141,11 +174,32 @@ const TaskManager = ({
               isTaskCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500 shrink-0" }) : isLocked ? /* @__PURE__ */ jsx(Lock, { size: 16, className: "text-slate-400 shrink-0" }) : /* @__PURE__ */ jsx("div", { className: "w-4 h-4 rounded border-2 border-slate-300 shrink-0" }),
               /* @__PURE__ */ jsxs("div", { children: [
                 /* @__PURE__ */ jsx("p", { className: `font-medium ${isTaskCompleted ? "text-slate-500 line-through" : "text-slate-900"}`, children: task.task }),
-                task.isBlocking && !isTaskCompleted && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-rose-600 font-bold uppercase tracking-wide", children: "Required" })
+                task.isBlocking && !isTaskCompleted && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-rose-600 font-bold uppercase tracking-wide", children: "Required" }),
+                userRole !== "Student" && studentContext && onSelectStudent && onNavigate && /* @__PURE__ */ jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      handleOpenTaskContext(task, studentContext);
+                    },
+                    className: "mt-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 underline underline-offset-2",
+                    children: "Go to related student"
+                  }
+                )
               ] })
             ] }) }),
             userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: "font-medium", children: studentContext?.name || task.student_id || "—" }) }),
-            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("div", { className: "flex -space-x-2", children: task.assigned_to.map((assignee, i) => /* @__PURE__ */ jsx("div", { className: "h-8 w-8 rounded-full bg-indigo-100 border-2 border-white flex items-center justify-center text-xs font-bold text-indigo-700 shadow-sm", title: assignee, children: assignee.substring(0, 2) }, i)) }) }),
+            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: (() => {
+              const assignees = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+              if (assignees.length === 0) {
+                return /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "—" });
+              }
+              return /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-1.5 max-w-[240px]", children: assignees.map((assignee, i) => {
+                const label = getAssigneeLabel(assignee);
+                return /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-100 text-xs font-medium text-indigo-700", title: `${label} (${assignee})`, children: label }, `${task.id}-assignee-${i}`);
+              }) });
+            })() }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getPriorityColor(task.priority)}`, children: task.priority }) }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: userRole === "Student" ? isTaskCompleted ? /* @__PURE__ */ jsxs("span", { className: "flex items-center text-xs font-bold text-emerald-600", children: [
               /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "mr-1" }),
@@ -174,11 +228,14 @@ const TaskManager = ({
                 /* @__PURE__ */ jsx(AlertCircle, { size: 14, className: "mr-1" }),
                 "OVERDUE"
               ] }),
-              /* @__PURE__ */ jsxs(
+              task.status === "Completed" ? /* @__PURE__ */ jsxs("span", { className: "flex items-center text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1", children: [
+                /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "mr-1" }),
+                "Completed"
+              ] }) : /* @__PURE__ */ jsxs(
                 "select",
                 {
                   className: `text-xs border rounded px-2 py-1 font-medium outline-none focus:ring-1 focus:ring-indigo-500
-                                                            ${task.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : task.status === "In Review" ? "bg-purple-50 text-purple-700 border-purple-200" : task.status === "In Progress" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-white text-slate-600 border-gray-200"}`,
+                                                            ${task.status === "In Review" ? "bg-purple-50 text-purple-700 border-purple-200" : task.status === "In Progress" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-white text-slate-600 border-gray-200"}`,
                   value: task.status,
                   onChange: (e) => handleStatusChange(task, e.target.value),
                   children: [
