@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -8,6 +8,7 @@ import {
   Loader2,
   ArrowRight,
   Eye,
+  ExternalLink,
   RefreshCw,
   User,
   GraduationCap,
@@ -32,15 +33,138 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Button } from "./Button";
-const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudentCv, embedMode = false }) => {
+function parseNotesForProgramEducation(notes) {
+  const n = String(notes || "");
+  const programM = n.match(/Program:\s*([^.]+?)(?:\.|\s+Education:|$)/i);
+  const eduM = n.match(/Education:\s*([^.]+?)(?:\.|$)/i);
+  if (!programM && !eduM) return null;
+  return [
+    {
+      degree: (programM?.[1] || "").trim() || "Program of interest",
+      school: (eduM?.[1] || "").trim()
+    }
+  ];
+}
+function buildResumeDataFromStudent(student) {
+  const emptyRowExp = { title: "", company: "", period: "" };
+  const emptyRowEdu = { degree: "", school: "" };
+  const emptyScores = [{ name: "IELTS", score: "" }];
+  const base = {
+    name: "",
+    role: "",
+    email: "",
+    phone: "",
+    experience: [emptyRowExp],
+    education: [emptyRowEdu],
+    testScores: emptyScores,
+    profilePicture: null,
+    customSections: []
+  };
+  if (!student || typeof student !== "object") {
+    return base;
+  }
+  const gv = student.generatedCV && typeof student.generatedCV === "object" ? student.generatedCV : null;
+  let data = { ...base };
+  if (gv) {
+    data = {
+      ...base,
+      name: String(gv.name || "").trim(),
+      role: String(gv.role || "").trim(),
+      email: String(gv.email || "").trim(),
+      phone: String(gv.phone || "").trim(),
+      experience: Array.isArray(gv.experience) && gv.experience.length ? gv.experience.map((e) => ({
+        title: String(e?.title || ""),
+        company: String(e?.company || ""),
+        period: String(e?.period || "")
+      })) : [emptyRowExp],
+      education: Array.isArray(gv.education) && gv.education.length ? gv.education.map((e) => ({
+        degree: String(e?.degree || ""),
+        school: String(e?.school || "")
+      })) : [emptyRowEdu],
+      testScores: Array.isArray(gv.testScores) && gv.testScores.length ? gv.testScores.map((t) => ({
+        name: String(t?.name || ""),
+        score: String(t?.score || "")
+      })) : [...emptyScores],
+      customSections: Array.isArray(gv.customSections) ? gv.customSections : [],
+      profilePicture: gv.profilePicture || null
+    };
+  }
+  if (String(student.name || "").trim()) {
+    data.name = String(student.name).trim();
+  }
+  if (String(student.email || "").trim()) {
+    data.email = String(student.email).trim();
+  }
+  if (String(student.phone || "").trim()) {
+    data.phone = String(student.phone).trim();
+  }
+  const status = String(student.status || "").trim();
+  const country = String(student.country || "").trim();
+  if (!String(data.role || "").trim()) {
+    data.role = [status, country].filter(Boolean).join(" · ");
+  }
+  const ieltsVal = String(student.ielts || "").trim();
+  if (ieltsVal) {
+    const lower = data.testScores.map((t) => String(t.name || "").toLowerCase());
+    const idx = lower.findIndex((n) => n.includes("ielts"));
+    if (idx >= 0) {
+      data.testScores = data.testScores.map((t, i) => i === idx ? { ...t, score: ieltsVal } : t);
+    } else {
+      data.testScores = [...data.testScores, { name: "IELTS", score: ieltsVal }];
+    }
+  }
+  const avatar = student.avatar;
+  if (avatar && !data.profilePicture) {
+    data.profilePicture = avatar;
+  }
+  const parsedEdu = parseNotesForProgramEducation(student.notes);
+  const eduIsBlank = data.education.every((e) => !String(e.degree || "").trim() && !String(e.school || "").trim());
+  if (parsedEdu && eduIsBlank) {
+    data.education = parsedEdu;
+  }
+  return data;
+}
+async function captureElementToPdfBlob(htmlElement) {
+  if (!htmlElement) {
+    throw new Error("Nothing to export.");
+  }
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf")
+  ]);
+  const canvas = await html2canvas(htmlElement, {
+    scale: 2,
+    backgroundColor: "#ffffff",
+    useCORS: true,
+    logging: false
+  });
+  const imgData = canvas.toDataURL("image/png");
+  const pdf = new jsPDF("p", "mm", "a4");
+  const pdfWidth = pdf.internal.pageSize.getWidth();
+  const pdfHeight = pdf.internal.pageSize.getHeight();
+  const imgHeight = canvas.height * pdfWidth / canvas.width;
+  let heightLeft = imgHeight;
+  let position = 0;
+  pdf.addImage(imgData, "PNG", 0, position, pdfWidth, imgHeight);
+  heightLeft -= pdfHeight;
+  while (heightLeft > 0) {
+    position = heightLeft - imgHeight;
+    pdf.addPage();
+    pdf.addImage(imgData, "PNG", 0, position, pdfWidth, imgHeight);
+    heightLeft -= pdfHeight;
+  }
+  return pdf.output("blob");
+}
+const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudentCv, onUploadStudentDocument, embedMode = false }) => {
   const [step, setStep] = useState("initial");
   const [activeFlow, setActiveFlow] = useState(null);
   const [progress, setProgress] = useState(0);
-  const [showPdf, setShowPdf] = useState(false);
+  const [isOpeningPdfTab, setIsOpeningPdfTab] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadError, setUploadError] = useState("");
-  const [quickUploadError, setQuickUploadError] = useState("");
-  const [isQuickUploading, setIsQuickUploading] = useState(false);
+  const [finalUploadError, setFinalUploadError] = useState("");
+  const [isFinalUploading, setIsFinalUploading] = useState(false);
+  const cvPdfCaptureRef = useRef(null);
   const initialExtractedData = useMemo(() => ({
     name: "Nirash Dilshan Jayantha",
     role: "CO-Founder | ABEC Premier",
@@ -65,9 +189,11 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     setStep("initial");
     setActiveFlow(null);
     setProgress(0);
-    setShowPdf(false);
     setUploadedFile(null);
     setEditableData(initialExtractedData);
+    setFinalUploadError("");
+    setIsFinalUploading(false);
+    setIsOpeningPdfTab(false);
   }, [initialExtractedData]);
   const handleDataChange = (field, value) => {
     setEditableData((prev) => ({ ...prev, [field]: value }));
@@ -166,16 +292,16 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     const IconComponent = icons[iconName] || Award;
     return /* @__PURE__ */ jsx(IconComponent, { size, className });
   };
-  const startAssistFlow = () => {
+  const startAssistFlow = useCallback(() => {
+    if (currentStudent) {
+      setEditableData(buildResumeDataFromStudent(currentStudent));
+    } else {
+      setEditableData(initialExtractedData);
+    }
     setActiveFlow("assist");
     setStep("processing");
     setProgress(0);
-  };
-  const startUpdateFlow = () => {
-    setActiveFlow("update");
-    setStep("upload-cv");
-    setProgress(0);
-  };
+  }, [currentStudent, initialExtractedData]);
   const uploadCvToSystem = async (file, { advanceToUploading = false } = {}) => {
     if (!onUploadStudentCv || !currentStudent?.id) {
       return { ok: false, error: "Student CV upload is not available." };
@@ -260,15 +386,98 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     setStep("refining");
     setProgress(0);
   };
-  const handleFinalUpload = () => {
+  const handleFinalUpload = useCallback(async () => {
+    setFinalUploadError("");
+    const cvData = {
+      ...editableData,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    let mergeBase = null;
+    const wantsCvFile = Boolean(onUploadStudentCv && currentStudent?.id);
+    const wantsProfessionalCvDoc = Boolean(onUploadStudentDocument && currentStudent?.id);
+    if (wantsCvFile || wantsProfessionalCvDoc) {
+      setIsFinalUploading(true);
+      try {
+        const el = cvPdfCaptureRef.current;
+        if (!el) {
+          setFinalUploadError("CV layout is not available to upload.");
+          setIsFinalUploading(false);
+          return;
+        }
+        const blob = await captureElementToPdfBlob(el);
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Failed to read PDF."));
+          reader.readAsDataURL(blob);
+        });
+        const raw = String(editableData.name || "CV").replace(/[^\w\s.-]/g, "").trim().replace(/\s+/g, "-");
+        const fileName = `${raw.slice(0, 80) || "Generated-CV"}-AI-CV.pdf`;
+        if (wantsCvFile) {
+          const result = await onUploadStudentCv({
+            studentId: currentStudent.id,
+            fileName,
+            dataUrl
+          });
+          if (!result?.ok) {
+            setFinalUploadError(result?.error || "Failed to upload CV to the student profile.");
+            setIsFinalUploading(false);
+            return;
+          }
+          mergeBase = result.data || null;
+        }
+        if (wantsProfessionalCvDoc) {
+          const docResult = await onUploadStudentDocument({
+            studentId: currentStudent.id,
+            fileName,
+            dataUrl,
+            docType: "Professional CV",
+            phase: 1,
+            tier: "Global"
+          });
+          if (!docResult?.ok) {
+            setFinalUploadError(docResult?.error || "Failed to add the CV under Professional CV in documents.");
+            setIsFinalUploading(false);
+            return;
+          }
+          mergeBase = docResult.data || mergeBase;
+        }
+      } catch (err) {
+        setFinalUploadError(err?.message || "Could not generate or upload the CV file.");
+        setIsFinalUploading(false);
+        return;
+      }
+      setIsFinalUploading(false);
+    }
     if (onSaveCV) {
-      onSaveCV({
-        ...editableData,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      });
+      await Promise.resolve(onSaveCV(cvData, mergeBase));
     }
     setStep("success");
-  };
+  }, [editableData, onSaveCV, onUploadStudentCv, onUploadStudentDocument, currentStudent]);
+  const handleOpenCvInNewTab = useCallback(async () => {
+    setFinalUploadError("");
+    const el = cvPdfCaptureRef.current;
+    if (!el) {
+      setFinalUploadError("CV preview is not ready yet.");
+      return;
+    }
+    setIsOpeningPdfTab(true);
+    try {
+      const blob = await captureElementToPdfBlob(el);
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank", "noopener,noreferrer");
+      if (!win) {
+        URL.revokeObjectURL(url);
+        setFinalUploadError("Pop-up was blocked. Allow pop-ups for this site to open the CV.");
+        return;
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+    } catch (err) {
+      setFinalUploadError(err?.message || "Could not open CV in a new tab.");
+    } finally {
+      setIsOpeningPdfTab(false);
+    }
+  }, []);
   return /* @__PURE__ */ jsxs("div", { className: "max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -309,32 +518,8 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
           initial: { opacity: 0, y: 20 },
           animate: { opacity: 1, y: 0 },
           exit: { opacity: 0, y: -20 },
-          className: "grid grid-cols-1 md:grid-cols-2 gap-8",
+          className: "flex flex-col gap-8",
           children: [
-            currentStudent ? /* @__PURE__ */ jsxs("div", { className: "md:col-span-2 bg-white border border-gray-200 rounded-2xl p-6 shadow-sm", children: [
-              /* @__PURE__ */ jsx("h3", { className: "text-base font-bold text-slate-900", children: "Quick CV Upload" }),
-              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: "Upload your CV directly here and it will appear in your profile card view." }),
-              /* @__PURE__ */ jsxs("div", { className: "mt-4 flex flex-col sm:flex-row sm:items-center gap-3", children: [
-                /* @__PURE__ */ jsxs("label", { className: "inline-flex items-center justify-center px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer", children: [
-                  isQuickUploading ? /* @__PURE__ */ jsx(Loader2, { size: 14, className: "mr-2 animate-spin" }) : /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
-                  isQuickUploading ? "Uploading..." : "Choose CV File",
-                  /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.doc,.docx", className: "hidden", disabled: isQuickUploading, onChange: async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    setQuickUploadError("");
-                    setIsQuickUploading(true);
-                    const result = await uploadCvToSystem(file);
-                    setIsQuickUploading(false);
-                    if (!result?.ok) {
-                      setQuickUploadError(result?.error || "Failed to upload CV.");
-                    }
-                    event.target.value = "";
-                  } })
-                ] }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400", children: "PDF, DOCX or DOC (Max. 10MB)" })
-              ] }),
-              quickUploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-3", children: quickUploadError }) : null
-            ] }) : null,
             /* @__PURE__ */ jsxs("div", { className: "group relative bg-white border border-gray-200 rounded-3xl p-8 shadow-sm hover:shadow-xl hover:border-indigo-300 transition-all duration-500 overflow-hidden", children: [
               /* @__PURE__ */ jsx("div", { className: "absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-16 -mt-16 group-hover:bg-indigo-100 transition-colors duration-500" }),
               /* @__PURE__ */ jsxs("div", { className: "relative z-10", children: [
@@ -362,40 +547,6 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                     className: "w-full h-14 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-100 group-hover:gap-4 transition-all",
                     children: [
                       "Generate CV ",
-                      /* @__PURE__ */ jsx(ArrowRight, { size: 20 })
-                    ]
-                  }
-                )
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { className: "group relative bg-white border border-gray-200 rounded-3xl p-8 shadow-sm hover:shadow-xl hover:border-emerald-300 transition-all duration-500 overflow-hidden", children: [
-              /* @__PURE__ */ jsx("div", { className: "absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full -mr-16 -mt-16 group-hover:bg-emerald-100 transition-colors duration-500" }),
-              /* @__PURE__ */ jsxs("div", { className: "relative z-10", children: [
-                /* @__PURE__ */ jsx("div", { className: "w-14 h-14 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-emerald-200 group-hover:scale-110 transition-transform duration-500", children: /* @__PURE__ */ jsx(Upload, { size: 28 }) }),
-                /* @__PURE__ */ jsx("h2", { className: "text-2xl font-bold text-slate-900 mb-3", children: "Update Old CV" }),
-                /* @__PURE__ */ jsx("p", { className: "text-slate-500 mb-8 leading-relaxed", children: "Upload your outdated resume and let ABEC Premier AI transform it into a modern, high-conversion document." }),
-                /* @__PURE__ */ jsxs("ul", { className: "space-y-3 mb-8", children: [
-                  /* @__PURE__ */ jsxs("li", { className: "flex items-center gap-2 text-sm text-slate-600", children: [
-                    /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500" }),
-                    " Smooth Data Extraction"
-                  ] }),
-                  /* @__PURE__ */ jsxs("li", { className: "flex items-center gap-2 text-sm text-slate-600", children: [
-                    /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500" }),
-                    " Add Latest Education & IELTS"
-                  ] }),
-                  /* @__PURE__ */ jsxs("li", { className: "flex items-center gap-2 text-sm text-slate-600", children: [
-                    /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500" }),
-                    " Real-time Preview"
-                  ] })
-                ] }),
-                /* @__PURE__ */ jsxs(
-                  Button,
-                  {
-                    onClick: startUpdateFlow,
-                    variant: "secondary",
-                    className: "w-full h-14 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-lg font-bold shadow-lg shadow-emerald-100 group-hover:gap-4 transition-all",
-                    children: [
-                      "Upload Old CV ",
                       /* @__PURE__ */ jsx(ArrowRight, { size: 20 })
                     ]
                   }
@@ -524,9 +675,9 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
         {
           initial: { opacity: 0, x: 20 },
           animate: { opacity: 1, x: 0 },
-          className: "grid grid-cols-1 lg:grid-cols-3 gap-8",
+          className: "space-y-6",
           children: [
-            /* @__PURE__ */ jsxs("div", { className: "lg:col-span-2 space-y-6", children: [
+            /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
               /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-6 shadow-sm", children: [
                 /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 mb-6 flex items-center gap-2", children: [
                   /* @__PURE__ */ jsx(User, { size: 18, className: "text-indigo-600" }),
@@ -825,42 +976,15 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                   ] }, section.id)),
                   editableData.customSections.length === 0 && /* @__PURE__ */ jsx("div", { className: "text-center py-8 border-2 border-dashed border-slate-100 rounded-xl", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400", children: "No custom sections added yet." }) })
                 ] })
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
-              /* @__PURE__ */ jsxs("div", { className: "bg-indigo-900 rounded-2xl p-6 text-white shadow-xl", children: [
-                /* @__PURE__ */ jsxs("h3", { className: "font-bold mb-4 flex items-center gap-2", children: [
-                  /* @__PURE__ */ jsx(Wand2, { size: 18 }),
-                  " AI Optimization"
-                ] }),
-                /* @__PURE__ */ jsx("p", { className: "text-sm text-indigo-200 leading-relaxed mb-6", children: "We've identified 4 key areas to improve your CV impact for international universities." }),
-                /* @__PURE__ */ jsx(
-                  Button,
-                  {
-                    onClick: handleRefineSubmit,
-                    className: "w-full bg-white text-indigo-900 hover:bg-indigo-50 font-bold",
-                    children: "Generate AI Optimized CV"
-                  }
-                )
               ] }),
-              /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-6 shadow-sm", children: [
-                /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Source Document" }),
-                /* @__PURE__ */ jsxs("div", { className: "aspect-[3/4] bg-slate-100 rounded-xl flex items-center justify-center border border-gray-200 overflow-hidden relative group", children: [
-                  /* @__PURE__ */ jsx(
-                    "img",
-                    {
-                      src: "/CV.pdf",
-                      alt: "CV Preview",
-                      className: "w-full h-full object-cover opacity-50 group-hover:opacity-100 transition-opacity",
-                      onError: (e) => {
-                        e.target.src = "https://picsum.photos/seed/cv/400/600";
-                      }
-                    }
-                  ),
-                  /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity", children: /* @__PURE__ */ jsx(Eye, { className: "text-white", size: 32 }) })
-                ] }),
-                /* @__PURE__ */ jsx("p", { className: "text-[10px] text-center text-slate-400 mt-3 font-mono", children: "CV.pdf \u2022 1.2 MB" })
-              ] })
+              /* @__PURE__ */ jsx("div", { className: "flex justify-end", children: /* @__PURE__ */ jsx(
+                Button,
+                {
+                  onClick: handleRefineSubmit,
+                  className: "bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8",
+                  children: "Continue to preview"
+                }
+              ) })
             ] })
           ]
         },
@@ -929,57 +1053,45 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
           animate: { opacity: 1, scale: 1 },
           className: "space-y-8",
           children: [
-            /* @__PURE__ */ jsxs("div", { className: "bg-emerald-50 border border-emerald-200 rounded-2xl p-6 flex items-center justify-between shadow-sm", children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
-                /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center", children: /* @__PURE__ */ jsx(CheckCircle, { size: 24 }) }),
-                /* @__PURE__ */ jsxs("div", { children: [
+            /* @__PURE__ */ jsxs("div", { className: "bg-emerald-50 border border-emerald-200 rounded-2xl p-6 shadow-sm flex flex-col gap-5", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-4", children: [
+                /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center flex-shrink-0", children: /* @__PURE__ */ jsx(CheckCircle, { size: 24 }) }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
                   /* @__PURE__ */ jsx("h3", { className: "font-bold text-emerald-900", children: "Resume Ready!" }),
-                  /* @__PURE__ */ jsx("p", { className: "text-sm text-emerald-700", children: "Your AI-optimized CV is ready for download." })
+                  /* @__PURE__ */ jsx("p", { className: "text-sm text-emerald-700 mt-1", children: "Your AI-optimized CV is ready for download." })
                 ] })
               ] }),
-              /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:flex-wrap gap-3 w-full items-end sm:items-center sm:justify-end", children: [
                 /* @__PURE__ */ jsxs(
                   Button,
                   {
                     variant: "outline",
-                    onClick: () => setShowPdf(!showPdf),
-                    className: "bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50",
+                    disabled: isFinalUploading || isOpeningPdfTab,
+                    onClick: handleOpenCvInNewTab,
+                    className: "w-auto bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50",
                     children: [
-                      /* @__PURE__ */ jsx(Eye, { size: 16, className: "mr-2" }),
+                      isOpeningPdfTab ? /* @__PURE__ */ jsx(Loader2, { size: 16, className: "mr-2 animate-spin" }) : /* @__PURE__ */ jsx(ExternalLink, { size: 16, className: "mr-2" }),
                       " ",
-                      showPdf ? "Hide PDF" : "Preview PDF"
+                      isOpeningPdfTab ? "Opening…" : "Open in new tab"
                     ]
                   }
                 ),
                 /* @__PURE__ */ jsxs(
                   Button,
                   {
+                    disabled: isFinalUploading || isOpeningPdfTab,
                     onClick: handleFinalUpload,
-                    className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none px-6",
+                    className: "w-auto bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none px-6 disabled:opacity-60",
                     children: [
-                      /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-2" }),
-                      " Update & Upload CV to System"
+                      isFinalUploading ? /* @__PURE__ */ jsx(Loader2, { size: 16, className: "mr-2 animate-spin" }) : /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-2" }),
+                      isFinalUploading ? "Uploading…" : " Update & Upload CV to System"
                     ]
                   }
                 )
-              ] })
+              ] }),
+              finalUploadError ? /* @__PURE__ */ jsx("p", { className: "text-sm text-rose-600 text-right", children: finalUploadError }) : null
             ] }),
-            showPdf ? /* @__PURE__ */ jsx(
-              motion.div,
-              {
-                initial: { opacity: 0, y: 20 },
-                animate: { opacity: 1, y: 0 },
-                className: "bg-white border border-gray-200 rounded-3xl shadow-2xl overflow-hidden max-w-4xl mx-auto aspect-[1/1.414] w-full",
-                children: /* @__PURE__ */ jsx(
-                  "iframe",
-                  {
-                    src: "/CV.pdf",
-                    className: "w-full h-full border-none",
-                    title: "CV Preview"
-                  }
-                )
-              }
-            ) : /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-3xl shadow-2xl overflow-hidden max-w-4xl mx-auto", children: [
+            /* @__PURE__ */ jsxs("div", { ref: cvPdfCaptureRef, className: "bg-white border border-gray-200 rounded-3xl shadow-2xl overflow-hidden max-w-4xl mx-auto", children: [
               /* @__PURE__ */ jsxs("div", { className: "h-12 bg-slate-900 flex items-center justify-between px-6", children: [
                 /* @__PURE__ */ jsxs("div", { className: "flex gap-1.5", children: [
                   /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-rose-500" }),

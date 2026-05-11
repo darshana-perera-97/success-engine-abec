@@ -1383,19 +1383,15 @@ function App({ initialView = "dashboard" }) {
     });
     return { ok: true, data: updatedAccount };
   };
-  const handleSaveCV = (cvData) => {
-    if (currentRole === "Student") {
-      const studentUser = currentUser;
-      handleUpdateStudent({
-        ...studentUser,
-        generatedCV: cvData
-      });
-    } else if (selectedStudent) {
-      handleUpdateStudent({
-        ...selectedStudent,
-        generatedCV: cvData
-      });
+  const handleSaveCV = (cvData, mergeBase) => {
+    const base = mergeBase || (currentRole === "Student" ? currentUser : selectedStudent);
+    if (!base?.id) {
+      return Promise.resolve({ ok: false });
     }
+    return handleUpdateStudent({
+      ...base,
+      generatedCV: cvData
+    });
   };
   const handleUploadStudentCv = async ({ studentId, fileName, dataUrl }) => {
     if (!studentId) return { ok: false, error: "Student account not found." };
@@ -1460,7 +1456,8 @@ function App({ initialView = "dashboard" }) {
         onNavigate: handleNavigate,
         onSaveCV: handleSaveCV,
         currentStudent: currentRole === "Student" ? currentUser : selectedStudent || null,
-        onUploadStudentCv: handleUploadStudentCv
+        onUploadStudentCv: handleUploadStudentCv,
+        onUploadStudentDocument: handleUploadStudentDocument
       });
     }
     if (currentView === "university") {

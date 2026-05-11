@@ -51,7 +51,8 @@ const COUNTRY_CHECKLISTS = {
         { docType: "National ID & Birth Certificate", description: "National ID & Translated Birth Certificate." },
         { docType: "Academic", description: "A/L & O/L Transcripts." },
         { docType: "English", description: "IELTS (6.0 min band) or PTE." },
-        { docType: "WES Evaluation", description: "(If required for specific Master's)." }
+        { docType: "WES Evaluation", description: "(If required for specific Master's)." },
+        { docType: "Professional CV", description: "Chronological with no gaps." }
       ]
     },
     {
@@ -194,7 +195,8 @@ const COUNTRY_CHECKLISTS = {
         { docType: "Passport", description: "High-resolution color scan of bio-data page." },
         { docType: "National ID", description: "Front and back." },
         { docType: "Academic", description: "O/L and A/L Certificates." },
-        { docType: "English", description: "IELTS/PTE Result." }
+        { docType: "English", description: "IELTS/PTE Result." },
+        { docType: "Professional CV", description: "Chronological with no gaps." }
       ]
     },
     {

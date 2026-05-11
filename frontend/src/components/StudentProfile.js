@@ -560,9 +560,9 @@ const StudentProfile = ({
     setLocalStudent(updated);
     onUpdateStudent?.(updated);
   };
-  const handleResumeSaveCV = (cvData) => {
+  const handleResumeSaveCV = (cvData, mergeBase) => {
     handleUpdateStudentLocal({
-      ...localStudent,
+      ...(mergeBase || localStudent),
       generatedCV: cvData
     });
     onNotify?.("Resume saved", `${localStudent.name}'s AI resume was saved.`, "success");
@@ -882,7 +882,8 @@ const StudentProfile = ({
           embedMode: true,
           onSaveCV: handleResumeSaveCV,
           currentStudent: localStudent,
-          onUploadStudentCv: onUploadStudentCv ? handleProfileUploadCv : void 0
+          onUploadStudentCv: onUploadStudentCv ? handleProfileUploadCv : void 0,
+          onUploadStudentDocument
         }) });
       default:
         return null;
