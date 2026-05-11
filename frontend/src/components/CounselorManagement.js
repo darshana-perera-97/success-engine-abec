@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
-import { normalizePipelineStatus } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
 import {
   XAxis,
   YAxis,
@@ -36,6 +36,24 @@ import {
   Area
 } from "recharts";
 const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
+function buildCounselorFunnelSeries(students) {
+  const list = Array.isArray(students) ? students : [];
+  return PIPELINE_STEPS.map((stage, idx) => {
+    const count = list.filter((s) => {
+      const n = normalizePipelineStatus(s.status);
+      const i = PIPELINE_STEPS.indexOf(n);
+      const ord = i >= 0 ? i : 0;
+      return ord >= idx;
+    }).length;
+    const short =
+      stage === "Interview training"
+        ? "Interview tr."
+        : stage.length > 12
+          ? `${stage.slice(0, 11)}…`
+          : stage;
+    return { stage: short, fullStage: stage, count };
+  });
+}
 const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "", resetSignal = 0 }) => {
   const [selectedCounselorId, setSelectedCounselorId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -210,15 +228,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   if (selectedCounselorId) {
     const counselor = counselors.find((c) => c.id === selectedCounselorId);
     if (!counselor) return null;
-    const funnelData = [
-      { stage: "Inquiries", count: counselor.students.length },
-      { stage: "Counseling", count: counselor.students.filter((s) => normalizePipelineStatus(s.status) !== "Inquiry").length },
-      { stage: "Applied", count: counselor.students.filter((s) => {
-        const x = normalizePipelineStatus(s.status);
-        return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
-      }).length },
-      { stage: "Visas", count: counselor.students.filter((s) => s.status === "Visa" || s.status === "Visa Pilot").length }
-    ];
+    const funnelData = buildCounselorFunnelSeries(counselor.students);
     return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in slide-in-from-right-8 duration-500 pb-10", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
@@ -351,7 +361,18 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             /* @__PURE__ */ jsx(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#E2E8F0" }),
             /* @__PURE__ */ jsx(XAxis, { dataKey: "stage", axisLine: false, tickLine: false, tick: { fill: "#64748B", fontSize: 12 }, dy: 10 }),
             /* @__PURE__ */ jsx(YAxis, { axisLine: false, tickLine: false, tick: { fill: "#64748B", fontSize: 12 } }),
-            /* @__PURE__ */ jsx(Tooltip, { cursor: { fill: "#F1F5F9" }, contentStyle: { borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" } }),
+            /* @__PURE__ */ jsx(
+              Tooltip,
+              {
+                cursor: { fill: "#F1F5F9" },
+                contentStyle: { borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" },
+                formatter: (value) => [`${value} students`, "At or past this stage"],
+                labelFormatter: (label, items) => {
+                  const row = Array.isArray(items) ? items[0]?.payload : null;
+                  return row?.fullStage || label || "";
+                }
+              }
+            ),
             /* @__PURE__ */ jsx(Area, { type: "monotone", dataKey: "count", stroke: "#4F46E5", strokeWidth: 2, fillOpacity: 1, fill: "url(#colorCount)" })
           ] }) }) })
         ] }),

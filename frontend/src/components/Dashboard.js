@@ -16,32 +16,48 @@ import {
   Legend
 } from "recharts";
 import { formatRawLKR } from "../utils";
-import { normalizePipelineStatus } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
 import { Users, Globe, Briefcase, MapPin, Banknote } from "lucide-react";
 const PIE_COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#6366F1"];
 const Dashboard = ({ students = [], invoices = [] }) => {
   const totalStudents = students.length;
-  const counselingCount = students.filter((student) => {
-    const x = normalizePipelineStatus(student.status);
-    return x === "Inquiry" || x === "Application";
-  }).length;
+  const stageOrderIndex = (student) => {
+    const n = normalizePipelineStatus(student.status);
+    const i = PIPELINE_STEPS.indexOf(n);
+    return i >= 0 ? i : 0;
+  };
   const uniAppsCount = students.filter((student) => {
     const x = normalizePipelineStatus(student.status);
     return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
   }).length;
-  const visasGranted = students.filter((student) => normalizePipelineStatus(student.status) === "Visa").length;
+  const visasGranted = students.filter((student) => {
+    const x = normalizePipelineStatus(student.status);
+    return x === "Visa" || x === "Enrolled";
+  }).length;
   const activeApplications = students.filter((student) => normalizePipelineStatus(student.status) !== "Inquiry").length;
   const successRate = uniAppsCount ? Math.round(visasGranted / uniAppsCount * 100) : 0;
-  const estimatedRevenue = students.reduce((sum, student) => {
-    const value = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
-    return Number.isFinite(value) ? sum + value : sum;
-  }, 0);
-  const funnelData = [
-    { name: "Total Inquiries", value: totalStudents, fill: "#94A3B8" },
-    { name: "Counseling", value: counselingCount, fill: "#64748B" },
-    { name: "Uni Apps", value: uniAppsCount, fill: "#6366F1" },
-    { name: "Visas Granted", value: visasGranted, fill: "#10B981" }
-  ];
+  const invoicedTotal = useMemo(
+    () => (invoices || []).reduce((sum, inv) => {
+      const n = Number(inv.amount);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0),
+    [invoices]
+  );
+  const budgetPipelineTotal = useMemo(
+    () => students.reduce((sum, student) => {
+      const value = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0),
+    [students]
+  );
+  const estimatedRevenue = invoicedTotal > 0 ? invoicedTotal : budgetPipelineTotal;
+  const revenueKpiTrend = invoicedTotal > 0 ? `${(invoices || []).length} invoice${(invoices || []).length === 1 ? "" : "s"}` : "Student budgets";
+  const funnelBarFills = ["#94A3B8", "#64748B", "#6366F1", "#8B5CF6", "#0EA5E9", "#10B981"];
+  const funnelData = PIPELINE_STEPS.map((stage, idx) => {
+    const value = students.filter((s) => stageOrderIndex(s) >= idx).length;
+    const name = stage === "Interview training" ? "Interview training" : stage;
+    return { name, value, fill: funnelBarFills[idx % funnelBarFills.length] };
+  });
   const countryData = [
     { name: "UK", value: students.filter((student) => student.country === "UK").length },
     { name: "Canada", value: students.filter((student) => student.country === "Canada").length },
@@ -94,7 +110,7 @@ const Dashboard = ({ students = [], invoices = [] }) => {
       /* @__PURE__ */ jsx(KpiCard, { title: "Total Students", value: String(totalStudents), trend: "Live", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) }),
       /* @__PURE__ */ jsx(KpiCard, { title: "Active Applications", value: String(activeApplications), trend: "Live", icon: /* @__PURE__ */ jsx(Briefcase, { size: 20 }) }),
       /* @__PURE__ */ jsx(KpiCard, { title: "Visa Success Rate", value: `${successRate}%`, trend: "Live", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }), positive: true }),
-      /* @__PURE__ */ jsx(KpiCard, { title: "Est. Revenue", value: formatRawLKR(estimatedRevenue), trend: "Live", icon: /* @__PURE__ */ jsx(Banknote, { size: 20 }), positive: true })
+      /* @__PURE__ */ jsx(KpiCard, { title: "Est. Revenue", value: formatRawLKR(estimatedRevenue), trend: revenueKpiTrend, icon: /* @__PURE__ */ jsx(Banknote, { size: 20 }), positive: true })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6", children: [
       /* @__PURE__ */ jsxs("div", { className: "lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-[350px] flex flex-col", children: [
@@ -102,7 +118,7 @@ const Dashboard = ({ students = [], invoices = [] }) => {
         /* @__PURE__ */ jsx("div", { className: "flex-1 w-full", children: /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: "100%", children: /* @__PURE__ */ jsxs(BarChart, { data: funnelData, layout: "vertical", margin: { top: 5, right: 30, left: 40, bottom: 5 }, children: [
           /* @__PURE__ */ jsx(CartesianGrid, { strokeDasharray: "3 3", horizontal: false, stroke: "#E2E8F0" }),
           /* @__PURE__ */ jsx(XAxis, { type: "number", hide: true }),
-          /* @__PURE__ */ jsx(YAxis, { dataKey: "name", type: "category", width: 100, tick: { fontSize: 12, fill: "#64748B" }, axisLine: false, tickLine: false }),
+          /* @__PURE__ */ jsx(YAxis, { dataKey: "name", type: "category", width: 118, tick: { fontSize: 11, fill: "#64748B" }, axisLine: false, tickLine: false }),
           /* @__PURE__ */ jsx(
             Tooltip,
             {
