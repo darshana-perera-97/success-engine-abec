@@ -5,7 +5,7 @@ import { EscalationDesk } from "./EscalationDesk";
 import { IncentiveCalculator } from "./IncentiveCalculator";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { formatLKR } from "../utils";
-import { normalizePipelineStatus } from "../pipeline";
+import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { AlertOctagon, TrendingUp, ArrowRight, Zap, CheckSquare, Banknote } from "lucide-react";
 import { Button } from "./Button";
@@ -13,7 +13,7 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
   const [activeTab, setActiveTab] = useState("escalations");
   const totalRevenue = students.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 0.1, 0);
   const overdueTasks = tasks.filter((t) => t.status === "Overdue").length;
-  const unresolvedSlaViolations = students.reduce((acc, s) => acc + (s.slaViolations?.filter((v) => !v.resolved).length || 0), 0);
+  const unresolvedSlaViolations = students.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
   const tasksPastDueDate = (tasks || []).filter((t) => isTaskOverdueByDate(t)).length;
   const slaBreachTotal = unresolvedSlaViolations + tasksPastDueDate;
   const slaBreachTrend = slaBreachTotal === 0 ? "All Clear" : `${unresolvedSlaViolations} open stage notice${unresolvedSlaViolations === 1 ? "" : "s"} · ${tasksPastDueDate} overdue task${tasksPastDueDate === 1 ? "" : "s"}`;
@@ -125,7 +125,7 @@ const ManagerDashboard = ({ activities, tasks, students = [], employees = [], cu
               /* @__PURE__ */ jsx(ArrowRight, { size: 12, className: "ml-1" })
             ] })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl p-1 shadow-sm", children: activeTab === "escalations" ? /* @__PURE__ */ jsx(EscalationDesk, { tasks, onReassign: (id) => console.log(id) }) : /* @__PURE__ */ jsx("div", { className: "p-4 space-y-3", children: tasks.filter((t) => t.status === "In Review").length === 0 ? /* @__PURE__ */ jsx("div", { className: "text-center py-8 text-slate-500 text-sm", children: "No tasks pending review." }) : tasks.filter((t) => t.status === "In Review").map((task) => /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-3 bg-amber-50 border border-amber-100 rounded-lg", children: [
+          /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl p-1 shadow-sm", children: activeTab === "escalations" ? /* @__PURE__ */ jsx(EscalationDesk, { tasks, students, employees, onReassign: (id) => console.log(id) }) : /* @__PURE__ */ jsx("div", { className: "p-4 space-y-3", children: tasks.filter((t) => t.status === "In Review").length === 0 ? /* @__PURE__ */ jsx("div", { className: "text-center py-8 text-slate-500 text-sm", children: "No tasks pending review." }) : tasks.filter((t) => t.status === "In Review").map((task) => /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-3 bg-amber-50 border border-amber-100 rounded-lg", children: [
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: task.task }),
               /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [

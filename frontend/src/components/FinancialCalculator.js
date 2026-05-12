@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
 import { Button } from "./Button";
 import { formatRawLKR, EXCHANGE_RATES, RATE_UPDATED_AT } from "../utils";
+import { useExchangeRates } from "../useExchangeRates";
 import { DollarSign, Landmark, Calculator, AlertTriangle, Plus, Trash2, Info, Clock } from "lucide-react";
 const LIVING_EXPENSES = {
   "UK": 12006,
@@ -28,8 +29,9 @@ const FinancialCalculator = ({ student }) => {
   const [newAssetAmount, setNewAssetAmount] = useState("");
   const [newAssetType, setNewAssetType] = useState("Savings");
   const [newAssetAge, setNewAssetAge] = useState("");
+  const { rates, updatedAt, live, loading } = useExchangeRates();
   const targetCurrency = CURRENCY_CODES[student.country] || "USD";
-  const exchangeRate = EXCHANGE_RATES[targetCurrency] || 312.5;
+  const exchangeRate = rates[targetCurrency] ?? EXCHANGE_RATES[targetCurrency] ?? 312.5;
   const livingCost = LIVING_EXPENSES[student.country] || 15e3;
   const travelCost = 2e3;
   const totalTuitionDue = Math.max(0, tuitionFee - scholarship - paidTuition);
@@ -157,9 +159,7 @@ const FinancialCalculator = ({ student }) => {
           ] }),
           /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-500 mt-2 flex items-center gap-1", children: [
             /* @__PURE__ */ jsx(Clock, { size: 10 }),
-            " Rates updated: ",
-            RATE_UPDATED_AT,
-            " (Central Bank)"
+            loading ? " Loading live rates…" : ` Rates updated: ${updatedAt || RATE_UPDATED_AT}${live ? " · Live FX" : " · Fallback rates"}`
           ] })
         ] }),
         /* @__PURE__ */ jsx("div", { className: "absolute top-0 right-0 w-32 h-32 bg-indigo-600 rounded-full blur-[60px] opacity-20 -mr-10 -mt-10" })

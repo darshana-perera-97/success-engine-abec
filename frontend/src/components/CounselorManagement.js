@@ -26,6 +26,7 @@ import {
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
 import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
+import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   XAxis,
   YAxis,
@@ -162,13 +163,13 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         if (normalized) counselorIdentities.add(normalized);
       });
       const myStudents = students.filter((student) => counselorIdentities.has(normalizeIdentity(student.counselor)));
-      const myTasks = tasks.filter((task) => {
-        const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
-        return assignedTo.some((assignee) => counselorIdentities.has(normalizeIdentity(assignee)));
-      });
+      const myTasks = filterTasksForCounselorIdentities(tasks, counselorIdentities, myStudents);
       const activeStudents = myStudents.length;
       const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Enrolled").length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
+      const criticalTasks = myTasks.filter(
+        (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
+      ).length;
       const maxCapacity = 35;
       const capacityLoad = Math.round(activeStudents / maxCapacity * 100);
       const successRate = activeStudents > 0 ? Math.round(visaGranted / activeStudents * 100) : 0;
@@ -198,6 +199,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           activeStudents,
           visaGranted,
           overdueTasks,
+          criticalTasks,
           capacityLoad,
           successRate,
           sla,
@@ -229,6 +231,12 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     const counselor = counselors.find((c) => c.id === selectedCounselorId);
     if (!counselor) return null;
     const funnelData = buildCounselorFunnelSeries(counselor.students);
+    const counselorCriticalTasks = counselor.tasks.filter(
+      (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
+    );
+    const studentById = new Map(
+      (counselor.students || []).map((s) => [String(s.id || "").trim(), s])
+    );
     return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in slide-in-from-right-8 duration-500 pb-10", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
@@ -423,27 +431,42 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-6", children: [
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-1", children: [
             /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900", children: "Overdue / Priority Tasks" }),
             /* @__PURE__ */ jsxs("span", { className: "text-xs font-bold bg-rose-50 text-rose-600 px-2 py-1 rounded-full", children: [
-              counselor.metrics.overdueTasks,
-              " Critical"
+              counselorCriticalTasks.length,
+              " critical"
             ] })
           ] }),
+          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mb-4", children: [
+            "Showing tasks for ",
+            /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-700", children: counselor.name }),
+            " (assigned to them, linked via counselor IDs, or for their students)."
+          ] }),
           /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
-            counselor.tasks.filter((t) => t.priority === "High" || t.status === "Overdue").slice(0, 5).map((task) => /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100", children: [
-              /* @__PURE__ */ jsx("div", { className: "mt-1", children: /* @__PURE__ */ jsx(AlertTriangle, { size: 14, className: "text-rose-500" }) }),
-              /* @__PURE__ */ jsxs("div", { children: [
-                /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: task.task }),
-                /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
-                  "Student: ",
-                  task.student_id,
-                  " \u2022 Due: ",
-                  task.dueDate
+            counselorCriticalTasks.slice(0, 5).map((task) => {
+              const sid = String(task.student_id || task.studentId || "").trim();
+              const stu = studentById.get(sid);
+              const studentLabel = stu?.name || sid || "—";
+              const overdueByDate = isTaskOverdueByDate(task) && task.status !== "Overdue";
+              return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100", children: [
+                /* @__PURE__ */ jsx("div", { className: "mt-1", children: /* @__PURE__ */ jsx(AlertTriangle, { size: 14, className: "text-rose-500" }) }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: task.task }),
+                  /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-1", children: [
+                    task.priority === "High" && /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full", children: "High priority" }),
+                    (task.status === "Overdue" || overdueByDate) && /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold uppercase tracking-wide bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full", children: "Overdue" })
+                  ] }),
+                  /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+                    "Student: ",
+                    studentLabel,
+                    " \u2022 Due: ",
+                    task.dueDate || "—"
+                  ] })
                 ] })
-              ] })
-            ] }, task.id)),
-            counselor.tasks.filter((t) => t.priority === "High" || t.status === "Overdue").length === 0 && /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400 italic", children: "No critical tasks pending." })
+              ] }, task.id);
+            }),
+            counselorCriticalTasks.length === 0 && /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400 italic", children: "No critical tasks pending." })
           ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
@@ -631,6 +654,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden lg:table-cell", children: "Capacity" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden lg:table-cell", children: "SLA" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden sm:table-cell", children: "Visa" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden md:table-cell text-right", children: "Critical tasks" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4" })
       ] }) }),
       /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: filteredCounselors.map((c) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors group", children: [
@@ -669,6 +693,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           c.metrics.successRate,
           "%"
         ] }),
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden md:table-cell text-right", children: /* @__PURE__ */ jsxs("span", { className: `inline-flex items-center justify-end min-w-[2rem] font-semibold tabular-nums ${c.metrics.criticalTasks > 0 ? "text-rose-600" : "text-slate-400"}`, title: "High priority, overdue status, or past due date", children: [
+          c.metrics.criticalTasks
+        ] }) }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2", children: [
           /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => setSelectedCounselorId(c.id), children: [
             "View ",

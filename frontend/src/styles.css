@@ -37,3 +37,8 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Recharts: chart SVG is focusable (tabIndex=0) for the accessibility layer — hide the default ring when focus comes from a pointer, not the keyboard */
+.recharts-surface:focus:not(:focus-visible) {
+  outline: none;
+}

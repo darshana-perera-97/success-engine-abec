@@ -1,9 +1,9 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Clock, AlertCircle, Plus, Lock, Upload, CheckCircle, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { filterTasksForCounselor } from "../counselorTaskScope";
+import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
 const TaskManager = ({
   userRole = "Admin",
   tasks = [],
@@ -41,6 +41,28 @@ const TaskManager = ({
     }
     return key;
   };
+  const getPrimaryCounselorLabelForTask = (task) => {
+    const sid = String(task?.student_id || task?.studentId || "").trim();
+    const stu = sid ? studentLookup[sid] : null;
+    const counselorRaw = stu?.counselor;
+    if (counselorRaw != null && String(counselorRaw).trim()) {
+      const lab = getAssigneeLabel(counselorRaw);
+      if (lab && lab !== "Unknown") return lab;
+    }
+    const assignees = Array.isArray(task?.assigned_to) ? task.assigned_to : [];
+    if (assignees.length === 0) return "—";
+    return assignees.map((a) => getAssigneeLabel(a)).join(", ");
+  };
+  const showManagerCounselorColumn = userRole === "Manager";
+  const tableColSpan = userRole === "Student" ? 3 : showManagerCounselorColumn ? 6 : 5;
+  const assignedColumnHeaderClass =
+    userRole === "Manager"
+      ? "px-6 py-3 whitespace-nowrap hidden md:table-cell"
+      : "px-6 py-3 whitespace-nowrap hidden lg:table-cell";
+  const assignedColumnCellClass =
+    userRole === "Manager"
+      ? "px-6 py-4 hidden md:table-cell"
+      : "px-6 py-4 hidden lg:table-cell";
   const filteredTasks = (() => {
     if (userRole === "Admin") return tasks;
     if (userRole === "Manager") {
@@ -59,7 +81,7 @@ const TaskManager = ({
     return [];
   })();
   const handleStatusChange = (task, newStatus) => {
-    if (String(task?.status || "") === "Completed") return;
+    if (String(task?.status || "") === String(newStatus || "")) return;
     const updatedTask = { ...task, status: newStatus };
     if (onUpdateTasks) {
       onUpdateTasks([updatedTask]);
@@ -72,6 +94,15 @@ const TaskManager = ({
         target: task.task,
         type: "task"
       });
+    }
+  };
+  const handleToggleCompletedFromRow = (task, event) => {
+    event.stopPropagation();
+    if (userRole === "Student") return;
+    if (String(task?.status || "") === "Completed") {
+      handleStatusChange(task, "In Progress");
+    } else {
+      handleStatusChange(task, "Completed");
     }
   };
   const handleStudentUpload = (task) => {
@@ -135,6 +166,12 @@ const TaskManager = ({
     if (userRole === "Student") return (a.phase || 9) - (b.phase || 9);
     return 0;
   });
+  useEffect(() => {
+    if (!selectedTaskId || typeof document === "undefined") return;
+    const safe = String(selectedTaskId).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const row = document.querySelector(`tr[data-task-row-id="${safe}"]`);
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedTaskId, studentTasks]);
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -151,12 +188,13 @@ const TaskManager = ({
         /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Task" }),
           userRole !== "Student" && /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden md:table-cell", children: "Student" }),
-          userRole !== "Student" && /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden lg:table-cell", children: "Assigned" }),
+          userRole !== "Student" && /* @__PURE__ */ jsx("th", { className: assignedColumnHeaderClass, children: "Assigned" }),
+          showManagerCounselorColumn && /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden md:table-cell", title: "Student's counselor (case owner), or assignees if unset", children: "Counselor" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden sm:table-cell", children: "Priority" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: userRole === "Student" ? 3 : 5, className: "px-6 py-10 text-center text-slate-500", children: "No tasks found." }) }) : studentTasks.map((task) => {
-          const studentContext = studentLookup[String(task.student_id || "").trim()] || null;
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: "px-6 py-10 text-center text-slate-500", children: "No tasks found."         }) }) : studentTasks.map((task) => {
+          const studentContext = studentLookup[String(task.student_id || task.studentId || "").trim()] || null;
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";
           const isTaskCompleted = task.status === "Completed";
           let docStatus = "none";
@@ -169,9 +207,29 @@ const TaskManager = ({
               else docStatus = "pending";
             }
           }
-          return /* @__PURE__ */ jsxs("tr", { className: `transition-colors ${isLocked ? "bg-gray-50 opacity-60" : "hover:bg-slate-50"} ${selectedTaskId === task.id ? "bg-indigo-50 ring-2 ring-inset ring-indigo-500" : ""}`, children: [
+          return /* @__PURE__ */ jsxs("tr", { "data-task-row-id": String(task.id ?? ""), className: `transition-colors ${isLocked ? "bg-gray-50 opacity-60" : "hover:bg-slate-50"} ${selectedTaskId === task.id ? "bg-indigo-50 ring-2 ring-inset ring-indigo-500" : ""}`, children: [
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 min-w-[200px]", children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-              isTaskCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500 shrink-0" }) : isLocked ? /* @__PURE__ */ jsx(Lock, { size: 16, className: "text-slate-400 shrink-0" }) : /* @__PURE__ */ jsx("div", { className: "w-4 h-4 rounded border-2 border-slate-300 shrink-0" }),
+              userRole !== "Student" ? isTaskCompleted ? /* @__PURE__ */ jsx(
+                "button",
+                {
+                  type: "button",
+                  title: "Mark as not completed",
+                  "aria-label": "Mark task as not completed",
+                  onClick: (e) => handleToggleCompletedFromRow(task, e),
+                  className: "shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
+                  children: /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500" })
+                }
+              ) : /* @__PURE__ */ jsx(
+                "button",
+                {
+                  type: "button",
+                  title: "Mark as completed",
+                  "aria-label": "Mark task as completed",
+                  onClick: (e) => handleToggleCompletedFromRow(task, e),
+                  className: "shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
+                  children: /* @__PURE__ */ jsx("div", { className: "w-4 h-4 rounded border-2 border-slate-300" })
+                }
+              ) : isTaskCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500 shrink-0" }) : isLocked ? /* @__PURE__ */ jsx(Lock, { size: 16, className: "text-slate-400 shrink-0" }) : /* @__PURE__ */ jsx("div", { className: "w-4 h-4 rounded border-2 border-slate-300 shrink-0" }),
               /* @__PURE__ */ jsxs("div", { children: [
                 /* @__PURE__ */ jsx("p", { className: `font-medium ${isTaskCompleted ? "text-slate-500 line-through" : "text-slate-900"}`, children: task.task }),
                 task.isBlocking && !isTaskCompleted && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-rose-600 font-bold uppercase tracking-wide", children: "Required" }),
@@ -186,11 +244,16 @@ const TaskManager = ({
                     className: "mt-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 underline underline-offset-2",
                     children: "Go to related student"
                   }
-                )
+                ),
+                showManagerCounselorColumn && /* @__PURE__ */ jsxs("p", { className: "mt-1 text-[11px] text-slate-600 md:hidden", children: [
+                  /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Counselor:" }),
+                  " ",
+                  getPrimaryCounselorLabelForTask(task)
+                ] })
               ] })
             ] }) }),
-            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: "font-medium", children: studentContext?.name || task.student_id || "—" }) }),
-            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: (() => {
+            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap hidden md:table-cell", children: /* @__PURE__ */ jsx("span", { className: "font-medium", children: studentContext?.name || task.student_id || task.studentId || "—" }) }),
+            userRole !== "Student" && /* @__PURE__ */ jsx("td", { className: assignedColumnCellClass, children: (() => {
               const assignees = Array.isArray(task.assigned_to) ? task.assigned_to : [];
               if (assignees.length === 0) {
                 return /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "—" });
@@ -200,6 +263,7 @@ const TaskManager = ({
                 return /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-100 text-xs font-medium text-indigo-700", title: `${label} (${assignee})`, children: label }, `${task.id}-assignee-${i}`);
               }) });
             })() }),
+            showManagerCounselorColumn && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden md:table-cell text-slate-800 text-sm max-w-[220px]", children: /* @__PURE__ */ jsx("span", { className: "font-medium line-clamp-2", title: getPrimaryCounselorLabelForTask(task), children: getPrimaryCounselorLabelForTask(task) }) }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${getPriorityColor(task.priority)}`, children: task.priority }) }),
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 whitespace-nowrap", children: userRole === "Student" ? isTaskCompleted ? /* @__PURE__ */ jsxs("span", { className: "flex items-center text-xs font-bold text-emerald-600", children: [
               /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "mr-1" }),
@@ -224,7 +288,7 @@ const TaskManager = ({
               /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-1" }),
               " Upload"
             ] }) : null : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
-              task.status === "Overdue" && /* @__PURE__ */ jsxs("div", { className: "flex items-center text-rose-600 text-xs font-bold animate-pulse mr-2", children: [
+              userRole !== "Student" && isTaskOverdueByDate(task) && /* @__PURE__ */ jsxs("div", { className: "flex items-center text-rose-600 text-xs font-bold animate-pulse mr-2", children: [
                 /* @__PURE__ */ jsx(AlertCircle, { size: 14, className: "mr-1" }),
                 "OVERDUE"
               ] }),
@@ -246,9 +310,9 @@ const TaskManager = ({
                   ]
                 }
               ),
-              task.status !== "Overdue" && task.status !== "Completed" && /* @__PURE__ */ jsxs("div", { className: "flex items-center text-slate-400 text-xs ml-2", children: [
+              task.status !== "Completed" && /* @__PURE__ */ jsxs("div", { className: `flex items-center text-xs ml-2 ${userRole !== "Student" && isTaskOverdueByDate(task) ? "text-rose-600 font-semibold" : "text-slate-400"}`, children: [
                 /* @__PURE__ */ jsx(Clock, { size: 12, className: "mr-1" }),
-                task.dueDate
+                task.dueDate || "—"
               ] })
             ] }) })
           ] }, task.id);

@@ -2,7 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp } from "lucide-react";
-import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
@@ -43,7 +43,18 @@ function studentTimeMs(student) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssignStudentCounselor, onNavigate, onAddStudent, userRole, currentUser, authenticatedUser }) => {
+const StudentList = ({
+  onSelectStudent,
+  students = [],
+  onUpdateStudent,
+  onAssignStudentCounselor,
+  onNavigate,
+  onAddStudent,
+  userRole,
+  currentUser,
+  authenticatedUser,
+  counselorIdentitySet = null
+}) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
   const [countryFilter, setCountryFilter] = useState("All");
@@ -143,7 +154,15 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
           activeCounselorIdentity.id || activeCounselorIdentity.email || activeCounselorIdentity.username || activeCounselorIdentity.name
         );
         const isOwnedByLoggedCounselor = normalizedCounselor === activeCounselorIdentity.id || normalizedCounselor === activeCounselorIdentity.email || normalizedCounselor === activeCounselorIdentity.username || normalizedCounselor === activeCounselorIdentity.name;
-        const isVisibleToCounselor = !isCounselorRole || !hasResolvedCounselorIdentity || isOwnedByLoggedCounselor;
+        const matchesScopedCounselor =
+          counselorIdentitySet &&
+          counselorIdentitySet.size > 0 &&
+          studentMatchesCounselorIdentitySet(s, counselorIdentitySet);
+        const isVisibleToCounselor =
+          !isCounselorRole ||
+          !hasResolvedCounselorIdentity ||
+          matchesScopedCounselor ||
+          (!counselorIdentitySet && isOwnedByLoggedCounselor);
         if (!isVisibleToCounselor) return false;
         const matchesCounselor = counselorFilter === "All" ? true : counselorFilter === "Unassigned" ? isUnassignedCounselor(s.counselor) : String(s.counselor || "") === counselorFilter;
         const matchesCountry = countryFilter === "All" || s.country === countryFilter;
@@ -152,7 +171,7 @@ const StudentList = ({ onSelectStudent, students = [], onUpdateStudent, onAssign
         return matchesCounselor && matchesCountry && matchesSearch;
       }
     );
-  }, [students, filterText, counselorFilter, countryFilter, userRole, activeCounselorIdentity]);
+  }, [students, filterText, counselorFilter, countryFilter, userRole, activeCounselorIdentity, counselorIdentitySet]);
   const sortedFilteredStudents = useMemo(() => {
     const list = [...filteredStudents];
     const dir = sortDirection === "asc" ? 1 : -1;

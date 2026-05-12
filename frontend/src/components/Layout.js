@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Users,
   LayoutDashboard,
@@ -23,7 +23,6 @@ import {
   AlertTriangle,
   Plug
 } from "lucide-react";
-import { FaWhatsapp } from "react-icons/fa";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 const Layout = ({
   children: pageBody,
@@ -34,6 +33,7 @@ const Layout = ({
   notifications = [],
   onClearNotifications,
   onRemoveNotification,
+  onNotificationNavigate,
   onLogout,
   userAvatar,
   userName,
@@ -47,13 +47,33 @@ const Layout = ({
   pipelineEscalationBadge = "",
   counselorStageEscalationBadge = "",
   counselorStudentsBadge = "",
-  whatsappConnectionStatus = "disconnected",
   pageLoading = false
 }) => {
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const notificationsPanelRef = useRef(null);
+  useEffect(() => {
+    if (!isNotificationsOpen) return;
+    const handlePointerDown = (event) => {
+      const el = notificationsPanelRef.current;
+      if (el && !el.contains(event.target)) {
+        setIsNotificationsOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setIsNotificationsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isNotificationsOpen]);
   const [profileError, setProfileError] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [selectedAvatarDataUrl, setSelectedAvatarDataUrl] = useState("");
@@ -202,26 +222,6 @@ const Layout = ({
     }
   };
   const navItems = getNavItems();
-  const whatsappDotClass =
-    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
-      ? "bg-emerald-500"
-      : whatsappConnectionStatus === "awaiting_qr_scan" || whatsappConnectionStatus === "connecting"
-        ? "bg-amber-500"
-        : "bg-rose-500";
-  const whatsappStatusLabel =
-    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
-      ? "WhatsApp connected"
-      : whatsappConnectionStatus === "awaiting_qr_scan"
-        ? "WhatsApp awaiting QR scan"
-        : whatsappConnectionStatus === "connecting"
-          ? "WhatsApp connecting"
-          : "WhatsApp disconnected";
-  const whatsappIconClass =
-    whatsappConnectionStatus === "connected" || whatsappConnectionStatus === "authenticated"
-      ? "text-emerald-500"
-      : whatsappConnectionStatus === "awaiting_qr_scan" || whatsappConnectionStatus === "connecting"
-        ? "text-amber-500"
-        : "text-rose-500";
   return /* @__PURE__ */ jsxs("div", { className: "flex h-screen bg-[#F9FAFB] text-slate-900 font-sans overflow-hidden", children: [
     isMobileMenuOpen && /* @__PURE__ */ jsx(
       "div",
@@ -378,7 +378,7 @@ const Layout = ({
               }
             )
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+          /* @__PURE__ */ jsxs("div", { ref: notificationsPanelRef, className: "relative", children: [
             /* @__PURE__ */ jsxs("button", { className: "relative p-2 text-gray-500 hover:text-slate-900 hover:bg-gray-100 rounded-full transition-colors", onClick: () => setIsNotificationsOpen((prev) => !prev), children: [
               /* @__PURE__ */ jsx(Bell, { size: 20, strokeWidth: 1.5 }),
               notifications.length > 0 && /* @__PURE__ */ jsx("span", { className: "absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center border border-white", children: notifications.length > 99 ? "99+" : notifications.length })
@@ -391,20 +391,47 @@ const Layout = ({
                 ] }),
                 /* @__PURE__ */ jsx("button", { type: "button", className: "text-xs text-slate-500 hover:text-slate-700", onClick: () => onClearNotifications?.(), children: "Clear all" })
               ] }),
-              notifications.length === 0 ? /* @__PURE__ */ jsx("div", { className: "px-4 py-8 text-center text-sm text-slate-400", children: "No notifications yet." }) : /* @__PURE__ */ jsx("div", { className: "max-h-96 overflow-y-auto divide-y divide-gray-100", children: notifications.map((n) => /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 flex items-start gap-3", children: [
-                /* @__PURE__ */ jsx("div", { className: `mt-0.5 w-2 h-2 rounded-full ${n.type === "success" ? "bg-emerald-500" : n.type === "error" ? "bg-rose-500" : n.type === "warning" ? "bg-amber-500" : "bg-indigo-500"}` }),
-                /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
-                  /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: n.title }),
-                  /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: n.message })
-                ] }),
-                /* @__PURE__ */ jsx("button", { type: "button", className: "text-slate-400 hover:text-slate-600", onClick: () => onRemoveNotification?.(n.id), children: /* @__PURE__ */ jsx(X, { size: 14 }) })
-              ] }, n.id)) })
+              notifications.length === 0 ? /* @__PURE__ */ jsx("div", { className: "px-4 py-8 text-center text-sm text-slate-400", children: "No notifications yet." }) : /* @__PURE__ */ jsx("div", { className: "max-h-96 overflow-y-auto divide-y divide-gray-100", children: notifications.map((n) => {
+                const rowHasLink = Boolean(n?.link && (n.link.taskId || n.link.studentId || n.link.view));
+                return /* @__PURE__ */ jsxs(
+                  "div",
+                  {
+                    className: `px-4 py-3 flex items-start gap-3${rowHasLink ? " cursor-pointer hover:bg-slate-50" : ""}`,
+                    ...(rowHasLink && onNotificationNavigate ? {
+                      role: "button",
+                      tabIndex: 0,
+                      onClick: () => {
+                        onNotificationNavigate(n);
+                      },
+                      onKeyDown: (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onNotificationNavigate(n);
+                        }
+                      }
+                    } : {}),
+                    children: [
+                      /* @__PURE__ */ jsx("div", { className: `mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${n.type === "success" ? "bg-emerald-500" : n.type === "error" ? "bg-rose-500" : n.type === "warning" ? "bg-amber-500" : "bg-indigo-500"}` }),
+                      /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
+                        /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: n.title }),
+                        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: n.message })
+                      ] }),
+                      /* @__PURE__ */ jsx("button", {
+                        type: "button",
+                        className: "text-slate-400 hover:text-slate-600 flex-shrink-0",
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          onRemoveNotification?.(n.id);
+                        },
+                        children: /* @__PURE__ */ jsx(X, { size: 14 })
+                      })
+                    ]
+                  },
+                  n.id
+                );
+              }) })
             ] })
           ] }),
-          currentRole === "Counselor" ? /* @__PURE__ */ jsxs("div", { className: "relative inline-flex items-center justify-center w-9 h-9 rounded-full bg-white border border-slate-200", title: whatsappStatusLabel, children: [
-            /* @__PURE__ */ jsx(FaWhatsapp, { size: 16, className: whatsappIconClass }),
-            /* @__PURE__ */ jsx("span", { className: `absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${whatsappDotClass}` })
-          ] }) : null,
           /* @__PURE__ */ jsx("div", { className: "relative", children: /* @__PURE__ */ jsxs("button", { className: "flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border border-transparent", onClick: handleProfileOpen, children: [
               /* @__PURE__ */ jsx("div", { className: "h-8 w-8 rounded-full border-2 border-white shadow-sm ring-1 ring-gray-100 overflow-hidden flex items-center justify-center bg-white", children: /* @__PURE__ */ jsx(
                 "img",

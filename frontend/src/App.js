@@ -1,6 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
@@ -35,7 +35,8 @@ import {
   filterEscalationsForManager,
   filterRequirementViolationsForCounselor,
   filterRequirementViolationsForManager,
-  normalizePipelineStatus
+  normalizePipelineStatus,
+  reconcileStudentSlaViolationsWithDocuments
 } from "./pipeline";
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 const VIEW_TO_PATH = {
@@ -59,6 +60,7 @@ const VIEW_TO_PATH = {
 
 function App({ initialView = "dashboard" }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [authenticatedUser, setAuthenticatedUser] = useState(getLoginSessionUser());
   const [isAuthenticated, setIsAuthenticated] = useState(hasLoginSession);
   const [adminAvatar, setAdminAvatar] = useState(DEFAULT_USER_AVATAR);
@@ -88,6 +90,7 @@ function App({ initialView = "dashboard" }) {
   );
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [studentDetailFocusTaskId, setStudentDetailFocusTaskId] = useState(null);
   const [isCreateTaskModalOpen, setCreateTaskModalOpen] = useState(false);
   const [taskModalStudent, setTaskModalStudent] = useState(null);
   const [counselorListResetSignal, setCounselorListResetSignal] = useState(0);
@@ -98,14 +101,29 @@ function App({ initialView = "dashboard" }) {
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
   const [assignmentAlerts, setAssignmentAlerts] = useState([]);
   const whatsappStatusFailuresRef = useRef(0);
+  const whatsappPollUserIdRef = useRef("");
+  const WHATSAPP_DISCONNECT_NOTIFY_AFTER_MS = 5 * 60 * 1000;
+  const whatsappDisconnectNotifyAnchorRef = useRef(0);
+  const whatsappDisconnectNotifiedRef = useRef(false);
+  const toastStackRef = useRef(null);
   const hasStudentsHydratedRef = useRef(false);
   const hasRequestedStudentsHydratedRef = useRef(false);
   const requestedStudentsCountRef = useRef(0);
   const previousStudentCounselorMapRef = useRef(new Map());
+  const counselorInboundChatNotifyHydratedRef = useRef(false);
+  const notifiedCounselorInboundChatIdsRef = useRef(/* @__PURE__ */ new Set());
+  const lastCounselorChatNotifyUserIdRef = useRef("");
   const appDataLoaded = true;
-  const addNotification = useCallback((title, message, type = "info") => {
+  const addNotification = useCallback((title, message, type = "info", link = null) => {
     const id = generateId("notif");
-    const notification = { id, title, message, type, timestamp: new Date().toISOString() };
+    const notification = {
+      id,
+      title,
+      message,
+      type,
+      timestamp: new Date().toISOString(),
+      ...(link && typeof link === "object" ? { link } : {})
+    };
     setNotifications((prev) => [...prev, notification]);
     setNotificationHistory((prev) => [notification, ...prev].slice(0, 100));
     setTimeout(() => {
@@ -307,7 +325,7 @@ function App({ initialView = "dashboard" }) {
         const title =
           alert.type === "reassigned" ? "Student reassigned to you" : "New student assigned to you";
         const message = `${alert.studentName} — reach out and start onboarding.`;
-        addNotification(title, message, "info");
+        addNotification(title, message, "info", { studentId: alert.studentId });
         tryShowDesktopAssignmentNotice(title, message);
       });
     }
@@ -353,7 +371,12 @@ function App({ initialView = "dashboard" }) {
     );
   }, [students, currentRole, managerDataScope.active, managerDataScope.branchKey]);
   const managerScopedStudentIds = useMemo(
-    () => new Set(managerScopedStudents.map((s) => s.id)),
+    () =>
+      new Set(
+        managerScopedStudents
+          .map((s) => String(s?.id ?? "").trim())
+          .filter(Boolean)
+      ),
     [managerScopedStudents]
   );
   const managerScopedTasks = useMemo(() => {
@@ -380,8 +403,21 @@ function App({ initialView = "dashboard" }) {
   }, [activities, currentRole, managerDataScope.active, managerScopedStudentIds]);
   const managerScopedAppointments = useMemo(() => {
     if (currentRole !== "Manager" || !managerDataScope.active) return appointments;
-    return appointments.filter((apt) => managerScopedStudentIds.has(String(apt.studentId || "")));
-  }, [appointments, currentRole, managerDataScope.active, managerScopedStudentIds]);
+    const branchCounselorIds = new Set(
+      managerScopedEmployees.map((e) => String(e?.id ?? "").trim()).filter(Boolean)
+    );
+    return appointments.filter((apt) => {
+      const sid = String(apt.studentId ?? "").trim();
+      const cid = String(apt.counselorId ?? "").trim();
+      return managerScopedStudentIds.has(sid) || branchCounselorIds.has(cid);
+    });
+  }, [
+    appointments,
+    currentRole,
+    managerDataScope.active,
+    managerScopedStudentIds,
+    managerScopedEmployees
+  ]);
   const managerScopedInvoices = useMemo(() => {
     if (currentRole !== "Manager" || !managerDataScope.active) return invoices;
     return invoices.filter((inv) => managerScopedStudentIds.has(String(inv.studentId || "")));
@@ -583,6 +619,17 @@ function App({ initialView = "dashboard" }) {
     return () => clearInterval(intervalId);
   }, []);
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname !== VIEW_TO_PATH["student-detail"]) return;
+    const sid = (searchParams.get("student") || "").trim();
+    const taskFocus = (searchParams.get("task") || "").trim();
+    setStudentDetailFocusTaskId(taskFocus || null);
+    if (!sid) return;
+    const match = students.find((s) => String(s.id ?? "").trim() === sid);
+    if (match) setSelectedStudent(match);
+    else if (students.length > 0) setSelectedStudent(null);
+  }, [searchParams, students]);
+  useEffect(() => {
     const loadTasks = async () => {
       const result = await getTasks();
       if (!result.ok) return;
@@ -656,6 +703,9 @@ function App({ initialView = "dashboard" }) {
     const canShowUnreadBadge = currentRole === "Student" || currentRole === "Counselor" || currentRole === "Country Coordinator";
     if (!canShowUnreadBadge) {
       setUnreadMessageCount(0);
+      counselorInboundChatNotifyHydratedRef.current = false;
+      notifiedCounselorInboundChatIdsRef.current = /* @__PURE__ */ new Set();
+      lastCounselorChatNotifyUserIdRef.current = "";
       return;
     }
     const userId = String(currentUser?.id || "").trim();
@@ -670,6 +720,44 @@ function App({ initialView = "dashboard" }) {
         (msg) => String(msg.receiverId || "") === userId && msg.read !== true
       ).length;
       setUnreadMessageCount(unread);
+      if (currentRole !== "Counselor" && currentRole !== "Country Coordinator") {
+        return;
+      }
+      if (userId !== lastCounselorChatNotifyUserIdRef.current) {
+        lastCounselorChatNotifyUserIdRef.current = userId;
+        counselorInboundChatNotifyHydratedRef.current = false;
+        notifiedCounselorInboundChatIdsRef.current = /* @__PURE__ */ new Set();
+      }
+      const inboundUnread = (result.data || []).filter((msg) => {
+        if (String(msg.receiverId || "").trim() !== userId) return false;
+        if (String(msg.senderId || "").trim() === userId) return false;
+        if (msg.read === true) return false;
+        return true;
+      });
+      if (!counselorInboundChatNotifyHydratedRef.current) {
+        for (const m of inboundUnread) {
+          const mid = String(m.id || "").trim();
+          if (mid) notifiedCounselorInboundChatIdsRef.current.add(mid);
+        }
+        counselorInboundChatNotifyHydratedRef.current = true;
+        return;
+      }
+      for (const m of inboundUnread) {
+        const mid = String(m.id || "").trim();
+        if (!mid || notifiedCounselorInboundChatIdsRef.current.has(mid)) continue;
+        notifiedCounselorInboundChatIdsRef.current.add(mid);
+        const sid = String(m.senderId || "").trim();
+        const student = students.find((s) => String(s.id || "").trim() === sid);
+        const label = String(student?.name || "").trim() || "A student";
+        const preview = String(m.content || "").trim();
+        const body =
+          preview.length > 120
+            ? `${preview.slice(0, 117)}...`
+            : preview || (m.attachment ? "Sent an attachment" : "New message");
+        const title = `${label} messaged you`;
+        addNotification(title, body, "info", { view: "messages" });
+        tryShowDesktopAssignmentNotice(title, body);
+      }
     };
     loadUnreadCount();
     const intervalId = setInterval(loadUnreadCount, 3000);
@@ -677,7 +765,7 @@ function App({ initialView = "dashboard" }) {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [currentRole, currentUser?.id]);
+  }, [currentRole, currentUser?.id, students, addNotification, tryShowDesktopAssignmentNotice]);
   useEffect(() => {
     let cancelled = false;
     const canTrackRequestedStudents = currentRole === "Admin" || currentRole === "Manager";
@@ -702,7 +790,8 @@ function App({ initialView = "dashboard" }) {
         addNotification(
           "Requested Students",
           `${delta} new requested student${delta > 1 ? "s are" : " is"} waiting in the table.`,
-          "warning"
+          "warning",
+          { view: "requested-students" }
         );
       }
       requestedStudentsCountRef.current = nextCount;
@@ -720,8 +809,16 @@ function App({ initialView = "dashboard" }) {
     const isCounselor = currentRole === "Counselor";
     const userId = String(currentUser?.id || "").trim();
     if (!isCounselor || !userId) {
+      whatsappPollUserIdRef.current = "";
       setWhatsappConnectionStatus("disconnected");
       return;
+    }
+    if (whatsappPollUserIdRef.current !== userId) {
+      whatsappPollUserIdRef.current = userId;
+      whatsappStatusFailuresRef.current = 0;
+      whatsappDisconnectNotifyAnchorRef.current = Date.now();
+      whatsappDisconnectNotifiedRef.current = false;
+      setWhatsappConnectionStatus("disconnected");
     }
     const loadStatus = async () => {
       const result = await getWhatsappStatus(userId);
@@ -743,6 +840,37 @@ function App({ initialView = "dashboard" }) {
       clearInterval(intervalId);
     };
   }, [currentRole, currentUser?.id]);
+  useEffect(() => {
+    if (currentRole !== "Counselor") return;
+    const userId = String(currentUser?.id || "").trim();
+    if (!userId) return;
+    const tick = () => {
+      if (whatsappDisconnectNotifiedRef.current) return;
+      const elapsed = Date.now() - whatsappDisconnectNotifyAnchorRef.current;
+      if (elapsed < WHATSAPP_DISCONNECT_NOTIFY_AFTER_MS) return;
+      const status = whatsappConnectionStatus;
+      const isLive = status === "connected" || status === "authenticated";
+      const isPending = status === "connecting" || status === "awaiting_qr_scan";
+      if (!isLive && !isPending) {
+        whatsappDisconnectNotifiedRef.current = true;
+        addNotification("WhatsApp disconnected", "Your WhatsApp session ended or was disconnected.", "info");
+      }
+    };
+    tick();
+    const intervalId = setInterval(tick, 4000);
+    return () => clearInterval(intervalId);
+  }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification]);
+  useEffect(() => {
+    if (notifications.length === 0) return;
+    const handlePointerDown = (event) => {
+      const el = toastStackRef.current;
+      if (el && !el.contains(event.target)) {
+        setNotifications([]);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [notifications.length]);
   const handleNavigate = (view) => {
     if (view === "counselors" && currentView === "counselors") {
       setCounselorListResetSignal((prev) => prev + 1);
@@ -754,20 +882,95 @@ function App({ initialView = "dashboard" }) {
     }
     if (view !== "student-detail") {
       setSelectedStudent(null);
+      setStudentDetailFocusTaskId(null);
     }
     if (view !== "tasks") {
       setSelectedTaskId(null);
     }
   };
-  const handleSelectStudent = (student) => {
-    const latestStudent = students.find((s) => s.id === student.id) || student;
+  const handleSelectStudent = (student, options) => {
+    if (!student) return;
+    const sid = String(student.id ?? "").trim();
+    if (!sid) return;
+    const latestStudent = students.find((s) => String(s.id ?? "").trim() === sid) || student;
     setSelectedStudent(latestStudent);
     setCurrentView("student-detail");
+    const focus = options?.focusTaskId != null ? String(options.focusTaskId).trim() : "";
+    setStudentDetailFocusTaskId(focus || null);
+    const path = VIEW_TO_PATH["student-detail"];
+    if (!path) return;
+    const qs = new URLSearchParams();
+    qs.set("student", sid);
+    if (focus) qs.set("task", focus);
+    navigate({ pathname: path, search: `?${qs.toString()}` });
   };
   const handleSelectTask = (taskId) => {
-    setSelectedTaskId(taskId);
+    const id = String(taskId || "").trim();
+    setStudentDetailFocusTaskId(null);
+    setSelectedTaskId(id || null);
     setCurrentView("tasks");
+    const path = VIEW_TO_PATH.tasks;
+    if (path && typeof window !== "undefined" && window.location.pathname !== path) {
+      navigate(path);
+    }
   };
+  const handleNotificationNavigate = useCallback(
+    (notification) => {
+      const raw = notification?.link;
+      if (!raw || typeof raw !== "object") return;
+
+      const explicitTaskId = String(raw.taskId || "").trim();
+      const studentId = String(raw.studentId || "").trim();
+      const view = String(raw.view || "").trim();
+
+      if (view === "messages" && VIEW_TO_PATH.messages) {
+        handleNavigate("messages");
+        return;
+      }
+
+      const openTask = (tid) => {
+        const id = String(tid || "").trim();
+        if (!id) return;
+        setStudentDetailFocusTaskId(null);
+        setSelectedTaskId(id);
+        setCurrentView("tasks");
+        const path = VIEW_TO_PATH.tasks;
+        if (path && typeof window !== "undefined" && window.location.pathname !== path) {
+          navigate(path);
+        }
+      };
+
+      const openStudent = (sid) => {
+        const student = students.find((s) => String(s.id || "").trim() === String(sid).trim());
+        if (!student) return;
+        handleSelectStudent(student);
+      };
+
+      if (explicitTaskId) {
+        openTask(explicitTaskId);
+        return;
+      }
+
+      if (studentId) {
+        const sid = studentId;
+        const forStudent = tasks.filter((t) => String(t.student_id || t.studentId || "").trim() === sid);
+        const intake = forStudent.find((t) => /intake|onboarding|new student/i.test(String(t.task || "")));
+        const pending = forStudent.filter((t) => String(t.status || "").trim() !== "Completed");
+        const chosen = intake || pending[0] || forStudent[0];
+        if (chosen?.id) {
+          openTask(chosen.id);
+          return;
+        }
+        openStudent(sid);
+        return;
+      }
+
+      if (view && VIEW_TO_PATH[view]) {
+        handleNavigate(view);
+      }
+    },
+    [tasks, students, navigate, handleNavigate, handleSelectStudent]
+  );
   const handleDismissAssignmentAlert = (alertId) => {
     const id = String(alertId || "").trim();
     if (!id) return;
@@ -811,13 +1014,24 @@ function App({ initialView = "dashboard" }) {
   const handleUpdateStudent = async (updatedStudent) => {
     const previous = students.find((s) => s.id === updatedStudent.id);
     let payload = { ...updatedStudent };
+    const slaNext = reconcileStudentSlaViolationsWithDocuments(payload);
+    if (slaNext !== void 0) {
+      payload = { ...payload, slaViolations: slaNext };
+    }
     if (previous && String(previous.status || "") !== String(updatedStudent.status || "")) {
       payload = { ...payload, stageEnteredAt: new Date().toISOString() };
     }
     const newTasks = generateTasks(payload);
     if (newTasks.length > 0) {
-      handleAddTasks(newTasks);
-      addNotification("Auto Task Generation", `${newTasks.length} new tasks generated for ${payload.name}`, "info");
+      const batchResult = await handleAddTasks(newTasks);
+      const firstTaskId =
+        Array.isArray(batchResult?.data) && batchResult.data[0]?.id ? String(batchResult.data[0].id) : "";
+      addNotification(
+        "Auto Task Generation",
+        `${newTasks.length} new tasks generated for ${payload.name}`,
+        "info",
+        firstTaskId ? { taskId: firstTaskId } : payload?.id ? { studentId: String(payload.id) } : null
+      );
     }
     setStudents((prev) => prev.map((s) => s.id === payload.id ? payload : s));
     if (selectedStudent?.id === payload.id) {
@@ -1411,7 +1625,9 @@ function App({ initialView = "dashboard" }) {
     if (!docType) return { ok: false, error: "Document type is required." };
     const result = await uploadStudentDocument(studentId, { dataUrl, fileName, docType, phase, tier });
     if (!result.ok) return result;
-    const updatedStudent = result.data;
+    const slaNext = reconcileStudentSlaViolationsWithDocuments(result.data);
+    const updatedStudent =
+      slaNext !== void 0 ? { ...result.data, slaViolations: slaNext } : result.data;
     setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
     if (selectedStudent?.id === updatedStudent.id) {
       setSelectedStudent(updatedStudent);
@@ -1514,7 +1730,14 @@ function App({ initialView = "dashboard" }) {
       onUploadStudentProfileOtherDocument: handleUploadStudentProfileOtherDocument,
       onUploadStudentCv: handleUploadStudentCv,
       currentUser,
-      authenticatedUser
+      authenticatedUser,
+      highlightTaskId: studentDetailFocusTaskId,
+      onNavigateToTask: (tid) => {
+        const id = String(tid || "").trim();
+        if (!id) return;
+        setStudentDetailFocusTaskId(null);
+        handleSelectTask(id);
+      }
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
@@ -1535,6 +1758,17 @@ function App({ initialView = "dashboard" }) {
         currentRole === "Country Coordinator" && countryCoordinatorScope.active
           ? { ...studentProfileProps, tasks: coordTasks, invoices: countryCoordinatorScopedInvoices }
           : studentProfileProps;
+      const openStudentContextForTask = (task) => {
+        const sid = String(task?.student_id || task?.studentId || "").trim();
+        const tid = String(task?.id ?? "").trim();
+        const stu = coordStudents.find((s) => String(s.id || "").trim() === sid);
+        if (!stu) {
+          if (tid) handleSelectTask(tid);
+          else handleNavigate("tasks");
+          return;
+        }
+        handleSelectStudent(stu, tid ? { focusTaskId: tid } : undefined);
+      };
       if (currentView === "stage-escalations") {
         const coordEsc = currentRole === "Counselor" ? counselorScopedEscalations : countryCoordinatorScopedEscalations;
         const coordReq = currentRole === "Counselor" ? counselorScopedRequirementViolations : countryCoordinatorScopedRequirementViolations;
@@ -1549,11 +1783,17 @@ function App({ initialView = "dashboard" }) {
       if (currentRole === "Counselor" && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
-      if (currentView === "student-detail") return selectedStudent && coordStudents.some((student) => student.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "student-detail") {
+        const selectedSid = selectedStudent ? String(selectedStudent.id ?? "").trim() : "";
+        const studentInScope = selectedSid ? coordStudents.find((s) => String(s.id ?? "").trim() === selectedSid) : null;
+        return selectedStudent && studentInScope
+          ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: studentInScope, userRole: currentRole })
+          : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
+      }
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
     }
     if (currentRole === "Manager" || currentRole === "Team Lead") {
       const mgrStudents = currentRole === "Manager" && managerDataScope.active ? managerScopedStudents : students;
@@ -1679,6 +1919,7 @@ function App({ initialView = "dashboard" }) {
         notifications: notificationHistory,
         onClearNotifications: () => setNotificationHistory([]),
         onRemoveNotification: (id) => setNotificationHistory((prev) => prev.filter((n) => n.id !== id)),
+        onNotificationNavigate: handleNotificationNavigate,
         onUpdateProfileAvatar: handleUpdateProfileAvatar,
         onUpdateProfileContact: handleUpdateProfileContact,
         navMyTasksCount,
@@ -1686,7 +1927,6 @@ function App({ initialView = "dashboard" }) {
         pipelineEscalationBadge: pipelineEscalationNavBadge,
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
-        whatsappConnectionStatus,
         pageLoading: !appDataLoaded,
         onLogout: () => {
           clearLoginSession();
@@ -1709,21 +1949,43 @@ function App({ initialView = "dashboard" }) {
         employees
       }
     ),
-    /* @__PURE__ */ jsx("div", { className: "fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none", children: notifications.map((n) => /* @__PURE__ */ jsxs(
-      "div",
-      {
-        className: "bg-white border border-gray-200 rounded-xl shadow-xl p-4 flex items-start gap-4 animate-in slide-in-from-right duration-300 pointer-events-auto max-w-sm",
-        children: [
-          /* @__PURE__ */ jsx("div", { className: `w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${n.type === "success" ? "bg-emerald-100 text-emerald-600" : n.type === "warning" ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"}`, children: /* @__PURE__ */ jsx(Bell, { size: 20 }) }),
-          /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ jsx("p", { className: "text-sm font-bold text-slate-900 truncate", children: n.title }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5 leading-relaxed", children: n.message })
-          ] }),
-          /* @__PURE__ */ jsx("button", { onClick: () => setNotifications((prev) => prev.filter((notif) => notif.id !== n.id)), className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 14 }) })
-        ]
-      },
-      n.id
-    )) })
+    /* @__PURE__ */ jsx("div", { ref: toastStackRef, className: "fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none", children: notifications.map((n) => {
+      const toastHasLink = Boolean(n.link && (n.link.taskId || n.link.studentId || n.link.view));
+      return /* @__PURE__ */ jsxs(
+        "div",
+        {
+          className: `bg-white border border-gray-200 rounded-xl shadow-xl p-4 flex items-start gap-4 animate-in slide-in-from-right duration-300 pointer-events-auto max-w-sm${toastHasLink ? " cursor-pointer hover:bg-slate-50" : ""}`,
+          ...(toastHasLink ? {
+            role: "button",
+            tabIndex: 0,
+            onClick: () => handleNotificationNavigate(n),
+            onKeyDown: (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleNotificationNavigate(n);
+              }
+            }
+          } : {}),
+          children: [
+            /* @__PURE__ */ jsx("div", { className: `w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${n.type === "success" ? "bg-emerald-100 text-emerald-600" : n.type === "warning" ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"}`, children: /* @__PURE__ */ jsx(Bell, { size: 20 }) }),
+            /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-sm font-bold text-slate-900 truncate", children: n.title }),
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5 leading-relaxed", children: n.message })
+            ] }),
+            /* @__PURE__ */ jsx("button", {
+              type: "button",
+              onClick: (e) => {
+                e.stopPropagation();
+                setNotifications((prev) => prev.filter((notif) => notif.id !== n.id));
+              },
+              className: "text-slate-400 hover:text-slate-600",
+              children: /* @__PURE__ */ jsx(X, { size: 14 })
+            })
+          ]
+        },
+        n.id
+      );
+    }) })
   ] });
 }
 var App_default = App;

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearAdminAiChats } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
-import { normalizePipelineStatus } from "../pipeline";
+import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
 
 const SUGGESTED_PROMPTS = [
   "Which branch is underperforming this month?",
@@ -114,9 +114,7 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
   const adminEmail = String(currentUser?.email || "").trim().toLowerCase();
   const userAvatar = String(currentUser?.avatar || "").trim() || DEFAULT_USER_AVATAR;
   const overdueTasks = tasks.filter((t) => t.status === "Overdue").length;
-  const totalUnresolvedViolations = students.reduce((acc, s) => {
-    return acc + (s.slaViolations?.filter((v) => !v.resolved).length || 0);
-  }, 0);
+  const totalUnresolvedViolations = students.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
   const totalStudents = students.length;
   const branchesCount = React.useMemo(
     () =>

@@ -1,15 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useRef, useState } from "react";
-import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Mail, Phone, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
+import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Plane, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
+import { PersonContactCard } from "./PersonContactCard";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
-import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "../apiConfig";
-const normalizeCounselorRole = (role) => {
-  const value = String(role || "").trim();
-  if (!value) return "Counselor";
-  return value.toLowerCase() === "consultor" ? "Counselor" : value;
-};
+import { buildStudentDashboardCounselorRoster, buildVisaAgentEntries } from "../studentContactHelpers";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -24,14 +20,8 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
-  const matchedCounselor = employees.find((e) => e.id === student.counselor);
-  const counselor = {
-    name: matchedCounselor?.name || matchedCounselor?.username || student.counselorName || "Assigned Counselor",
-    role: normalizeCounselorRole(matchedCounselor?.role || student.counselorRole),
-    email: matchedCounselor?.email || student.counselorEmail || "Not available",
-    phone: matchedCounselor?.phone || student.counselorPhone || "Not available",
-    avatar: toAbsoluteAssetUrl(matchedCounselor?.avatar || student.counselorAvatar || "")
-  };
+  const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
+  const visaAgentTeam = buildVisaAgentEntries(student, employees);
   const canonical = normalizePipelineStatus(student.status);
   const rawIndex = PIPELINE_STEPS.indexOf(canonical);
   const visualIndex = rawIndex < 0 ? 0 : rawIndex;
@@ -293,38 +283,45 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
       /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between mb-4", children: [
-            /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Your Counselor" }),
+            /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Your counselors" }),
             /* @__PURE__ */ jsx("div", { className: "h-2 w-2 bg-emerald-500 rounded-full animate-pulse", title: "Online Now" })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4 mb-6", children: [
-            /* @__PURE__ */ jsx("div", { className: "h-14 w-14 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xl border-2 border-white shadow-md overflow-hidden", children: counselor.avatar ? /* @__PURE__ */ jsx("img", { src: counselor.avatar, alt: counselor.name, className: "w-full h-full object-cover", referrerPolicy: "no-referrer", onError: (event) => {
-              event.currentTarget.onerror = null;
-              event.currentTarget.src = DEFAULT_USER_AVATAR;
-            } }) : counselor.name.charAt(0) }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("p", { className: "font-bold text-slate-900", children: counselor.name }),
-              /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-500", children: [
-                counselor.role,
-                " \u2022 ",
-                student.country
-              ] })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxs("div", { className: "space-y-3 text-sm text-slate-600 mb-6", children: [
-            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-              /* @__PURE__ */ jsx(Mail, { size: 14, className: "text-slate-400" }),
-              " ",
-              counselor.email
-            ] }),
-            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-              /* @__PURE__ */ jsx(Phone, { size: 14, className: "text-slate-400" }),
-              counselor.phone
-            ] })
-          ] }),
+          counselorTeam.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mb-4", children: "Your counselor details will appear here once assigned." }) : /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-[min(28rem,55vh)] overflow-y-auto pr-1 mb-4", children: counselorTeam.map((c) => /* @__PURE__ */ jsx(
+            PersonContactCard,
+            {
+              name: c.name,
+              role: `${c.role} · ${student.country}`,
+              badges: c.badges,
+              email: c.email,
+              phone: c.phone,
+              avatar: c.avatar,
+              avatarClassName: "h-12 w-12 text-base"
+            },
+            c.id
+          )) }),
           /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-2", children: [
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("messages"), children: "Message" }),
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("calendar"), children: "Book Call" })
           ] })
+        ] }),
+        visaAgentTeam.length > 0 && /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mb-4", children: [
+            /* @__PURE__ */ jsx(Plane, { size: 16, className: "text-indigo-600", strokeWidth: 2 }),
+            /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Visa agents" })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-64 overflow-y-auto pr-1", children: visaAgentTeam.map((v) => /* @__PURE__ */ jsx(
+            PersonContactCard,
+            {
+              name: v.name,
+              role: v.role,
+              badges: [],
+              email: v.email,
+              phone: v.phone,
+              avatar: v.avatar,
+              avatarClassName: "h-12 w-12 text-base"
+            },
+            v.id
+          )) })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-indigo-900 rounded-xl p-6 text-white relative overflow-hidden", children: [
           /* @__PURE__ */ jsxs("div", { className: "relative z-10", children: [

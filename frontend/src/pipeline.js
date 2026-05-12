@@ -74,6 +74,134 @@ export function normalizePipelineStatus(status) {
   return raw;
 }
 
+/**
+ * Counts students per canonical pipeline stage for dashboards (counselor/manager scope).
+ * Unknown / non-canonical statuses are counted under `other`.
+ * @returns {{ byStage: Record<string, number>, other: number, total: number }}
+ */
+export function computePipelineStageCounts(students = []) {
+  const list = Array.isArray(students) ? students : [];
+  const byStage = Object.fromEntries(PIPELINE_STEPS.map((s) => [s, 0]));
+  let other = 0;
+  for (const student of list) {
+    const stage = normalizePipelineStatus(student?.status);
+    if (PIPELINE_STEPS.includes(stage)) {
+      byStage[stage] += 1;
+    } else {
+      other += 1;
+    }
+  }
+  return { byStage, other, total: list.length };
+}
+
+const MS_SEC = 1000;
+const MS_MIN = 60 * MS_SEC;
+const MS_HOUR = 60 * MS_MIN;
+const MS_DAY = 24 * MS_HOUR;
+const MS_WEEK = 7 * MS_DAY;
+
+/**
+ * Overdue duration split into calendar-style weeks (7d), days (0–6), hours (0–23).
+ * @param {number} overdueMs
+ * @returns {{ weeks: number, days: number, hours: number }}
+ */
+export function partitionOverdueMs(overdueMs) {
+  const t = Math.max(0, Math.floor(Number(overdueMs) || 0));
+  const weeks = Math.floor(t / MS_WEEK);
+  let r = t % MS_WEEK;
+  const days = Math.floor(r / MS_DAY);
+  r %= MS_DAY;
+  const hours = Math.floor(r / MS_HOUR);
+  return { weeks, days, hours };
+}
+
+/**
+ * Time remaining until deadline, for a live countdown (includes minutes and seconds).
+ * @param {number} remainingMs
+ * @returns {{ weeks: number, days: number, hours: number, minutes: number, seconds: number }}
+ */
+export function partitionRemainingCountdownMs(remainingMs) {
+  const t = Math.max(0, Math.floor(Number(remainingMs) || 0));
+  const weeks = Math.floor(t / MS_WEEK);
+  let r = t % MS_WEEK;
+  const days = Math.floor(r / MS_DAY);
+  r %= MS_DAY;
+  const hours = Math.floor(r / MS_HOUR);
+  r %= MS_HOUR;
+  const minutes = Math.floor(r / MS_MIN);
+  r %= MS_MIN;
+  const seconds = Math.floor(r / MS_SEC);
+  return { weeks, days, hours, minutes, seconds };
+}
+
+/**
+ * Formats time until a stage SLA deadline. Positive `remainingMs` = time left; overdue uses negative remaining.
+ * Returns structured parts for UI (weeks / days / hours when overdue; full countdown when on time).
+ */
+export function formatRemainingMsForSla(remainingMs) {
+  if (remainingMs <= 0) {
+    const overdue = -remainingMs;
+    const { weeks, days, hours } = partitionOverdueMs(overdue);
+    const mins = Math.floor((overdue % MS_HOUR) / MS_MIN);
+    let text = "Overdue";
+    if (weeks > 0) text = `Overdue · ${weeks}w ${days}d ${hours}h`;
+    else if (days > 0) text = `Overdue · ${days}d ${hours}h`;
+    else if (hours > 0) text = `Overdue · ${hours}h ${mins}m`;
+    else text = `Overdue · ${Math.max(1, mins)}m`;
+    return { text, isOverdue: true, overdue: { weeks, days, hours } };
+  }
+  const cd = partitionRemainingCountdownMs(remainingMs);
+  const { weeks, days, hours, minutes, seconds } = cd;
+  let text = `${seconds}s left`;
+  if (weeks > 0) text = `${weeks}w ${days}d ${hours}h left`;
+  else if (days > 0) text = `${days}d ${hours}h ${minutes}m ${seconds}s left`;
+  else if (hours > 0) text = `${hours}h ${minutes}m ${seconds}s left`;
+  else if (minutes > 0) text = `${minutes}m ${seconds}s left`;
+  return { text, isOverdue: false, countdown: cd };
+}
+
+/**
+ * UI color for stage SLA chip: green while more than 20% of SLA duration remains,
+ * orange in the final 20%, red when past the deadline.
+ */
+export function getStageSlaVisualTone(remainingMs, slaMs) {
+  if (remainingMs <= 0) return "red";
+  const total = typeof slaMs === "number" && slaMs > 0 ? slaMs : 0;
+  if (total > 0 && remainingMs <= total * 0.2) return "orange";
+  return "green";
+}
+
+/**
+ * Live countdown for the student's current pipeline stage vs STAGE_CONFIG SLA (from stageEnteredAt or createdAt).
+ * @returns {{ stage: string, slaLabel: string, text: string, remainingMs: number, slaMs: number, visualTone: 'green'|'orange'|'red', isOverdue: boolean, overdue?: { weeks: number, days: number, hours: number }, countdown?: { weeks: number, days: number, hours: number, minutes: number, seconds: number } } | null}
+ */
+export function getCurrentStageSlaDisplay(student, options = {}) {
+  const now = typeof options.now === "number" ? options.now : Date.now();
+  const stage = normalizePipelineStatus(student?.status);
+  if (!PIPELINE_STEPS.includes(stage)) return null;
+  const cfg = STAGE_CONFIG[stage];
+  if (!cfg?.slaMs) return null;
+  const enteredRaw = student?.stageEnteredAt || student?.createdAt;
+  if (!enteredRaw) return null;
+  const start = new Date(enteredRaw).getTime();
+  if (Number.isNaN(start)) return null;
+  const deadlineMs = start + cfg.slaMs;
+  const remainingMs = deadlineMs - now;
+  const formatted = formatRemainingMsForSla(remainingMs);
+  const visualTone = getStageSlaVisualTone(remainingMs, cfg.slaMs);
+  return {
+    stage,
+    slaLabel: cfg.slaLabel,
+    text: formatted.text,
+    remainingMs,
+    slaMs: cfg.slaMs,
+    visualTone,
+    isOverdue: formatted.isOverdue,
+    overdue: formatted.overdue,
+    countdown: formatted.countdown
+  };
+}
+
 export function branchesMatch(branchA, branchB) {
   const a = String(branchA || "").trim().toLowerCase();
   const b = String(branchB || "").trim().toLowerCase();
@@ -92,6 +220,18 @@ export function counselorOwnsStudent(student, currentUser) {
     String(currentUser.username || "").trim().toLowerCase()
   ].filter(Boolean);
   return candidates.some((c) => c && cid === c);
+}
+
+/** Same scope as App.js counselorScopedStudents: assigned, inquiry, or prior counselor (counselorHistory). */
+export function studentMatchesCounselorIdentitySet(student, identitySet) {
+  if (!student || !identitySet || identitySet.size === 0) return false;
+  const n = (v) => String(v || "").trim().toLowerCase();
+  const counselorId = n(student.counselor);
+  const inquiryId = n(student.inquiryCounselorId);
+  const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
+  if (counselorId && identitySet.has(counselorId)) return true;
+  if (inquiryId && identitySet.has(inquiryId)) return true;
+  return history.some((id) => identitySet.has(n(id)));
 }
 
 export function findManagersForBranch(branch, employees = []) {
@@ -144,13 +284,60 @@ export function filterEscalationsForManager(escalations, managerBranch, employee
   return escalations.filter((e) => branchesMatch(e.branch, branch));
 }
 
+/**
+ * `students` must already be counselor-scoped (same rules as App.js counselorScopedStudents).
+ * Do not re-filter with counselorOwnsStudent — that only checks student.counselor and misses
+ * inquiryCounselorId / counselorHistory matches.
+ */
 export function filterEscalationsForCounselor(escalations, currentUser, students) {
-  const ownedIds = new Set(
-    (students || [])
-      .filter((s) => counselorOwnsStudent(s, currentUser))
-      .map((s) => String(s.id || "").trim())
+  void currentUser;
+  const scopedIds = new Set(
+    (students || []).map((s) => String(s?.id || "").trim()).filter(Boolean)
   );
-  return escalations.filter((e) => ownedIds.has(String(e.studentId || "").trim()));
+  return escalations.filter((e) => scopedIds.has(String(e.studentId || "").trim()));
+}
+
+export function documentTypeMatchesSlaRequirement(docType, requiredDocType) {
+  const dt = String(docType || "");
+  const req = String(requiredDocType || "");
+  if (!req) return false;
+  return dt === req || dt.includes(req) || req.includes(dt);
+}
+
+/** True when a checklist requirement is covered by a staff-verified upload (same type rules as pipeline advance). */
+export function requirementSatisfiedByVerifiedDocument(studentDocuments, requiredDocType) {
+  const docs = Array.isArray(studentDocuments) ? studentDocuments : [];
+  return docs.some((d) => {
+    if (!documentTypeMatchesSlaRequirement(d?.type, requiredDocType)) return false;
+    const st = String(d?.status || "").trim().toLowerCase();
+    return st === "verified";
+  });
+}
+
+/** Items from a stored violation that are still missing given current documents. */
+export function getEffectiveSlaViolationMissingItems(violation, studentDocuments) {
+  if (!violation) return [];
+  const missingItems = Array.isArray(violation.missingItems) ? violation.missingItems.filter(Boolean) : [];
+  return missingItems.filter((req) => !requirementSatisfiedByVerifiedDocument(studentDocuments, req));
+}
+
+/** Updates each violation's `resolved` flag from verified documents (does not shrink stored `missingItems`). */
+export function reconcileStudentSlaViolationsWithDocuments(student) {
+  const raw = student?.slaViolations;
+  if (!Array.isArray(raw) || raw.length === 0) return raw;
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  return raw.map((v) => {
+    if (!v) return v;
+    const remaining = getEffectiveSlaViolationMissingItems(v, docs);
+    return { ...v, resolved: remaining.length === 0 };
+  });
+}
+
+/** Number of SLA requirement violation records that still have at least one unverified mandatory item. */
+export function countOpenSlaRequirementViolations(student) {
+  const violations = Array.isArray(student?.slaViolations) ? student.slaViolations : [];
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  return violations.filter((v) => getEffectiveSlaViolationMissingItems(v, docs).length > 0).length;
 }
 
 /**
@@ -165,12 +352,15 @@ export function computeRequirementViolations(students = []) {
   const out = [];
   for (const student of list) {
     const violations = Array.isArray(student?.slaViolations) ? student.slaViolations : [];
+    const docs = Array.isArray(student?.documents) ? student.documents : [];
     const seen = new Map();
     for (const v of violations) {
-      if (!v || v.resolved) continue;
+      if (!v) continue;
       const missingItems = Array.isArray(v.missingItems) ? v.missingItems.filter(Boolean) : [];
+      const effectiveMissing = missingItems.filter((req) => !requirementSatisfiedByVerifiedDocument(docs, req));
+      if (effectiveMissing.length === 0) continue;
       const stage = v.stage || normalizePipelineStatus(student.status) || "";
-      const dedupeKey = `${stage}::${[...missingItems].map((s) => String(s).trim().toLowerCase()).sort().join("|")}`;
+      const dedupeKey = `${stage}::${[...effectiveMissing].map((s) => String(s).trim().toLowerCase()).sort().join("|")}`;
       const existing = seen.get(dedupeKey);
       if (existing) {
         const existingTs = existing.timestamp ? new Date(existing.timestamp).getTime() : 0;
@@ -188,7 +378,7 @@ export function computeRequirementViolations(students = []) {
         branch: student.branch || "",
         counselorId: student.counselor || "",
         stage,
-        missingItems,
+        missingItems: effectiveMissing,
         timestamp: v.timestamp || "",
         violationId: v.id || `${student.id}-${stage || "stage"}`,
         duplicateCount: 1
@@ -211,10 +401,9 @@ export function filterRequirementViolationsForManager(rows, managerBranch) {
 }
 
 export function filterRequirementViolationsForCounselor(rows, currentUser, students) {
-  const ownedIds = new Set(
-    (students || [])
-      .filter((s) => counselorOwnsStudent(s, currentUser))
-      .map((s) => String(s.id || "").trim())
+  void currentUser;
+  const scopedIds = new Set(
+    (students || []).map((s) => String(s?.id || "").trim()).filter(Boolean)
   );
-  return rows.filter((r) => ownedIds.has(String(r.studentId || "").trim()));
+  return rows.filter((r) => scopedIds.has(String(r.studentId || "").trim()));
 }

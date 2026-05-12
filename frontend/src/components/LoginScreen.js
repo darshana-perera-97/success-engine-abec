@@ -94,14 +94,23 @@ const LoginScreen = ({ onLoggedIn }) => {
         /* @__PURE__ */ jsxs("div", {
           className: "p-6 border-b border-gray-100 bg-gray-50/50",
           children: [
-            /* @__PURE__ */ jsx("div", {
-              className: "flex justify-center mb-5",
-              children: /* @__PURE__ */ jsx("img", {
-                src: "/MainLogo.png",
-                alt: "ABEC Premier",
-                className: "h-10 w-auto object-contain max-w-[220px]",
-                referrerPolicy: "no-referrer"
-              })
+            /* @__PURE__ */ jsxs("div", {
+              className: "flex flex-col items-center mb-5",
+              children: [
+                /* @__PURE__ */ jsx("img", {
+                  src: "/company-full-logo.png",
+                  alt: "ABEC",
+                  className:
+                    "h-[8.25rem] sm:h-[7.5rem] w-auto object-contain max-w-[510px]",
+                  referrerPolicy: "no-referrer"
+                }),
+                // /* @__PURE__ */ jsx("img", {
+                //   src: "/MainLogo.png",
+                //   alt: "NexgenAI",
+                //   className: "h-4 sm:h-5 w-auto object-contain max-w-[140px] opacity-90",
+                //   referrerPolicy: "no-referrer"
+                // })
+              ]
             }),
             /* @__PURE__ */ jsx("h1", {
               className: "font-semibold text-lg text-[#0F172A] text-center",
@@ -199,9 +208,17 @@ const LoginScreen = ({ onLoggedIn }) => {
               isLoading,
               children: "Sign in"
             }),
-            /* @__PURE__ */ jsx("p", {
-              className: "text-[11px] text-center text-slate-400 leading-relaxed",
-              children: "Use admin@gmail.com and admin@123 (from backend .env)."
+            /* @__PURE__ */ jsxs("div", {
+              className: "inline-flex w-full flex-row flex-wrap items-center justify-center gap-2 mt-5 text-[11px] text-slate-400",
+              children: [
+                /* @__PURE__ */ jsx("span", { className: "leading-none shrink-0", children: "Powered by" }),
+                /* @__PURE__ */ jsx("img", {
+                  src: "/MainLogo.png",
+                  alt: "NexgenAI",
+                  className: "block h-4 sm:h-5 w-auto shrink-0 object-contain max-w-[140px] opacity-90",
+                  referrerPolicy: "no-referrer"
+                })
+              ]
             })
           ]
         })

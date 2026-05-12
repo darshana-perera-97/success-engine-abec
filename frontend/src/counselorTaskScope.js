@@ -22,6 +22,27 @@ function buildCounselorIdentitySet(currentUser) {
   return set;
 }
 
+/**
+ * Same visibility rules as {@link filterTasksForCounselor}, but uses an explicit
+ * identity set (e.g. merged account + employee aliases for manager roster math).
+ *
+ * @param {Array} tasks
+ * @param {Set<string>} identitySet  normalized lowercase ids/emails/names
+ * @param {Array} monitoredStudents
+ * @returns {Array}
+ */
+export function filterTasksForCounselorIdentities(tasks, identitySet, monitoredStudents) {
+  const studentIds = buildMonitoredStudentIdSet(monitoredStudents);
+  return (tasks || []).filter((task) => {
+    const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+    const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
+    const isAssigned = assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
+    const isRelatedCounselorTask = relatedCounselorIds.some((counselorId) => identitySet.has(normalize(counselorId)));
+    const isMonitoredStudentTask = studentIds.has(String(task.student_id || task.studentId || "").trim());
+    return isAssigned || isRelatedCounselorTask || isMonitoredStudentTask;
+  });
+}
+
 function buildMonitoredStudentIdSet(monitoredStudents) {
   return new Set(
     (monitoredStudents || [])
@@ -38,15 +59,7 @@ function buildMonitoredStudentIdSet(monitoredStudents) {
  */
 export function filterTasksForCounselor(tasks, currentUser, monitoredStudents) {
   const identitySet = buildCounselorIdentitySet(currentUser);
-  const studentIds = buildMonitoredStudentIdSet(monitoredStudents);
-  return (tasks || []).filter((task) => {
-    const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
-    const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
-    const isAssigned = assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
-    const isRelatedCounselorTask = relatedCounselorIds.some((counselorId) => identitySet.has(normalize(counselorId)));
-    const isMonitoredStudentTask = studentIds.has(String(task.student_id || "").trim());
-    return isAssigned || isRelatedCounselorTask || isMonitoredStudentTask;
-  });
+  return filterTasksForCounselorIdentities(tasks, identitySet, monitoredStudents);
 }
 
 export function isTaskOverdueByDate(task) {

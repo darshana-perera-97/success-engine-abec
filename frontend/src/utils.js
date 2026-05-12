@@ -6,13 +6,14 @@ const EXCHANGE_RATES = {
   "CAD": 228.4,
   "AUD": 205.15,
   "EUR": 338.1,
+  "NZD": 205.15,
   "LKR": 1
 };
 const RATE_UPDATED_AT = "March 29, 2026";
-function formatLKR(amount, fromCurrency = "USD") {
+function formatLKR(amount, fromCurrency = "USD", ratesMap = EXCHANGE_RATES) {
   const numericAmount = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(numericAmount)) return "LKR 0";
-  const lkrAmount = numericAmount * (EXCHANGE_RATES[fromCurrency] || EXCHANGE_RATES["USD"]);
+  const lkrAmount = numericAmount * (ratesMap[fromCurrency] || ratesMap["USD"]);
   if (lkrAmount >= 135e5) {
     return `LKR ${(lkrAmount / 1e6).toFixed(2)}M`;
   }

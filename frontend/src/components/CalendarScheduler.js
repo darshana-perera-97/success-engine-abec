@@ -61,9 +61,22 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const formatDate = (date) => {
     return date.toLocaleDateString("en-CA");
   };
-  const getCounselor = (id) => employees.find((e) => e.id === id);
+  const getCounselor = (id) => employees.find((e) => String(e?.id ?? "") === String(id ?? ""));
   const studentPool = studentsLookup || [];
-  const getStudent = (id) => studentPool.find((s) => s.id === id);
+  const getStudent = (id) => studentPool.find((s) => String(s?.id ?? "") === String(id ?? ""));
+  const resolveSessionParticipants = (apt) => {
+    if (!apt) {
+      return { studentDisplay: "", counselorDisplay: "" };
+    }
+    const st = getStudent(apt.studentId);
+    const co = getCounselor(apt.counselorId);
+    return {
+      studentDisplay:
+        (st?.name && String(st.name).trim()) || String(apt.studentId || "").trim() || "Unknown student",
+      counselorDisplay:
+        (co?.name && String(co.name).trim()) || String(apt.counselorId || "").trim() || "Unknown counselor"
+    };
+  };
   const toSriLankaTimestamp = (dateStr, timeStr) => {
     return new Date(`${dateStr}T${timeStr}:00+05:30`).getTime();
   };
@@ -380,6 +393,10 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const pendingReview = currentRole === "Counselor" ? appointments.filter((a) => a.counselorId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : [];
   const studentUpcomingMeetings = currentRole === "Student" ? appointments.filter((a) => a.studentId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) > /* @__PURE__ */ new Date()).length : 0;
   const hasStudentMeetingLimit = currentRole === "Student" && studentUpcomingMeetings >= 3;
+  const outcomeModalApt = outcomeModalOpen && selectedAptId ? appointments.find((a) => a.id === selectedAptId) : null;
+  const meetingLinkModalApt = meetingLinkModalOpen && meetingLinkAptId ? appointments.find((a) => a.id === meetingLinkAptId) : null;
+  const outcomeSessionParticipants = outcomeModalApt ? resolveSessionParticipants(outcomeModalApt) : null;
+  const meetingLinkSessionParticipants = meetingLinkModalApt ? resolveSessionParticipants(meetingLinkModalApt) : null;
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500 h-full flex flex-col", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-end shrink-0", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -544,9 +561,8 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
               }
             }).map((apt) => {
               const isPast = /* @__PURE__ */ new Date(`${apt.date}T${apt.time}`) < /* @__PURE__ */ new Date();
-              const student = getStudent(apt.studentId);
-              const counselor = getCounselor(apt.counselorId);
-              const otherName = currentRole === "Student" ? counselor?.name : student?.name;
+              const { studentDisplay, counselorDisplay } = resolveSessionParticipants(apt);
+              const participantsTitle = `${studentDisplay} · ${counselorDisplay}`;
               return /* @__PURE__ */ jsxs("div", { className: "p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group", children: [
                 /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
                   /* @__PURE__ */ jsxs("div", { className: `flex flex-col items-center justify-center w-12 h-12 rounded-lg border ${isPast ? "bg-slate-50 border-slate-200 text-slate-400" : "bg-indigo-50 border-indigo-100 text-indigo-700"}`, children: [
@@ -564,11 +580,21 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                         apt.duration,
                         "m)"
                       ] }),
-                      /* @__PURE__ */ jsxs("span", { className: "flex items-center gap-1", children: [
-                        /* @__PURE__ */ jsx(User, { size: 12 }),
-                        " ",
-                        otherName
-                      ] }),
+                      /* @__PURE__ */ jsxs("span", {
+                        className: "flex items-center gap-1 min-w-0 flex-wrap",
+                        title: participantsTitle,
+                        children: [
+                          /* @__PURE__ */ jsx(User, { size: 12, className: "shrink-0" }),
+                          /* @__PURE__ */ jsxs("span", {
+                            className: "text-slate-600 min-w-0",
+                            children: [
+                              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: studentDisplay }),
+                              /* @__PURE__ */ jsx("span", { className: "text-slate-400 mx-1", children: "·" }),
+                              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: counselorDisplay })
+                            ]
+                          })
+                        ]
+                      }),
                       apt.status === "Completed" && /* @__PURE__ */ jsxs("span", { className: "text-emerald-600 flex items-center gap-1", children: [
                         /* @__PURE__ */ jsx(CheckCircle, { size: 12 }),
                         " Completed"
@@ -601,7 +627,16 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       ] })
     ] }),
     outcomeModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
-      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Log Session Outcome" }),
+      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-2", children: "Log Session Outcome" }),
+      outcomeSessionParticipants && /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mb-4 flex flex-wrap items-center gap-x-1 gap-y-0.5", children: [
+        /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-400", children: "Student" }),
+        " ",
+        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: outcomeSessionParticipants.studentDisplay }),
+        /* @__PURE__ */ jsx("span", { className: "text-slate-300 px-1", children: "·" }),
+        /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-400", children: "Counselor" }),
+        " ",
+        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: outcomeSessionParticipants.counselorDisplay })
+      ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase block mb-2", children: "Status" }),
@@ -644,7 +679,16 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       ] })
     ] }) }),
     meetingLinkModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
-      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Add Meeting Link" }),
+      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-2", children: "Add Meeting Link" }),
+      meetingLinkSessionParticipants && /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mb-4 flex flex-wrap items-center gap-x-1 gap-y-0.5", children: [
+        /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-400", children: "Student" }),
+        " ",
+        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: meetingLinkSessionParticipants.studentDisplay }),
+        /* @__PURE__ */ jsx("span", { className: "text-slate-300 px-1", children: "·" }),
+        /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-400", children: "Counselor" }),
+        " ",
+        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: meetingLinkSessionParticipants.counselorDisplay })
+      ] }),
       meetingLinkError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: meetingLinkError }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
         /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase block", children: "Meeting URL" }),

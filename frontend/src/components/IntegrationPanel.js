@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { connectWhatsapp, disconnectWhatsapp, getWhatsappStatus } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
+
+function IntegrationSpinner({ title, description }) {
+  return (
+    <div className="h-full min-h-[220px] flex flex-col items-center justify-center gap-3 text-center px-4">
+      <Loader2 className="h-10 w-10 animate-spin text-emerald-600" aria-hidden />
+      <p className="text-sm font-medium text-slate-700">{title}</p>
+      {description ? <p className="text-xs text-slate-500 max-w-xs">{description}</p> : null}
+    </div>
+  );
+}
 
 const STATUS_COPY = {
   disconnected: "Disconnected",
@@ -25,6 +36,12 @@ export function IntegrationPanel({ currentUser }) {
   }, [state?.status]);
   const canDisconnect = state?.status === "connected" || state?.status === "authenticated";
   const isConnected = canDisconnect;
+  const statusKey = String(state?.status || "disconnected");
+  const hasQrCode = Boolean(state?.qrCodeDataUrl);
+  const isSessionReady = statusKey === "connected";
+  const isLinkingWhatsapp = statusKey === "authenticated";
+  const isQrCodeLoading =
+    !isSessionReady && !isLinkingWhatsapp && !hasQrCode && (loading || statusKey === "connecting");
   const formatDateTime = (value) => {
     if (!value) return "-";
     const date = new Date(value);
@@ -101,7 +118,9 @@ export function IntegrationPanel({ currentUser }) {
             </p>
           </div>
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
-            <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-500" : "bg-amber-500"}`} />
+            <span
+              className={`w-2 h-2 rounded-full ${isSessionReady ? "bg-emerald-500" : "bg-amber-500"}`}
+            />
             {statusLabel}
           </div>
         </div>
@@ -134,10 +153,10 @@ export function IntegrationPanel({ currentUser }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">
-            {isConnected ? "Connected Account" : "QR Code"}
+            {isSessionReady ? "Connected Account" : isLinkingWhatsapp ? "Linking account" : "QR Code"}
           </p>
           <div className="mt-4 min-h-[260px] rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
-            {isConnected ? (
+            {isSessionReady ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <img
                   src={whatsappProfilePicUrl || DEFAULT_USER_AVATAR}
@@ -152,6 +171,16 @@ export function IntegrationPanel({ currentUser }) {
                 <p className="mt-3 text-lg font-bold text-slate-900">{whatsappName}</p>
                 <p className="text-sm text-slate-500">{whatsappNumber}</p>
               </div>
+            ) : isLinkingWhatsapp ? (
+              <IntegrationSpinner
+                title="Linking WhatsApp to your account"
+                description="Finishing sign-in and loading your profile. This usually takes a few seconds."
+              />
+            ) : isQrCodeLoading ? (
+              <IntegrationSpinner
+                title="Loading QR code"
+                description="Starting WhatsApp and preparing your scan code."
+              />
             ) : state?.qrCodeDataUrl ? (
               <div className="h-full flex items-center justify-center">
                 <img src={state.qrCodeDataUrl} alt="WhatsApp connection QR code" className="w-56 h-56 object-contain" />
@@ -179,11 +208,11 @@ export function IntegrationPanel({ currentUser }) {
           <div className="mt-4 rounded-xl border border-slate-200 divide-y divide-slate-100">
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">WhatsApp Name</span>
-              <span className="text-sm font-semibold text-slate-900">{isConnected ? whatsappName : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady ? whatsappName : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Contact Number</span>
-              <span className="text-sm font-semibold text-slate-900">{isConnected ? whatsappNumber : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady ? whatsappNumber : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Connected At</span>

@@ -278,7 +278,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           "div",
           {
             onClick: () => setSelectedConversationId(user.id),
-            className: `p-4 border-b border-gray-100 cursor-pointer transition-colors hover:bg-white
+            className: `p-4 border-b border-gray-100 cursor-pointer transition-colors hover:bg-white outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]
                                     ${isSelected ? "bg-white border-l-4 border-l-indigo-600 shadow-sm" : "border-l-4 border-l-transparent text-slate-600"}
                                 `,
             children: [
@@ -370,7 +370,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       ] }) : /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-center gap-2.5", children: [
         /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*", className: "hidden", onChange: handleAttachmentChange }),
-          /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
         ] }),
         /* @__PURE__ */ jsx(
           "input",

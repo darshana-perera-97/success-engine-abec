@@ -2,7 +2,8 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
 import { DollarSign, CheckCircle, Clock, AlertCircle, FileText, Plus, Download, Upload, Eye } from "lucide-react";
 import { Button } from "./Button";
-import { formatLKR, formatRawLKR, EXCHANGE_RATES, RATE_UPDATED_AT } from "../utils";
+import { formatLKR, formatRawLKR } from "../utils";
+import { useExchangeRates } from "../useExchangeRates";
 import { uploadInvoicePaymentProof } from "../authApi";
 const escapeInvoiceSvgText = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const generateInvoiceImageDataUrl = async ({ invoice, student }) => {
@@ -76,9 +77,10 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
   const [newDueDate, setNewDueDate] = useState("");
   const [createError, setCreateError] = useState("");
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const { rates: exchangeRates, updatedAt: rateUpdatedAt, live: ratesLive } = useExchangeRates();
   const studentInvoices = invoices.filter((inv) => inv.studentId === student.id).sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime());
-  const totalPaid = studentInvoices.filter((i) => i.status === "Paid").reduce((acc, curr) => acc + curr.amount * (EXCHANGE_RATES[curr.currency] || 1), 0);
-  const totalPending = studentInvoices.filter((i) => i.status === "Pending" || i.status === "Overdue" || i.status === "Verifying").reduce((acc, curr) => acc + curr.amount * (EXCHANGE_RATES[curr.currency] || 1), 0);
+  const totalPaid = studentInvoices.filter((i) => i.status === "Paid").reduce((acc, curr) => acc + curr.amount * (exchangeRates[curr.currency] || 1), 0);
+  const totalPending = studentInvoices.filter((i) => i.status === "Pending" || i.status === "Overdue" || i.status === "Verifying").reduce((acc, curr) => acc + curr.amount * (exchangeRates[curr.currency] || 1), 0);
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!onCreateInvoice) return;
@@ -249,7 +251,8 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-400 flex items-center gap-1", children: [
           /* @__PURE__ */ jsx(Clock, { size: 10 }),
           " Rates updated: ",
-          RATE_UPDATED_AT
+          rateUpdatedAt,
+          ratesLive ? "" : " (fallback)"
         ] })
       ] }),
       isStaff && /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: () => setIsCreateOpen(true), children: [
@@ -359,7 +362,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
           ] }),
           inv.currency !== "LKR" && /* @__PURE__ */ jsxs("span", { className: "text-[10px] text-slate-400 font-normal", children: [
             "\u2248 ",
-            formatLKR(inv.amount, inv.currency)
+            formatLKR(inv.amount, inv.currency, exchangeRates)
           ] })
         ] }) }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`, children: inv.status }) }),
@@ -437,7 +440,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         ] }),
         selectedInvoice.currency !== "LKR" && /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-1", children: [
           "\u2248 ",
-          formatLKR(selectedInvoice.amount, selectedInvoice.currency)
+          formatLKR(selectedInvoice.amount, selectedInvoice.currency, exchangeRates)
         ] }),
         /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600 mt-2", children: selectedInvoice.description })
       ] }),

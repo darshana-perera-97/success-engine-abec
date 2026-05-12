@@ -1,10 +1,21 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2 } from "lucide-react";
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
-const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUpdateTasks, onUploadDocument, onUploadProfileOtherDocument }) => {
+const DELETE_REJECTED_ROLES = new Set(["Counselor", "Manager", "Admin"]);
+const DocumentManager = ({
+  student,
+  userRole,
+  onUpdateDocument,
+  onDeleteDocument,
+  tasks = [],
+  onUpdateTasks,
+  onUploadDocument,
+  onUploadProfileOtherDocument
+}) => {
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
+  const [deleteRejectedModal, setDeleteRejectedModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
   const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null });
   const [isUploading, setIsUploading] = useState(false);
@@ -191,6 +202,7 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
     }));
   }, [student.country, studentDocuments]);
   const isStaff = userRole !== "Student";
+  const canDeleteRejectedUpload = DELETE_REJECTED_ROLES.has(userRole) && typeof onDeleteDocument === "function";
   const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
   const totalVerified = checklist.reduce((acc, cat) => acc + cat.items.filter((item) => item.uploadedFiles.some((f) => f.status === "Verified")).length, 0);
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
@@ -236,6 +248,19 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
               /* @__PURE__ */ jsx(AlertCircle, { size: 14, className: "text-rose-500 cursor-help" }),
               /* @__PURE__ */ jsx("div", { className: "absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover/tip:block animate-in fade-in zoom-in-95", children: uploadedFile.rejectionReason })
             ] }),
+            canDeleteRejectedUpload && uploadedFile.status === "Rejected" && /* @__PURE__ */ jsxs(
+              "button",
+              {
+                type: "button",
+                onClick: () => setDeleteRejectedModal({ isOpen: true, doc: uploadedFile }),
+                title: "Delete rejected upload",
+                className: "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700 border border-transparent hover:border-rose-200 text-sm font-medium shrink-0",
+                children: [
+                  /* @__PURE__ */ jsx(Trash2, { size: 18, strokeWidth: 2.25, className: "shrink-0" }),
+                  "Delete"
+                ]
+              }
+            ),
             /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200", children: [
               uploadedFile.url && /* @__PURE__ */ jsxs(Fragment, { children: [
                 /* @__PURE__ */ jsx("a", { href: uploadedFile.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
@@ -297,6 +322,34 @@ const DocumentManager = ({ student, userRole, onUpdateDocument, tasks = [], onUp
         ] }, `profile-other-${slotNum}`);
       }) })
     ] }),
+    deleteRejectedModal.isOpen && deleteRejectedModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Delete rejected document?" }),
+        /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+          "Remove ",
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: deleteRejectedModal.doc.name }),
+          " from this student’s record. The stored file will be deleted to free space. The student can upload again when ready."
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-5 flex justify-end gap-2", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setDeleteRejectedModal({ isOpen: false, doc: null }), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, {
+          variant: "danger",
+          onClick: async () => {
+            const doc = deleteRejectedModal.doc;
+            setDeleteRejectedModal({ isOpen: false, doc: null });
+            if (!doc) return;
+            const persistResult = await onDeleteDocument?.(doc);
+            if (persistResult && persistResult.ok === false) {
+              showWhatsappNotification(`Could not delete: ${persistResult.error || "Save failed."}`);
+            } else {
+              showWhatsappNotification(`Rejected upload "${doc.name}" was removed.`);
+            }
+          },
+          children: "Delete"
+        })
+      ] })
+    ] }) }),
     rejectionModal.isOpen && rejectionModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-rose-900", children: "Rejection Reason" }),

@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { Clock, Users, CheckCircle, ArrowRight, CheckSquare, X } from "lucide-react";
+import { Clock, Users, CheckCircle, ArrowRight, CheckSquare, X, AlertTriangle } from "lucide-react";
 import { Button } from "./Button";
-import { BarChart, Bar, ResponsiveContainer, XAxis } from "recharts";
+import { BarChart, Bar, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getBranches, getChats, getCountries, moveStudentToRequests } from "../authApi";
 import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
-import { normalizePipelineStatus } from "../pipeline";
+import {
+  PIPELINE_STEPS,
+  normalizePipelineStatus,
+  computePipelineEscalations,
+  computePipelineStageCounts,
+  computeRequirementViolations,
+  countOpenSlaRequirementViolations
+} from "../pipeline";
 const INQUIRY_SLA_MS = 60 * 60 * 1000;
+const DAY_MS = 86400000;
+function localDayStartMs(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
 function parseIsoMs(value) {
   if (!value) return null;
   const ms = new Date(value).getTime();
@@ -35,6 +48,21 @@ function formatIntakeRemaining(ms) {
 function isNewStudentIntakeTask(task) {
   return /new student intake/i.test(String(task?.task || ""));
 }
+function CounselorWeeklyActivityTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0]?.payload;
+  if (!p) return null;
+  return /* @__PURE__ */ jsxs("div", {
+    className: "rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] shadow-sm",
+    children: [
+      /* @__PURE__ */ jsx("div", { className: "font-semibold text-slate-800 mb-1", children: p.name }),
+      /* @__PURE__ */ jsxs("div", { className: "text-slate-600 tabular-nums", children: ["Tasks completed: ", p.tasks] }),
+      /* @__PURE__ */ jsxs("div", { className: "text-slate-600 tabular-nums", children: ["Messages sent: ", p.messages] }),
+      /* @__PURE__ */ jsxs("div", { className: "text-slate-500 mt-1 pt-1 border-t border-slate-100 tabular-nums", children: ["Total: ", p.total] })
+    ]
+  });
+}
+const PRIORITY_ACTION_ITEMS_LIMIT = 7;
 const EDUCATION_LEVELS = [
   "High school",
   "Foundation / pathway",
@@ -45,7 +73,7 @@ const EDUCATION_LEVELS = [
   "Professional qualification",
   "Other"
 ];
-const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask, assignmentAlerts = [], onDismissAssignmentAlert, onUpdateStudent, onStudentMovedToRequests }) => {
+const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask, onOpenStudentTask, assignmentAlerts = [], onDismissAssignmentAlert, onUpdateStudent, onStudentMovedToRequests }) => {
   const [chatMessages, setChatMessages] = useState([]);
   const [clockTick, setClockTick] = useState(0);
   const [countries, setCountries] = useState([]);
@@ -111,14 +139,30 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
     };
   }, []);
   const myStudents = students;
+  const stageEscalations = useMemo(() => computePipelineEscalations(myStudents || []), [myStudents]);
+  const requirementViolationRows = useMemo(() => computeRequirementViolations(myStudents || []), [myStudents]);
   const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents);
   const overdueTasksCount = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
-  const totalUnresolvedViolations = myStudents.reduce((acc, s) => {
-    return acc + (s.slaViolations?.filter((v) => !v.resolved).length || 0);
-  }, 0);
+  const totalUnresolvedViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
   const slaScore = Math.max(0, 100 - overdueTasksCount * 5 - totalUnresolvedViolations * 2);
   const overdueTasks = myTasks.filter((t) => isTaskOverdueByDate(t));
-  const pendingTasks = myTasks.filter((t) => t.status === "Pending" || t.status === "In Progress" || t.status === "In Review");
+  const overdueTasksSorted = useMemo(() => {
+    const list = [...overdueTasks];
+    const dueMs = (t) => {
+      if (!t.dueDate) return t.status === "Overdue" ? 0 : Number.MAX_SAFE_INTEGER;
+      const ms = new Date(String(t.dueDate)).getTime();
+      return Number.isNaN(ms) ? Number.MAX_SAFE_INTEGER : ms;
+    };
+    list.sort((a, b) => dueMs(a) - dueMs(b) || String(a.id || "").localeCompare(String(b.id || "")));
+    return list;
+  }, [overdueTasks]);
+  const pendingTasks = myTasks.filter(
+    (t) =>
+      t.status === "Pending" ||
+      t.status === "In Progress" ||
+      t.status === "In Review" ||
+      t.status === "Overdue"
+  );
   const pendingTasksOpen = myTasks.filter((t) => t.status === "Pending" || t.status === "In Progress");
   const completedTasks = myTasks.filter((t) => t.status === "Completed");
   const pendingReviewTasks = myTasks.filter((t) => t.status === "In Review");
@@ -147,13 +191,23 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
   const chatScore = inboundFromStudents > 0 ? Math.min(100, counselorReplies / Math.max(1, inboundFromStudents) * 100) : 100;
   const baseActivity = 0.4 * taskCompletionPct + 0.3 * chatScore + 0.3 * reviewScore;
   const performanceScore = Math.max(0, Math.min(100, Math.round(baseActivity / 100 * slaScore)));
-  const pipelineTotals = myStudents.reduce((acc, student) => {
-    const stage = normalizePipelineStatus(student?.status);
-    if (stage === "Inquiry") acc.inquiries += 1;
-    if (stage === "Documentation") acc.docsPending += 1;
-    if (stage === "Visa") acc.visa += 1;
-    return acc;
-  }, { inquiries: 0, docsPending: 0, visa: 0 });
+  const pipelineStageCounts = useMemo(() => computePipelineStageCounts(myStudents || []), [myStudents]);
+  const pipelineHealthRows = useMemo(() => {
+    const palette = ["#6366F1", "#F59E0B", "#A855F7", "#F97316", "#14B8A6", "#22C55E", "#38BDF8"];
+    const rows = PIPELINE_STEPS.map((stage, idx) => ({
+      stage,
+      count: pipelineStageCounts.byStage[stage] ?? 0,
+      color: palette[idx % palette.length]
+    }));
+    if (pipelineStageCounts.other > 0) {
+      rows.push({
+        stage: "Other / unmapped",
+        count: pipelineStageCounts.other,
+        color: "#94A3B8"
+      });
+    }
+    return rows;
+  }, [pipelineStageCounts]);
   const inquiryStageStudents = myStudents.filter((student) => normalizePipelineStatus(student?.status) === "Inquiry");
   const studentById = useMemo(() => {
     const map = new Map();
@@ -187,7 +241,21 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
       return !reassignedAlertStudentIds.has(sid);
     });
   }, [inquiryStageStudents, reassignedAlertStudentIds]);
-  const pipelineDenominator = Math.max(1, myStudents.length);
+  const priorityActionList = useMemo(() => {
+    const items = [];
+    for (const alert of assignmentAlertsForPanel) {
+      items.push({ kind: "alert", alert });
+    }
+    for (const student of inquiryStageStudentsForPanel) {
+      items.push({ kind: "inquiry", student });
+    }
+    for (const task of pendingTasks) {
+      if (!isNewStudentIntakeTask(task)) items.push({ kind: "task", task });
+    }
+    const total = items.length;
+    const shown = total > PRIORITY_ACTION_ITEMS_LIMIT ? items.slice(-PRIORITY_ACTION_ITEMS_LIMIT) : items;
+    return { shown, total };
+  }, [assignmentAlertsForPanel, inquiryStageStudentsForPanel, pendingTasks]);
   const nowMs = useMemo(() => Date.now(), [clockTick]);
   const getInquirySlaBadge = (startedAt) => {
     const startMs = parseIsoMs(startedAt);
@@ -204,16 +272,50 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
             : "text-emerald-700 font-medium";
     return /* @__PURE__ */ jsx("span", { className: `text-xs tabular-nums ${toneClass}`, children: text });
   };
-  const inquiriesPct = Math.max(8, Math.round(pipelineTotals.inquiries / pipelineDenominator * 100));
-  const docsPendingPct = Math.max(8, Math.round(pipelineTotals.docsPending / pipelineDenominator * 100));
-  const visaPct = Math.max(8, Math.round(pipelineTotals.visa / pipelineDenominator * 100));
-  const activityData = [
-    { name: "Mon", calls: 4 },
-    { name: "Tue", calls: 8 },
-    { name: "Wed", calls: 3 },
-    { name: "Thu", calls: 12 },
-    { name: "Fri", calls: 9 }
-  ];
+  const weeklyActivityData = useMemo(() => {
+    const scopedTasks = filterTasksForCounselor(tasks, currentUser, myStudents);
+    const now = Date.now();
+    const today0 = localDayStartMs(now);
+    const dayStarts = [];
+    for (let i = 6; i >= 0; i--) {
+      dayStarts.push(today0 - i * DAY_MS);
+    }
+    const minTs = dayStarts[0];
+    const maxTs = dayStarts[6] + DAY_MS;
+    const rows = dayStarts.map((dayStart) => ({
+      name: new Date(dayStart).toLocaleDateString(undefined, { weekday: "short" }),
+      dayStart,
+      tasks: 0,
+      messages: 0,
+      total: 0
+    }));
+    const sidSet = new Set((myStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
+    const uid = String(currentUser?.id || "").trim();
+    for (const task of scopedTasks || []) {
+      if (String(task?.status || "") !== "Completed") continue;
+      const ts = parseIsoMs(task.completedAt || task.completed_at || task.updatedAt);
+      if (ts == null || ts < minTs || ts >= maxTs) continue;
+      const idx = dayStarts.indexOf(localDayStartMs(ts));
+      if (idx >= 0) {
+        rows[idx].tasks += 1;
+        rows[idx].total += 1;
+      }
+    }
+    for (const m of chatMessages || []) {
+      if (!uid || String(m?.senderId || "") !== uid) continue;
+      if (!sidSet.has(String(m?.receiverId || "").trim())) continue;
+      const hasBody = String(m?.content || "").trim().length > 0 || m?.attachment;
+      if (!hasBody) continue;
+      const ts = parseIsoMs(m.timestamp || m.createdAt);
+      if (ts == null || ts < minTs || ts >= maxTs) continue;
+      const idx = dayStarts.indexOf(localDayStartMs(ts));
+      if (idx >= 0) {
+        rows[idx].messages += 1;
+        rows[idx].total += 1;
+      }
+    }
+    return rows.map(({ name, tasks, messages, total }) => ({ name, tasks, messages, total }));
+  }, [tasks, chatMessages, myStudents, currentUser]);
   const openInquiryPopup = (alert) => {
     const studentId = String(alert?.studentId || "").trim();
     if (!studentId) return;
@@ -238,6 +340,14 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
     if (isSavingInquiry) return;
     setInquiryAlert(null);
     setInquiryError("");
+  };
+  const openStudentProfileById = (studentId) => {
+    const sid = String(studentId || "").trim();
+    if (!sid || typeof onSelectStudent !== "function") return;
+    const scoped = (students || []).find((s) => String(s.id || "").trim() === sid);
+    const student =
+      scoped || studentById.get(sid) || (allStudents || []).find((s) => String(s.id || "").trim() === sid);
+    if (student) onSelectStudent(student);
   };
   const handleSaveInquiry = async (e) => {
     e.preventDefault();
@@ -425,110 +535,232 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
             /* @__PURE__ */ jsx(Button, { variant: "ghost", size: "sm", onClick: () => onNavigate("tasks"), children: "View All" })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
-            overdueTasks.length > 0 && /* @__PURE__ */ jsxs("div", { className: "p-3 bg-rose-50 border border-rose-100 rounded-lg flex justify-between items-center", children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-                /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-rose-500 animate-pulse" }),
-                /* @__PURE__ */ jsxs("div", { children: [
-                  /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-rose-900", children: [
-                    "You have ",
-                    overdueTasks.length,
-                    " overdue tasks!"
-                  ] }),
-                  /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700", children: "Immediate action required." })
+            stageEscalations.length > 0 && /* @__PURE__ */ jsxs("div", { className: "p-3 bg-orange-50 border border-orange-200 rounded-lg flex justify-between items-center gap-3 flex-wrap", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                /* @__PURE__ */ jsx("div", { className: "shrink-0", children: /* @__PURE__ */ jsx(AlertTriangle, { size: 18, className: "text-orange-600" }) }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-orange-950", children: "Stage SLA overdue" }),
+                  /* @__PURE__ */ jsxs("p", { className: "text-xs text-orange-800 mt-0.5", children: [
+                    stageEscalations.length,
+                    " ",
+                    stageEscalations.length === 1 ? "student has" : "students have",
+                    " exceeded the time limit for their current pipeline stage."
+                  ] })
                 ] })
               ] }),
-              /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", onClick: () => onNavigate("tasks"), children: "Fix Now" })
+              /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", className: "shrink-0", onClick: () => onNavigate("stage-escalations"), children: "Review" })
             ] }),
-            assignmentAlertsForPanel.map((alert) => {
-              const sid = String(alert.studentId || "").trim();
-              const sourceStudent = sid ? studentById.get(sid) : null;
-              const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
-              const titleLine =
-                alert.type === "reassigned"
-                  ? `${alert.studentName || "Student"} was reassigned to you`
-                  : `${alert.studentName || "Student"} is in Inquiry stage`;
+            requirementViolationRows.length > 0 && /* @__PURE__ */ jsxs("div", { className: "p-3 bg-rose-50 border border-rose-200 rounded-lg flex justify-between items-center gap-3 flex-wrap", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                /* @__PURE__ */ jsx("div", { className: "shrink-0", children: /* @__PURE__ */ jsx(AlertTriangle, { size: 18, className: "text-rose-600" }) }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-rose-950", children: "SLA requirement warning" }),
+                  /* @__PURE__ */ jsxs("p", { className: "text-xs text-rose-800 mt-0.5", children: [
+                    requirementViolationRows.length,
+                    " open ",
+                    requirementViolationRows.length === 1 ? "notice" : "notices",
+                    " — students advanced without completing mandatory requirements."
+                  ] })
+                ] })
+              ] }),
+              /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", className: "shrink-0", onClick: () => onNavigate("stage-escalations"), children: "Review" })
+            ] }),
+            overdueTasks.length > 0 && /* @__PURE__ */ jsxs("div", { className: "p-3 bg-rose-50 border border-rose-100 rounded-lg space-y-3", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start gap-3 flex-wrap", children: [
+                /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                  /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0 mt-1.5" }),
+                  /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                    /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-rose-900", children: [
+                      "You have ",
+                      overdueTasks.length,
+                      " overdue task",
+                      overdueTasks.length === 1 ? "" : "s"
+                    ] }),
+                    /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-0.5", children: "Tap a row to open that student\u2019s profile with the task highlighted, or use Fix Now for the oldest due item." })
+                  ] })
+                ] }),
+                /* @__PURE__ */ jsx(Button, {
+                  size: "sm",
+                  variant: "danger",
+                  className: "shrink-0",
+                  onClick: () => {
+                    const first = overdueTasksSorted[0];
+                    if (onOpenStudentTask && first) onOpenStudentTask(first);
+                    else {
+                      const tid = first?.id != null ? String(first.id).trim() : "";
+                      if (tid && onSelectTask) onSelectTask(tid);
+                      else onNavigate("tasks");
+                    }
+                  },
+                  children: "Fix Now"
+                })
+              ] }),
+              /* @__PURE__ */ jsxs("ul", { className: "space-y-2 border-t border-rose-200/70 pt-2", children: [
+                overdueTasksSorted.slice(0, 6).map((task) => {
+                  const sid = String(task.student_id || task.studentId || "").trim();
+                  const stu = sid ? studentById.get(sid) : null;
+                  const studentLabel = stu?.name || sid || "Student";
+                  const tid = task.id != null ? String(task.id).trim() : "";
+                  return /* @__PURE__ */ jsx(
+                    "li",
+                    {
+                      className: `rounded-md border border-rose-100 bg-white/80 px-3 py-2 text-left transition-colors ${tid && (onOpenStudentTask || onSelectTask) ? "cursor-pointer hover:bg-white hover:border-rose-200" : ""}`,
+                      onClick: () => {
+                        if (onOpenStudentTask) onOpenStudentTask(task);
+                        else if (tid && onSelectTask) onSelectTask(tid);
+                      },
+                      children: /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", children: task.task || "Task" }),
+                        /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-rose-800 mt-0.5", children: [
+                          studentLabel,
+                          task.dueDate
+                            ? /* @__PURE__ */ jsxs("span", { className: "text-slate-600", children: [" · Due ", task.dueDate] })
+                            : null
+                        ] })
+                      ] })
+                    },
+                    tid || `overdue-${task.task}-${sid}`
+                  );
+                }),
+                overdueTasksSorted.length > 6 && /* @__PURE__ */ jsxs("li", { className: "text-[11px] text-rose-800 px-1", children: [
+                  "+ ",
+                  overdueTasksSorted.length - 6,
+                  " more — Fix Now opens the oldest due item on that student\u2019s profile."
+                ] })
+              ] })
+            ] }),
+            priorityActionList.shown.map((entry) => {
+              if (entry.kind === "alert") {
+                const alert = entry.alert;
+                const sid = String(alert.studentId || "").trim();
+                const sourceStudent = sid ? studentById.get(sid) : null;
+                const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
+                const titleLine =
+                  alert.type === "reassigned"
+                    ? `${alert.studentName || "Student"} was reassigned to you`
+                    : `${alert.studentName || "Student"} is in Inquiry stage`;
+                return /* @__PURE__ */ jsxs(
+                  "div",
+                  {
+                    className: `p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap${sid && typeof onSelectStudent === "function" ? " cursor-pointer hover:bg-amber-100/80 hover:border-amber-200" : ""}`,
+                    onClick: () => openStudentProfileById(sid),
+                    children: [
+                      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                        /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
+                        /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-amber-900", children: titleLine }),
+                          /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
+                            inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                              "Inquiry SLA ",
+                              getInquirySlaBadge(inquiryStartedAt)
+                            ] })
+                          ] })
+                        ] })
+                      ] }),
+                      /* @__PURE__ */ jsx(Button, {
+                        size: "sm",
+                        variant: "ghost",
+                        className: "shrink-0",
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          openInquiryPopup(alert);
+                        },
+                        children: "Start Inquiry"
+                      })
+                    ]
+                  },
+                  alert.id
+                );
+              }
+              if (entry.kind === "inquiry") {
+                const student = entry.student;
+                const inquiryAlertPayload = {
+                  id: `inquiry-student-${student.id}`,
+                  studentId: String(student.id || ""),
+                  studentName: student.name || String(student.id || ""),
+                  type: "new"
+                };
+                const sid = String(student.id || "").trim();
+                const sourceStudent = sid ? studentById.get(sid) || student : student;
+                const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
+                return /* @__PURE__ */ jsxs(
+                  "div",
+                  {
+                    className: `p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap${sid && typeof onSelectStudent === "function" ? " cursor-pointer hover:bg-amber-100/80 hover:border-amber-200" : ""}`,
+                    onClick: () => openStudentProfileById(sid),
+                    children: [
+                      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                        /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
+                        /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                          /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
+                            student.name || "Student",
+                            " is in Inquiry stage"
+                          ] }),
+                          /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
+                            inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                              "Inquiry SLA ",
+                              getInquirySlaBadge(inquiryStartedAt)
+                            ] })
+                          ] })
+                        ] })
+                      ] }),
+                      /* @__PURE__ */ jsx(Button, {
+                        size: "sm",
+                        variant: "ghost",
+                        className: "shrink-0",
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          openInquiryPopup(inquiryAlertPayload);
+                        },
+                        children: "Start Inquiry"
+                      })
+                    ]
+                  },
+                  `inquiry-stage-${student.id}`
+                );
+              }
+              const task = entry.task;
+              const taskRowOverdue = isTaskOverdueByDate(task);
+              const taskSid = String(task.student_id || task.studentId || "").trim();
+              const taskStu = taskSid ? studentById.get(taskSid) : null;
               return /* @__PURE__ */ jsxs(
                 "div",
                 {
-                  className: "p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap",
+                  className: `flex items-center justify-between p-3 rounded-lg border transition-all group cursor-pointer gap-2 ${taskRowOverdue ? "bg-rose-50/60 border-rose-100 hover:border-rose-200" : "border-transparent hover:bg-slate-50 hover:border-gray-100"}`,
+                  onClick: () => {
+                    if (onOpenStudentTask) onOpenStudentTask(task);
+                    else if (onSelectTask) onSelectTask(task.id);
+                  },
                   children: [
-                    /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
-                      /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
+                    /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
+                      /* @__PURE__ */ jsx("div", { className: `w-5 h-5 mt-0.5 rounded border-2 shrink-0 transition-colors ${taskRowOverdue ? "border-rose-400 group-hover:border-rose-500" : "border-slate-300 group-hover:border-indigo-500"}` }),
                       /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-                        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-amber-900", children: titleLine }),
-                        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
-                          /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
-                          inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
-                            "Inquiry SLA ",
-                            getInquirySlaBadge(inquiryStartedAt)
-                          ] })
-                        ] })
+                        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 group-hover:text-indigo-900", children: task.task }),
+                        isNewStudentIntakeTask(task)
+                          ? null
+                          : /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                              taskRowOverdue && /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold uppercase tracking-wide bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-full", children: "Overdue" }),
+                              (taskStu?.name || taskSid) && /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-500", children: taskStu?.name || taskSid }),
+                              task.dueDate && /* @__PURE__ */ jsxs("span", { className: `text-xs tabular-nums ${taskRowOverdue ? "text-rose-700 font-medium" : "text-slate-400"}`, children: ["Due ", task.dueDate] })
+                            ] })
                       ] })
                     ] }),
-                    /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", className: "shrink-0", onClick: () => openInquiryPopup(alert), children: "Start Inquiry" })
+                    /* @__PURE__ */ jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${task.priority === "High" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`, children: task.priority })
                   ]
                 },
-                alert.id
+                task.id
               );
             }),
-            inquiryStageStudentsForPanel.map((student) => {
-              const inquiryAlertPayload = {
-                id: `inquiry-student-${student.id}`,
-                studentId: String(student.id || ""),
-                studentName: student.name || String(student.id || ""),
-                type: "new"
-              };
-              const sid = String(student.id || "").trim();
-              const sourceStudent = sid ? studentById.get(sid) || student : student;
-              const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
-              return /* @__PURE__ */ jsxs(
-                "div",
-                {
-                  className: "p-3 bg-amber-50 border border-amber-100 rounded-lg flex justify-between items-center gap-3 flex-wrap",
-                  children: [
-                    /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
-                      /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" }),
-                      /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-                        /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
-                          student.name || "Student",
-                          " is in Inquiry stage"
-                        ] }),
-                        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
-                          /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
-                          inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
-                            "Inquiry SLA ",
-                            getInquirySlaBadge(inquiryStartedAt)
-                          ] })
-                        ] })
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ jsx(Button, { size: "sm", variant: "ghost", className: "shrink-0", onClick: () => openInquiryPopup(inquiryAlertPayload), children: "Start Inquiry" })
-                  ]
-                },
-                `inquiry-stage-${student.id}`
-              );
-            }),
-            pendingTasks.filter((task) => !isNewStudentIntakeTask(task)).slice(0, 3).map((task) => /* @__PURE__ */ jsxs(
-              "div",
-              {
-                className: "flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg border border-transparent hover:border-gray-100 transition-all group cursor-pointer gap-2",
-                onClick: () => onSelectTask && onSelectTask(task.id),
-                children: [
-                  /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
-                    /* @__PURE__ */ jsx("div", { className: "w-5 h-5 mt-0.5 rounded border-2 border-slate-300 group-hover:border-indigo-500 transition-colors shrink-0" }),
-                    /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-                      /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 group-hover:text-indigo-900", children: task.task }),
-                      isNewStudentIntakeTask(task) ? null : task.dueDate ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-0.5", children: [
-                        "Due: ",
-                        task.dueDate
-                      ] }) : null
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${task.priority === "High" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`, children: task.priority })
-                ]
-              },
-              task.id
-            ))
+            priorityActionList.total > PRIORITY_ACTION_ITEMS_LIMIT && /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 text-center pt-1", children: [
+              "Showing last ",
+              PRIORITY_ACTION_ITEMS_LIMIT,
+              " of ",
+              priorityActionList.total,
+              " items \xB7 ",
+              /* @__PURE__ */ jsx("button", { type: "button", className: "text-indigo-600 font-semibold hover:underline", onClick: () => onNavigate("tasks"), children: "View all in My Tasks" })
+            ] })
           ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
@@ -570,36 +802,35 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
       /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
         /* @__PURE__ */ jsx(LeaderboardWidget, { students: allStudents, employees, currentUserId: currentUser?.id || "", currentUserEmail: currentUser?.email || "" }),
         /* @__PURE__ */ jsxs("div", { className: "bg-[#0F172A] p-6 rounded-xl shadow-lg text-white", children: [
-          /* @__PURE__ */ jsx("h4", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider mb-4", children: "Pipeline Health" }),
-          /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "New Inquiries" }),
-                  /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.inquiries })
-              ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-indigo-500 h-1.5 rounded-full", style: { width: `${inquiriesPct}%` } }) })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Docs Pending" }),
-                /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.docsPending })
-              ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-amber-500 h-1.5 rounded-full", style: { width: `${docsPendingPct}%` } }) })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "Visa" }),
-                /* @__PURE__ */ jsx("span", { className: "font-bold", children: pipelineTotals.visa })
-              ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "bg-emerald-500 h-1.5 rounded-full", style: { width: `${visaPct}%` } }) })
+          /* @__PURE__ */ jsxs("div", { className: "mb-4", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider", children: "Pipeline Health" }),
+            /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
+              "Your students by stage (",
+              pipelineStageCounts.total,
+              " total)"
             ] })
-          ] })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1", children: pipelineHealthRows.map(({ stage, count, color }) => {
+            const denom = Math.max(1, pipelineStageCounts.total);
+            const widthPct = Math.round(count / denom * 100);
+            return /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1 gap-2", children: [
+                /* @__PURE__ */ jsx("span", { className: "text-slate-300 truncate", title: stage, children: stage }),
+                /* @__PURE__ */ jsx("span", { className: "font-bold tabular-nums shrink-0", children: count })
+              ] }),
+              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "h-1.5 rounded-full transition-[width] duration-300", style: { width: `${widthPct}%`, backgroundColor: color } }) })
+            ] }, stage);
+          }) })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
-          /* @__PURE__ */ jsx("h4", { className: "text-slate-900 text-sm font-bold mb-4", children: "Weekly Activity" }),
-          /* @__PURE__ */ jsx("div", { className: "h-32", children: /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: "100%", children: /* @__PURE__ */ jsxs(BarChart, { data: activityData, children: [
+          /* @__PURE__ */ jsxs("div", { className: "mb-3", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-slate-900 text-sm font-bold", children: "Weekly Activity" }),
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-0.5", children: "Tasks marked completed and messages you sent to your students (last 7 days, local time)." })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "h-32", children: /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: "100%", children: /* @__PURE__ */ jsxs(BarChart, { data: weeklyActivityData, margin: { top: 4, right: 4, left: 0, bottom: 0 }, children: [
             /* @__PURE__ */ jsx(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fontSize: 10 } }),
-            /* @__PURE__ */ jsx(Bar, { dataKey: "calls", fill: "#6366F1", radius: [4, 4, 0, 0] })
+            /* @__PURE__ */ jsx(Tooltip, { cursor: false, content: CounselorWeeklyActivityTooltip }),
+            /* @__PURE__ */ jsx(Bar, { dataKey: "total", fill: "#6366F1", radius: [4, 4, 0, 0], name: "Activity" })
           ] }) }) })
         ] })
       ] })

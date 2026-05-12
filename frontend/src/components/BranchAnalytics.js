@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { formatRawLKR, RATE_UPDATED_AT } from "../utils";
+import { formatRawLKR } from "../utils";
+import { useExchangeRates } from "../useExchangeRates";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
@@ -26,6 +27,7 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
     managers: false,
     students: false
   });
+  const { updatedAt: fxUpdatedAt, live: fxLive } = useExchangeRates();
   const branchPageReady = pageLoads.branches && pageLoads.managers && pageLoads.students;
 
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
@@ -181,7 +183,8 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
                 : "Deep dive into regional performance metrics from live student and branch records."}
             </p>
             <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-1">
-              <Clock size={10} /> Rates updated: {RATE_UPDATED_AT}
+              <Clock size={10} /> Rates updated: {fxUpdatedAt}
+              {!fxLive ? " (fallback)" : ""}
             </p>
           </div>
           <div className="flex items-center gap-2">

@@ -156,6 +156,68 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+/** LKR per one unit of foreign currency (matches frontend `EXCHANGE_RATES` fallbacks). */
+const FALLBACK_EXCHANGE_RATES_LKR = {
+  USD: 312.5,
+  GBP: 395.2,
+  CAD: 228.4,
+  AUD: 205.15,
+  EUR: 338.1,
+  NZD: 205.15,
+  LKR: 1,
+};
+const EXCHANGE_RATES_API_TTL_MS = 60 * 60 * 1000;
+const EXCHANGE_RATES_FETCH_TIMEOUT_MS = 12 * 1000;
+let exchangeRatesApiCache = { payload: null, fetchedAt: 0 };
+
+async function loadExchangeRatesFromApi() {
+  const now = Date.now();
+  if (exchangeRatesApiCache.payload && now - exchangeRatesApiCache.fetchedAt < EXCHANGE_RATES_API_TTL_MS) {
+    return { ...exchangeRatesApiCache.payload, live: true };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EXCHANGE_RATES_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://open.er-api.com/v6/latest/USD", { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) {
+      throw new Error(`exchange_rates_http_${res.status}`);
+    }
+    const body = await res.json();
+    if (body.result !== "success" || !body.rates || typeof body.rates.LKR !== "number") {
+      throw new Error("exchange_rates_bad_payload");
+    }
+    const usdTable = body.rates;
+    const lkrPerUsd = usdTable.LKR;
+    const codes = ["USD", "GBP", "CAD", "AUD", "EUR", "NZD"];
+    const rates = { LKR: 1 };
+    for (const code of codes) {
+      const foreignPerUsd = usdTable[code];
+      if (typeof foreignPerUsd === "number" && foreignPerUsd > 0) {
+        rates[code] = lkrPerUsd / foreignPerUsd;
+      }
+    }
+    const payload = {
+      rates,
+      updatedAt: body.time_last_update_utc || new Date().toISOString(),
+      live: true,
+    };
+    exchangeRatesApiCache = { payload, fetchedAt: now };
+    return payload;
+  } catch (err) {
+    clearTimeout(timer);
+    logEvent("exchange_rates", "fetch failed", { reason: String(err?.message || err) });
+    if (exchangeRatesApiCache.payload) {
+      return { ...exchangeRatesApiCache.payload, live: true };
+    }
+    return {
+      rates: FALLBACK_EXCHANGE_RATES_LKR,
+      updatedAt: "Static rates (API unavailable)",
+      live: false,
+    };
+  }
+}
+
 function getContentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".html") return "text/html; charset=utf-8";
@@ -532,6 +594,53 @@ function stripStudentSecrets(student) {
   return rest;
 }
 
+function documentTypeMatchesSlaRequirement(docType, requiredDocType) {
+  const dt = String(docType || "");
+  const req = String(requiredDocType || "");
+  if (!req) return false;
+  return dt === req || dt.includes(req) || req.includes(dt);
+}
+
+function slaRequirementSatisfiedByVerifiedDocument(documents, requiredDocType) {
+  const docs = Array.isArray(documents) ? documents : [];
+  for (const d of docs) {
+    if (!d || typeof d !== "object") continue;
+    if (!documentTypeMatchesSlaRequirement(d.type, requiredDocType)) continue;
+    const st = String(d.status || "").trim().toLowerCase();
+    if (st === "verified") return true;
+  }
+  return false;
+}
+
+function effectiveSlaMissingItemsForViolation(violation, documents) {
+  if (!violation || typeof violation !== "object") return [];
+  const missingItems = Array.isArray(violation.missingItems) ? violation.missingItems.filter(Boolean) : [];
+  return missingItems.filter((req) => !slaRequirementSatisfiedByVerifiedDocument(documents, req));
+}
+
+function reconcileSlaViolationsOnStudentRecord(student) {
+  const raw = student?.slaViolations;
+  if (!Array.isArray(raw) || raw.length === 0) return raw;
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  return raw.map((v) => {
+    if (!v || typeof v !== "object") return v;
+    const remaining = effectiveSlaMissingItemsForViolation(v, docs);
+    return { ...v, resolved: remaining.length === 0 };
+  });
+}
+
+function countActiveSlaViolationsOnStudent(student) {
+  const raw = student?.slaViolations;
+  if (!Array.isArray(raw) || raw.length === 0) return 0;
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  let n = 0;
+  for (const v of raw) {
+    if (!v) continue;
+    if (effectiveSlaMissingItemsForViolation(v, docs).length > 0) n += 1;
+  }
+  return n;
+}
+
 function buildAdminDataSummary({ users, students, branches, tasks, activities, appointments, countries, reqStudents, chats }) {
   const studentsByBranch = {};
   const studentsByStage = {};
@@ -545,7 +654,7 @@ function buildAdminDataSummary({ users, students, branches, tasks, activities, a
     studentsByStage[stage] = (studentsByStage[stage] || 0) + 1;
     studentsByCountry[c] = (studentsByCountry[c] || 0) + 1;
     if (Array.isArray(s.slaViolations)) {
-      unresolvedSlaViolations += s.slaViolations.filter((v) => v && !v.resolved).length;
+      unresolvedSlaViolations += countActiveSlaViolationsOnStudent(s);
     }
   }
 
@@ -992,7 +1101,9 @@ function normalizeProfileOtherDocumentsSlots(value) {
 }
 
 async function safeUnlinkStoredPermissionDoc(storedUrl) {
-  const s = String(storedUrl || "").trim();
+  let s = String(storedUrl || "").trim();
+  const permIdx = s.indexOf("/student-docs/permissions/");
+  if (permIdx !== -1) s = s.slice(permIdx);
   if (!s.startsWith("/student-docs/permissions/")) return;
   const base = path.basename(s);
   if (!base || base.includes("..")) return;
@@ -2221,6 +2332,30 @@ const server = http.createServer(async (req, res) => {
     res.statusCode = 204;
     Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
     res.end();
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/exchange-rates") {
+    try {
+      const data = await loadExchangeRatesFromApi();
+      sendJson(res, 200, {
+        ok: true,
+        data: {
+          rates: data.rates,
+          updatedAt: data.updatedAt,
+          live: data.live !== false,
+        },
+      });
+    } catch (e) {
+      sendJson(res, 200, {
+        ok: true,
+        data: {
+          rates: FALLBACK_EXCHANGE_RATES_LKR,
+          updatedAt: "Static rates (server error)",
+          live: false,
+        },
+      });
+    }
     return;
   }
 
@@ -4376,6 +4511,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const nextSla = reconcileSlaViolationsOnStudentRecord(merged);
+      if (nextSla !== undefined) {
+        merged.slaViolations = nextSla;
+      }
+
+      const prevDocs = Array.isArray(previous.documents) ? previous.documents : [];
+      const nextDocs = Array.isArray(merged.documents) ? merged.documents : [];
+      const nextDocIds = new Set(
+        nextDocs.map((d) => (d && typeof d === "object" ? String(d.id || "").trim() : "")).filter(Boolean)
+      );
+      for (const d of prevDocs) {
+        if (!d || typeof d !== "object") continue;
+        const id = String(d.id || "").trim();
+        if (!id || nextDocIds.has(id)) continue;
+        if (String(d.status || "").trim() === "Rejected") {
+          await safeUnlinkStoredPermissionDoc(String(d.url || ""));
+        }
+      }
+
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
@@ -4615,6 +4769,10 @@ const server = http.createServer(async (req, res) => {
         documents: [...existingDocuments, newDocument],
         updatedAt: new Date().toISOString(),
       };
+      const nextSla = reconcileSlaViolationsOnStudentRecord(merged);
+      if (nextSla !== undefined) {
+        merged.slaViolations = nextSla;
+      }
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
