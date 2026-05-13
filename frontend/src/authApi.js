@@ -131,6 +131,26 @@ export async function updateCounselorTeamLead(accountId, teamLeadId) {
   }
 }
 
+export async function resetAccountPassword(accountId, newPassword) {
+  try {
+    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(accountId)}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to reset password." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach account server. Is the backend running on port 3334?"
+    };
+  }
+}
+
 export async function updateAdminAvatar(avatar) {
   try {
     const res = await fetch(`${API_BASE}/api/accounts/admin/avatar`, {

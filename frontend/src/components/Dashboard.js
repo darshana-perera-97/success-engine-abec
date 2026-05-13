@@ -13,19 +13,49 @@ import {
   Pie,
   AreaChart,
   Area,
-  Legend
 } from "recharts";
 import { formatRawLKR } from "../utils";
-import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts } from "../pipeline";
 import { Users, Globe, Briefcase, MapPin, Banknote } from "lucide-react";
-const PIE_COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#6366F1"];
-const Dashboard = ({ students = [], invoices = [] }) => {
+const PIE_COLORS = ["#3B82F6", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#6366F1"];
+const DESTINATION_SYNONYMS = new Map([
+  ["united kingdom", "UK"],
+  ["great britain", "UK"],
+  ["gb", "UK"],
+  ["england", "UK"],
+  ["u.k.", "UK"],
+  ["u.k", "UK"],
+  ["united states", "USA"],
+  ["united states of america", "USA"],
+  ["u.s.a.", "USA"],
+  ["u.s.", "USA"],
+  ["us", "USA"],
+  ["newzealand", "New Zealand"],
+  ["nz", "New Zealand"],
+  ["aotearoa", "New Zealand"]
+]);
+function resolveStudentDestinationLabel(raw, canonicalDestinationList) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed || !canonicalDestinationList.length) return null;
+  const lower = trimmed.toLowerCase();
+  for (const c of canonicalDestinationList) {
+    const label = String(c ?? "").trim();
+    if (label && label.toLowerCase() === lower) return label;
+  }
+  const viaSynonym = DESTINATION_SYNONYMS.get(lower);
+  if (viaSynonym) {
+    const hit = canonicalDestinationList.find((c) => String(c ?? "").trim().toLowerCase() === viaSynonym.toLowerCase());
+    if (hit) return String(hit).trim();
+  }
+  return null;
+}
+function marketSliceColor(sliceName, destinationList) {
+  const i = destinationList.findIndex((c) => String(c).trim().toLowerCase() === String(sliceName).trim().toLowerCase());
+  if (i >= 0) return PIE_COLORS[i % PIE_COLORS.length];
+  return "#94A3B8";
+}
+const Dashboard = ({ students = [], invoices = [], destinationCountries = [], branchLocations = [] }) => {
   const totalStudents = students.length;
-  const stageOrderIndex = (student) => {
-    const n = normalizePipelineStatus(student.status);
-    const i = PIPELINE_STEPS.indexOf(n);
-    return i >= 0 ? i : 0;
-  };
   const uniAppsCount = students.filter((student) => {
     const x = normalizePipelineStatus(student.status);
     return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
@@ -53,18 +83,53 @@ const Dashboard = ({ students = [], invoices = [] }) => {
   const estimatedRevenue = invoicedTotal > 0 ? invoicedTotal : budgetPipelineTotal;
   const revenueKpiTrend = invoicedTotal > 0 ? `${(invoices || []).length} invoice${(invoices || []).length === 1 ? "" : "s"}` : "Student budgets";
   const funnelBarFills = ["#94A3B8", "#64748B", "#6366F1", "#8B5CF6", "#0EA5E9", "#10B981"];
-  const funnelData = PIPELINE_STEPS.map((stage, idx) => {
-    const value = students.filter((s) => stageOrderIndex(s) >= idx).length;
-    const name = stage === "Interview training" ? "Interview training" : stage;
-    return { name, value, fill: funnelBarFills[idx % funnelBarFills.length] };
-  });
-  const countryData = [
-    { name: "UK", value: students.filter((student) => student.country === "UK").length },
-    { name: "Canada", value: students.filter((student) => student.country === "Canada").length },
-    { name: "Australia", value: students.filter((student) => student.country === "Australia").length },
-    { name: "New Zealand", value: students.filter((student) => student.country === "New Zealand").length },
-    { name: "Other", value: students.filter((student) => !["UK", "Canada", "Australia", "New Zealand"].includes(student.country)).length }
-  ];
+  const funnelData = useMemo(() => {
+    const { byStage, other } = computePipelineStageCounts(students);
+    const rows = PIPELINE_STEPS.map((stage, idx) => {
+      const name = stage === "Interview training" ? "Interview training" : stage;
+      return { name, value: byStage[stage] ?? 0, fill: funnelBarFills[idx % funnelBarFills.length] };
+    });
+    if (other > 0) {
+      rows.push({ name: "Other / unmapped", value: other, fill: "#CBD5E1" });
+    }
+    return rows;
+  }, [students]);
+  const destinationList = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const c of destinationCountries || []) {
+      const label = String(c ?? "").trim();
+      if (!label) continue;
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(label);
+    }
+    return out;
+  }, [destinationCountries]);
+  const countryData = useMemo(() => {
+    const list = destinationList;
+    const counts = new Map(list.map((name) => [name, 0]));
+    let other = 0;
+    for (const student of students) {
+      const key = resolveStudentDestinationLabel(student.country, list);
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+      else other += 1;
+    }
+    const rows = list.map((name) => ({ name, value: Number(counts.get(name)) || 0 }));
+    if (other > 0 || list.length === 0) {
+      rows.push({ name: "Other", value: Number(list.length === 0 ? students.length : other) || 0 });
+    }
+    return rows;
+  }, [students, destinationList]);
+  const marketPieTotal = useMemo(
+    () => countryData.reduce((sum, row) => sum + (Number(row.value) || 0), 0),
+    [countryData]
+  );
+  const marketPieSlices = useMemo(
+    () => countryData.filter((row) => (Number(row.value) || 0) > 0),
+    [countryData]
+  );
   const revenueData = useMemo(() => {
     const labels = [];
     const bucket = new Map();
@@ -89,6 +154,11 @@ const Dashboard = ({ students = [], invoices = [] }) => {
   }, [invoices]);
   const branchSnapshot = useMemo(() => {
     const grouped = new Map();
+    branchLocations.forEach((location) => {
+      const key = String(location || "").trim();
+      if (!key) return;
+      grouped.set(key, { name: key, students: 0, converted: 0 });
+    });
     students.forEach((student) => {
       const key = String(student.branch || "Unknown").trim() || "Unknown";
       const current = grouped.get(key) || { name: key, students: 0, converted: 0 };
@@ -101,8 +171,8 @@ const Dashboard = ({ students = [], invoices = [] }) => {
     return Array.from(grouped.values()).map((item) => ({
       ...item,
       conversion: item.students ? Math.round(item.converted / item.students * 100) : 0
-    })).sort((a, b) => b.conversion - a.conversion);
-  }, [students]);
+    })).sort((a, b) => b.conversion - a.conversion || b.students - a.students || a.name.localeCompare(b.name));
+  }, [students, branchLocations]);
   const revenueTrend = revenueData.length >= 2 && revenueData[revenueData.length - 2].revenue > 0 ? Math.round((revenueData[revenueData.length - 1].revenue - revenueData[revenueData.length - 2].revenue) / revenueData[revenueData.length - 2].revenue * 100) : 0;
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsx("h1", { className: "text-2xl font-semibold tracking-tight text-[#0F172A]", children: "Executive Overview" }),
@@ -129,30 +199,41 @@ const Dashboard = ({ students = [], invoices = [] }) => {
           /* @__PURE__ */ jsx(Bar, { dataKey: "value", radius: [0, 4, 4, 0], barSize: 32, children: funnelData.map((entry, index) => /* @__PURE__ */ jsx(Cell, { fill: entry.fill }, `cell-${index}`)) })
         ] }) }) })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-[350px] flex flex-col", children: [
-        /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900 mb-2", children: "Market Distribution" }),
-        /* @__PURE__ */ jsxs("div", { className: "flex-1 relative", children: [
-          /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: "100%", children: /* @__PURE__ */ jsxs(PieChart, { children: [
-            /* @__PURE__ */ jsx(
-              Pie,
-              {
-                data: countryData,
-                cx: "50%",
-                cy: "50%",
-                innerRadius: 60,
-                outerRadius: 80,
-                paddingAngle: 5,
-                dataKey: "value",
-                children: countryData.map((entry, index) => /* @__PURE__ */ jsx(Cell, { fill: PIE_COLORS[index % PIE_COLORS.length] }, `cell-${index}`))
-              }
-            ),
-            /* @__PURE__ */ jsx(Tooltip, {}),
-            /* @__PURE__ */ jsx(Legend, { verticalAlign: "bottom", height: 36, iconType: "circle", wrapperStyle: { fontSize: "10px" } })
-          ] }) }),
-          /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none pb-8", children: /* @__PURE__ */ jsxs("div", { className: "text-center", children: [
-            /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: totalStudents }),
-            /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-500 uppercase", children: "Active" })
-          ] }) })
+        /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm min-h-[350px] flex flex-col", children: [
+        /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900 mb-2 shrink-0", children: "Market Distribution" }),
+        /* @__PURE__ */ jsxs("div", { className: "flex flex-col flex-1 min-h-0", children: [
+          /* @__PURE__ */ jsxs("div", { className: "relative w-full h-[220px] shrink-0", children: [
+            marketPieTotal > 0 && marketPieSlices.length > 0 ? /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: 220, debounce: 50, children: /* @__PURE__ */ jsxs(PieChart, { margin: { top: 4, right: 4, bottom: 4, left: 4 }, children: [
+              /* @__PURE__ */ jsx(
+                Pie,
+                {
+                  data: marketPieSlices,
+                  nameKey: "name",
+                  cx: "50%",
+                  cy: "50%",
+                  innerRadius: 54,
+                  outerRadius: 76,
+                  paddingAngle: 2,
+                  dataKey: "value",
+                  children: marketPieSlices.map((entry, index) => /* @__PURE__ */ jsx(Cell, { fill: marketSliceColor(entry.name, destinationList) }, `cell-${String(entry.name)}-${index}`))
+                }
+              ),
+              /* @__PURE__ */ jsx(Tooltip, {})
+            ] }) }) : /* @__PURE__ */ jsx("div", { className: "flex h-full w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/80 text-xs text-slate-500 px-4 text-center", children: destinationList.length === 0 ? "Add destination countries under Settings to chart markets here." : "No distribution to display yet (all segments are zero)." }),
+            /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none", children: /* @__PURE__ */ jsxs("div", { className: "text-center", children: [
+              /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: totalStudents }),
+              /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-500 uppercase", children: "Active" })
+            ] }) })
+          ] }),
+          marketPieSlices.length > 0 ? /* @__PURE__ */ jsx("div", { className: "flex flex-wrap justify-center gap-x-3 gap-y-1 mt-2 px-1 text-[10px] text-slate-600", children: marketPieSlices.map((entry) => /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center gap-1", children: [
+            /* @__PURE__ */ jsx("span", { className: "inline-block h-2 w-2 rounded-full shrink-0", style: { backgroundColor: marketSliceColor(entry.name, destinationList) } }),
+            /* @__PURE__ */ jsxs("span", { children: [
+              entry.name,
+              " (",
+              entry.value,
+              ")"
+            ] })
+          ] }, String(entry.name))) }) : null
         ] })
       ] })
     ] }),
@@ -179,12 +260,12 @@ const Dashboard = ({ students = [], invoices = [] }) => {
           /* @__PURE__ */ jsx(Area, { type: "monotone", dataKey: "revenue", stroke: "#0F172A", strokeWidth: 2, fillOpacity: 1, fill: "url(#colorRev)" })
         ] }) })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-[300px] overflow-hidden", children: [
+      /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-[300px] overflow-hidden flex flex-col", children: [
         /* @__PURE__ */ jsxs("h3", { className: "text-sm font-semibold text-slate-900 mb-4 flex items-center", children: [
           /* @__PURE__ */ jsx(MapPin, { size: 16, className: "mr-2" }),
           " Branch Performance Snapshot"
         ] }),
-        /* @__PURE__ */ jsx("div", { className: "space-y-4", children: branchSnapshot.map((branch, idx) => {
+        /* @__PURE__ */ jsx("div", { className: "space-y-4 overflow-y-auto pr-1 -mr-1 flex-1 min-h-0", children: branchSnapshot.map((branch, idx) => {
           return /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-xs mb-1", children: [
               /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: branch.name }),

@@ -11,6 +11,7 @@ const TaskManager = ({
   onUpdateStudent,
   onAddActivity,
   currentUser,
+  counselorIdentitySet = null,
   selectedTaskId,
   onUpdateTasks,
   onAddTask,
@@ -20,6 +21,7 @@ const TaskManager = ({
   onNavigate
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [showCompletedTasks, setShowCompletedTasks] = useState(true);
   const studentLookup = (monitoredStudents || []).reduce((acc, studentItem) => {
     acc[String(studentItem?.id || "").trim()] = studentItem;
     return acc;
@@ -63,13 +65,13 @@ const TaskManager = ({
     userRole === "Manager"
       ? "px-6 py-4 hidden md:table-cell"
       : "px-6 py-4 hidden lg:table-cell";
-  const filteredTasks = (() => {
+  const roleScopedTasks = (() => {
     if (userRole === "Admin") return tasks;
     if (userRole === "Manager") {
       return tasks.filter((task) => task.priority === "High" || task.status === "Overdue" || task.status === "In Review");
     }
     if (userRole === "Counselor") {
-      return filterTasksForCounselor(tasks, currentUser, monitoredStudents);
+      return filterTasksForCounselor(tasks, currentUser, monitoredStudents, counselorIdentitySet);
     }
     if (userRole === "Country Coordinator") {
       const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
@@ -80,6 +82,9 @@ const TaskManager = ({
     }
     return [];
   })();
+  const filteredTasks = showCompletedTasks
+    ? roleScopedTasks
+    : roleScopedTasks.filter((task) => String(task?.status || "").trim() !== "Completed");
   const handleStatusChange = (task, newStatus) => {
     if (String(task?.status || "") === String(newStatus || "")) return;
     const updatedTask = { ...task, status: newStatus };
@@ -172,15 +177,36 @@ const TaskManager = ({
     const row = document.querySelector(`tr[data-task-row-id="${safe}"]`);
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selectedTaskId, studentTasks]);
+  const emptyTasksMessage =
+    filteredTasks.length === 0 && roleScopedTasks.length > 0 && !showCompletedTasks
+      ? 'No active tasks. Turn on "Show completed" to see finished items.'
+      : "No tasks found.";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500", children: [
-    /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap justify-between items-start gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsx("h1", { className: "text-2xl font-semibold tracking-tight text-[#0F172A]", children: userRole === "Manager" ? "Escalation Desk" : userRole === "Student" ? "My Action Plan" : "Task Manager" }),
         /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: userRole === "Manager" ? "High priority items requiring attention." : "Track your to-do list and SLAs." })
       ] }),
-      userRole !== "Student" && /* @__PURE__ */ jsxs(Button, { onClick: () => setIsCreateModalOpen(true), children: [
-        /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-2" }),
-        "New Task"
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-3 sm:gap-4 shrink-0", children: [
+        /* @__PURE__ */ jsxs(
+          "label",
+          {
+            className: "inline-flex items-center gap-2 cursor-pointer text-sm text-slate-600 select-none",
+            children: [
+              /* @__PURE__ */ jsx("input", {
+                type: "checkbox",
+                className: "rounded border-gray-300 text-indigo-600 focus:ring-indigo-500",
+                checked: showCompletedTasks,
+                onChange: (e) => setShowCompletedTasks(e.target.checked)
+              }),
+              /* @__PURE__ */ jsx("span", { children: "Show completed" })
+            ]
+          }
+        ),
+        userRole !== "Student" && /* @__PURE__ */ jsxs(Button, { onClick: () => setIsCreateModalOpen(true), children: [
+          /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-2" }),
+          "New Task"
+        ] })
       ] })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden", children: [
@@ -193,7 +219,7 @@ const TaskManager = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden sm:table-cell", children: "Priority" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: "px-6 py-10 text-center text-slate-500", children: "No tasks found."         }) }) : studentTasks.map((task) => {
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: "px-6 py-10 text-center text-slate-500", children: emptyTasksMessage }) }) : studentTasks.map((task) => {
           const studentContext = studentLookup[String(task.student_id || task.studentId || "").trim()] || null;
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";
           const isTaskCompleted = task.status === "Completed";

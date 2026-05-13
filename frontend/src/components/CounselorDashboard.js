@@ -73,7 +73,22 @@ const EDUCATION_LEVELS = [
   "Professional qualification",
   "Other"
 ];
-const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStudents = students, employees = [], onSelectStudent, onSelectTask, onOpenStudentTask, assignmentAlerts = [], onDismissAssignmentAlert, onUpdateStudent, onStudentMovedToRequests }) => {
+const CounselorDashboard = ({
+  onNavigate,
+  tasks,
+  currentUser,
+  counselorIdentitySet = null,
+  students,
+  allStudents = students,
+  employees = [],
+  onSelectStudent,
+  onSelectTask,
+  onOpenStudentTask,
+  assignmentAlerts = [],
+  onDismissAssignmentAlert,
+  onUpdateStudent,
+  onStudentMovedToRequests
+}) => {
   const [chatMessages, setChatMessages] = useState([]);
   const [clockTick, setClockTick] = useState(0);
   const [countries, setCountries] = useState([]);
@@ -141,7 +156,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
   const myStudents = students;
   const stageEscalations = useMemo(() => computePipelineEscalations(myStudents || []), [myStudents]);
   const requirementViolationRows = useMemo(() => computeRequirementViolations(myStudents || []), [myStudents]);
-  const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents);
+  const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents, counselorIdentitySet);
   const overdueTasksCount = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
   const totalUnresolvedViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
   const slaScore = Math.max(0, 100 - overdueTasksCount * 5 - totalUnresolvedViolations * 2);
@@ -273,7 +288,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
     return /* @__PURE__ */ jsx("span", { className: `text-xs tabular-nums ${toneClass}`, children: text });
   };
   const weeklyActivityData = useMemo(() => {
-    const scopedTasks = filterTasksForCounselor(tasks, currentUser, myStudents);
+    const scopedTasks = filterTasksForCounselor(tasks, currentUser, myStudents, counselorIdentitySet);
     const now = Date.now();
     const today0 = localDayStartMs(now);
     const dayStarts = [];
@@ -315,7 +330,7 @@ const CounselorDashboard = ({ onNavigate, tasks, currentUser, students, allStude
       }
     }
     return rows.map(({ name, tasks, messages, total }) => ({ name, tasks, messages, total }));
-  }, [tasks, chatMessages, myStudents, currentUser]);
+  }, [tasks, chatMessages, myStudents, currentUser, counselorIdentitySet]);
   const openInquiryPopup = (alert) => {
     const studentId = String(alert?.studentId || "").trim();
     if (!studentId) return;

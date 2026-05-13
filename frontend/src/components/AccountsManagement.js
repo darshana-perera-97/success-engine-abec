@@ -1,9 +1,28 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
-import { KeyRound, Plus, Search, X } from "lucide-react";
-import { createAccount, getAccounts, getBranches, getCountries, updateAdminAvatar } from "../authApi";
+import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, X } from "lucide-react";
+import {
+  createAccount,
+  getAccounts,
+  getBranches,
+  getCountries,
+  resetAccountPassword,
+  updateAdminAvatar
+} from "../authApi";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
+
+function generateTempPassword() {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%&*";
+  const all = upper + lower + digits + symbols;
+  const pick = (set) => set[Math.floor(Math.random() * set.length)];
+  const required = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  const rest = Array.from({ length: 8 }, () => pick(all));
+  return [...required, ...rest].sort(() => Math.random() - 0.5).join("");
+}
 
 function roleBadgeClass(role) {
   switch (role) {
@@ -45,6 +64,12 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     country: ""
   });
   const [newAccountAvatar, setNewAccountAvatar] = useState("");
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [resetSuccess, setResetSuccess] = useState("");
+  const [resetSaving, setResetSaving] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [pageLoads, setPageLoads] = useState({
     accounts: false,
     branches: false,
@@ -103,12 +128,52 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     );
   }, [rows, query]);
 
-  const handleReset = (row) => {
-    setPendingId(row.id);
-    window.setTimeout(() => {
-      onResetPassword?.(row);
-      setPendingId(null);
-    }, 600);
+  const openResetDialog = (row) => {
+    setResetTarget(row);
+    setResetPasswordValue("");
+    setResetError("");
+    setResetSuccess("");
+    setShowResetPassword(false);
+  };
+
+  const closeResetDialog = () => {
+    if (resetSaving) return;
+    setResetTarget(null);
+    setResetPasswordValue("");
+    setResetError("");
+    setResetSuccess("");
+    setShowResetPassword(false);
+  };
+
+  const handleConfirmReset = async () => {
+    if (!resetTarget) return;
+    const newPassword = resetPasswordValue.trim();
+    if (newPassword.length < 6) {
+      setResetError("Password must be at least 6 characters.");
+      return;
+    }
+    setResetError("");
+    setResetSaving(true);
+    setPendingId(resetTarget.id);
+    const result = await resetAccountPassword(resetTarget.id, newPassword);
+    setResetSaving(false);
+    setPendingId(null);
+    if (!result.ok) {
+      setResetError(result.error || "Failed to reset password.");
+      return;
+    }
+    setRows((prev) => prev.map((row) => (row.id === resetTarget.id ? { ...row, ...result.data } : row)));
+    setResetSuccess(`New password set. Share it securely with ${resetTarget.username}.`);
+    onResetPassword?.({ ...resetTarget, ...result.data });
+  };
+
+  const handleCopyPassword = async () => {
+    if (!resetPasswordValue) return;
+    try {
+      await navigator.clipboard.writeText(resetPasswordValue);
+    } catch {
+      // Clipboard API may be blocked in insecure origins; ignore.
+    }
   };
 
   const handleAdminAvatarUpload = async (file) => {
@@ -285,7 +350,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                                   size: "sm",
                                   className: "gap-1.5",
                                   isLoading: pendingId === row.id,
-                                  onClick: () => handleReset(row),
+                                  onClick: () => openResetDialog(row),
                                   children: [
                                     /* @__PURE__ */ jsx(KeyRound, { size: 14 }),
                                     "Reset password"
@@ -514,6 +579,152 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                       children: "Save Account"
                     })
                   ]
+                })
+              ].filter(Boolean)
+            })
+          ]
+        })
+      }) : null,
+      resetTarget ? /* @__PURE__ */ jsx("div", {
+        className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm",
+        onClick: (e) => {
+          if (e.target === e.currentTarget) closeResetDialog();
+        },
+        children: /* @__PURE__ */ jsxs("div", {
+          className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto",
+          children: [
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between",
+              children: [
+                /* @__PURE__ */ jsxs("div", {
+                  children: [
+                    /* @__PURE__ */ jsx("h3", {
+                      className: "font-semibold text-lg text-slate-900",
+                      children: "Reset password"
+                    }),
+                    /* @__PURE__ */ jsxs("p", {
+                      className: "text-xs text-slate-500 mt-0.5",
+                      children: [
+                        "Set a new password for ",
+                        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: resetTarget.username }),
+                        " (",
+                        resetTarget.email,
+                        "). They will be prompted to change it on next login."
+                      ]
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsx("button", {
+                  type: "button",
+                  className: "text-slate-400 hover:text-slate-600",
+                  onClick: closeResetDialog,
+                  disabled: resetSaving,
+                  children: /* @__PURE__ */ jsx(X, { size: 18 })
+                })
+              ]
+            }),
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 space-y-4",
+              children: [
+                resetError ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2",
+                  children: resetError
+                }) : null,
+                resetSuccess ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2",
+                  children: resetSuccess
+                }) : null,
+                /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "New password"
+                    }),
+                    /* @__PURE__ */ jsxs("div", {
+                      className: "flex gap-2",
+                      children: [
+                        /* @__PURE__ */ jsxs("div", {
+                          className: "relative flex-1",
+                          children: [
+                            /* @__PURE__ */ jsx("input", {
+                              type: showResetPassword ? "text" : "password",
+                              autoFocus: true,
+                              value: resetPasswordValue,
+                              onChange: (e) => {
+                                setResetPasswordValue(e.target.value);
+                                if (resetError) setResetError("");
+                                if (resetSuccess) setResetSuccess("");
+                              },
+                              placeholder: "Enter or generate a password",
+                              className:
+                                "w-full pl-3 pr-10 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono tracking-tight"
+                            }),
+                            /* @__PURE__ */ jsx("button", {
+                              type: "button",
+                              "aria-label": showResetPassword ? "Hide password" : "Show password",
+                              className: "absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1",
+                              onClick: () => setShowResetPassword((v) => !v),
+                              children: showResetPassword
+                                ? /* @__PURE__ */ jsx(EyeOff, { size: 16 })
+                                : /* @__PURE__ */ jsx(Eye, { size: 16 })
+                            })
+                          ]
+                        }),
+                        /* @__PURE__ */ jsx(Button, {
+                          type: "button",
+                          variant: "secondary",
+                          size: "sm",
+                          className: "gap-1.5 whitespace-nowrap",
+                          onClick: () => {
+                            const generated = generateTempPassword();
+                            setResetPasswordValue(generated);
+                            setShowResetPassword(true);
+                            if (resetError) setResetError("");
+                            if (resetSuccess) setResetSuccess("");
+                          },
+                          "aria-label": "Generate password",
+                          children: [
+                            /* @__PURE__ */ jsx(RefreshCw, { size: 14 }),
+                            "Generate"
+                          ]
+                        }),
+                        /* @__PURE__ */ jsx(Button, {
+                          type: "button",
+                          variant: "outline",
+                          size: "sm",
+                          className: "gap-1.5 whitespace-nowrap",
+                          onClick: handleCopyPassword,
+                          disabled: !resetPasswordValue,
+                          "aria-label": "Copy password",
+                          children: /* @__PURE__ */ jsx(Copy, { size: 14 })
+                        })
+                      ]
+                    }),
+                    /* @__PURE__ */ jsx("p", {
+                      className: "text-[11px] text-slate-500",
+                      children: "Minimum 6 characters. The user will be asked to change this on their next sign-in."
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsxs("div", {
+                  className: "pt-2 flex justify-end gap-2",
+                  children: [
+                    /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      variant: "ghost",
+                      onClick: closeResetDialog,
+                      disabled: resetSaving,
+                      children: resetSuccess ? "Close" : "Cancel"
+                    }),
+                    resetSuccess ? null : /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      isLoading: resetSaving,
+                      disabled: resetPasswordValue.trim().length < 6,
+                      onClick: handleConfirmReset,
+                      children: "Reset password"
+                    })
+                  ].filter(Boolean)
                 })
               ].filter(Boolean)
             })

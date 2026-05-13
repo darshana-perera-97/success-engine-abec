@@ -2848,6 +2848,67 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/reset-password")) {
+    try {
+      const accountId = decodeURIComponent(
+        url.pathname.replace("/api/accounts/", "").replace("/reset-password", "").trim()
+      ).replace(/\/+$/, "");
+      if (!accountId) {
+        sendJson(res, 400, { ok: false, error: "Account ID is required." });
+        return;
+      }
+      if (accountId === "ADM001") {
+        sendJson(res, 400, {
+          ok: false,
+          error: "The primary admin password is managed in backend .env and cannot be reset here.",
+        });
+        return;
+      }
+      const body = await parseBody(req);
+      const newPassword = String(body.newPassword || "").trim();
+      if (newPassword.length < 6) {
+        sendJson(res, 400, { ok: false, error: "New password must be at least 6 characters." });
+        return;
+      }
+      const users = await readUsers();
+      const targetIndex = users.findIndex((u) => String(u.id || "") === accountId);
+      if (targetIndex === -1) {
+        sendJson(res, 404, { ok: false, error: "Account not found." });
+        return;
+      }
+      const target = users[targetIndex];
+      if (String(target.role || "") === "Admin" || normalizeEmail(target.email) === ADMIN_EMAIL) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Admin accounts cannot have their password reset from this screen.",
+        });
+        return;
+      }
+      const updatedAccount = {
+        ...target,
+        password: newPassword,
+        forcePasswordChange: true,
+        passwordChangedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const updatedUsers = [...users];
+      updatedUsers[targetIndex] = updatedAccount;
+      await writeUsers(updatedUsers);
+      logEvent("auth", "admin reset account password", {
+        accountId: updatedAccount.id,
+        email: updatedAccount.email,
+        role: updatedAccount.role,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+      });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to reset password." });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/accounts/admin/avatar") {
     try {
       const body = await parseBody(req);

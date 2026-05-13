@@ -5,6 +5,7 @@ import { Lock, Mail } from "lucide-react";
 import { Button } from "./Button";
 import { saveLoginSession } from "../authSession";
 import { changeStudentDefaultPassword, loginAdmin } from "../authApi";
+import { COMPANY_NAME, COMPANY_SHORT_NAME } from "../companyConfig";
 
 const LoginScreen = ({ onLoggedIn }) => {
   const [email, setEmail] = useState("");
@@ -99,7 +100,7 @@ const LoginScreen = ({ onLoggedIn }) => {
               children: [
                 /* @__PURE__ */ jsx("img", {
                   src: "/company-full-logo.png",
-                  alt: "ABEC",
+                  alt: COMPANY_SHORT_NAME,
                   className:
                     "h-[8.25rem] sm:h-[7.5rem] w-auto object-contain max-w-[510px]",
                   referrerPolicy: "no-referrer"
@@ -118,7 +119,7 @@ const LoginScreen = ({ onLoggedIn }) => {
             }),
             /* @__PURE__ */ jsx("p", {
               className: "text-xs text-slate-500 mt-0.5 text-center",
-              children: "Access your workspace with your ABEC Premier account."
+              children: `Access your workspace with your ${COMPANY_NAME} account.`
             })
           ]
         }),

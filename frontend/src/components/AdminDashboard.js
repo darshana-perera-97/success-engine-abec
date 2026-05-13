@@ -17,7 +17,7 @@ import {
   Stamp,
   ChevronRight,
 } from "lucide-react";
-import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearAdminAiChats } from "../authApi";
+import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearAdminAiChats, getCountries, getBranches } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
 
@@ -110,6 +110,26 @@ function deriveDisplayName(currentUser) {
 }
 
 const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUser = null, onSelectStudent }) => {
+  const [destinationCountries, setDestinationCountries] = React.useState([]);
+  const [branchLocations, setBranchLocations] = React.useState([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
+      if (cancelled) return;
+      if (countriesRes.ok && Array.isArray(countriesRes.data)) setDestinationCountries(countriesRes.data);
+      if (branchesRes.ok && Array.isArray(branchesRes.data)) {
+        setBranchLocations(
+          branchesRes.data
+            .map((branch) => String(branch?.location || "").trim())
+            .filter(Boolean)
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const displayName = deriveDisplayName(currentUser);
   const adminEmail = String(currentUser?.email || "").trim().toLowerCase();
   const userAvatar = String(currentUser?.avatar || "").trim() || DEFAULT_USER_AVATAR;
@@ -579,7 +599,7 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-8", children: [
       /* @__PURE__ */ jsxs("div", { className: "lg:col-span-2 space-y-8", children: [
         renderChatPanel(false),
-        /* @__PURE__ */ jsx(Dashboard, { students, invoices }),
+        /* @__PURE__ */ jsx(Dashboard, { students, invoices, destinationCountries, branchLocations }),
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-8 w-full min-w-0 self-start flex flex-col", children: [
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col w-full", children: [

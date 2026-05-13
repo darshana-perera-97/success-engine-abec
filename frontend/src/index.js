@@ -4,7 +4,10 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
 import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
 import { StudentRegistrationForm } from "./components/StudentRegistrationForm";
+import { applyCompanyBrandingToDocument } from "./companyConfig";
 import "./styles.css";
+
+applyCompanyBrandingToDocument();
 
 const ROUTE_VIEWS = [
   { path: "/dashboard", view: "dashboard" },

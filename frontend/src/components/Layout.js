@@ -1,5 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
+import { COMPANY_LOGO_ALT, COMPANY_NAME } from "../companyConfig";
 import {
   Users,
   LayoutDashboard,
@@ -240,7 +241,7 @@ const Layout = ({
             "img",
             {
               src: "/MainLogo.png",
-              alt: "ABEC Premier Logo",
+              alt: COMPANY_LOGO_ALT,
               className: "w-full h-auto object-contain",
               referrerPolicy: "no-referrer"
             }
@@ -302,7 +303,7 @@ const Layout = ({
           "img",
           {
             src: "/MainLogo.png",
-            alt: "ABEC Premier Logo",
+            alt: COMPANY_LOGO_ALT,
             className: "w-full h-auto object-contain",
             referrerPolicy: "no-referrer"
           }
@@ -455,7 +456,7 @@ const Layout = ({
       ] }),
       /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) }),
       /* @__PURE__ */ jsx("footer", { className: "border-t border-gray-200 bg-white px-4 lg:px-8 py-3", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between", children: [
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `© ${new Date().getFullYear()} ABEC Premier. All rights reserved.` }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `© ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.` }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 sm:text-right", children: "Powered by NexGenAI" })
       ] }) })
     ] }),

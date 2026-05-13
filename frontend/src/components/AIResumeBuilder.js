@@ -33,6 +33,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Button } from "./Button";
+import { COMPANY_AI_BRAND, COMPANY_NAME, RESUME_BUILDER_TITLE } from "../companyConfig";
 function parseNotesForProgramEducation(notes) {
   const n = String(notes || "");
   const programM = n.match(/Program:\s*([^.]+?)(?:\.|\s+Education:|$)/i);
@@ -167,11 +168,11 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
   const cvPdfCaptureRef = useRef(null);
   const initialExtractedData = useMemo(() => ({
     name: "Nirash Dilshan Jayantha",
-    role: "CO-Founder | ABEC Premier",
+    role: `CO-Founder | ${COMPANY_NAME}`,
     email: "info@abecpremier.com",
     phone: "(+94) 77 96 95 412",
     experience: [
-      { title: "Co-Founder & GTM Lead", company: "ABEC Premier", period: "OCT 2020 \u2013 PRESENT" },
+      { title: "Co-Founder & GTM Lead", company: COMPANY_NAME, period: "OCT 2020 \u2013 PRESENT" },
       { title: "Lead Product Designer", company: "Reach Solutions", period: "2017 \u2013 2020" }
     ],
     education: [
@@ -183,7 +184,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     ],
     profilePicture: null,
     customSections: []
-  }), []);
+  }), [COMPANY_NAME]);
   const [editableData, setEditableData] = useState(initialExtractedData);
   const reset = useCallback(() => {
     setStep("initial");
@@ -482,10 +483,10 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsxs("h1", { className: "text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3", children: [
-          "Premier AI Resume Builder",
+          RESUME_BUILDER_TITLE,
           /* @__PURE__ */ jsx("span", { className: "text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-bold uppercase tracking-wider", children: "Beta" })
         ] }),
-        /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-1", children: "Professional resumes powered by ABEC Premier AI technology." })
+        /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-1", children: `Professional resumes powered by ${COMPANY_AI_BRAND} technology.` })
       ] }),
       step !== "initial" && step !== "success" && /* @__PURE__ */ jsxs(Button, { variant: "ghost", onClick: reset, className: "text-slate-500", children: [
         /* @__PURE__ */ jsx(RefreshCw, { size: 16, className: "mr-2" }),
@@ -567,7 +568,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
           children: /* @__PURE__ */ jsxs("div", { className: "max-w-md mx-auto", children: [
             /* @__PURE__ */ jsx("div", { className: "w-20 h-20 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-6", children: /* @__PURE__ */ jsx(Upload, { size: 32 }) }),
             /* @__PURE__ */ jsx("h3", { className: "text-2xl font-bold text-slate-900", children: "Upload Your Current CV" }),
-            /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2 mb-8", children: "ABEC Premier AI will analyze your existing resume to extract your professional background." }),
+            /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2 mb-8", children: `${COMPANY_AI_BRAND} will analyze your existing resume to extract your professional background.` }),
             /* @__PURE__ */ jsxs("div", { className: "relative group", children: [
               /* @__PURE__ */ jsx(
                 "input",
@@ -650,8 +651,8 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
               /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center", children: /* @__PURE__ */ jsx(Loader2, { className: "animate-spin text-indigo-600", size: 32 }) })
             ] }),
             /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h3", { className: "text-2xl font-bold text-slate-900", children: step === "processing" ? "ABEC Premier AI Scanning CV.pdf..." : "Uploading Old CV..." }),
-              /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2", children: "ABEC Premier AI is extracting your professional DNA." })
+              /* @__PURE__ */ jsx("h3", { className: "text-2xl font-bold text-slate-900", children: step === "processing" ? `${COMPANY_AI_BRAND} Scanning CV.pdf...` : "Uploading Old CV..." }),
+              /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2", children: `${COMPANY_AI_BRAND} is extracting your professional DNA.` })
             ] }),
             /* @__PURE__ */ jsx("div", { className: "max-w-md mx-auto bg-gray-100 h-2 rounded-full overflow-hidden", children: /* @__PURE__ */ jsx(
               motion.div,
@@ -808,7 +809,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                           type: "text",
                           value: exp.company,
                           onChange: (e) => updateExperience(i, "company", e.target.value),
-                          placeholder: "e.g. ABEC Premier",
+                          placeholder: `e.g. ${COMPANY_NAME}`,
                           className: "w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 transition-all"
                         }
                       )
@@ -1098,7 +1099,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                   /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-amber-500" }),
                   /* @__PURE__ */ jsx("div", { className: "w-3 h-3 rounded-full bg-emerald-500" })
                 ] }),
-                /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 font-mono uppercase tracking-widest", children: "ABEC Premier AI CV Preview" }),
+                /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 font-mono uppercase tracking-widest", children: `${COMPANY_AI_BRAND} CV Preview` }),
                 /* @__PURE__ */ jsx("div", { className: "w-12" })
               ] }),
               /* @__PURE__ */ jsxs("div", { className: "p-12 bg-white min-h-[800px]", children: [

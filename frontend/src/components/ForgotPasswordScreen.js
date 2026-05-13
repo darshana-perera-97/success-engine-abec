@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { KeyRound, Lock, Mail } from "lucide-react";
 import { Button } from "./Button";
 import { requestPasswordOtp, resetPasswordWithOtp } from "../authApi";
+import { COMPANY_NAME } from "../companyConfig";
 
 const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState("");
@@ -97,7 +98,7 @@ const ForgotPasswordScreen = () => {
               className: "flex justify-center mb-5",
               children: /* @__PURE__ */ jsx("img", {
                 src: "/MainLogo.png",
-                alt: "ABEC Premier",
+                alt: COMPANY_NAME,
                 className: "h-10 w-auto object-contain max-w-[220px]",
                 referrerPolicy: "no-referrer"
               })

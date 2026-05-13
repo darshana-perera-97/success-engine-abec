@@ -106,7 +106,6 @@ function App({ initialView = "dashboard" }) {
   const whatsappDisconnectNotifyAnchorRef = useRef(0);
   const whatsappDisconnectNotifiedRef = useRef(false);
   const toastStackRef = useRef(null);
-  const hasStudentsHydratedRef = useRef(false);
   const hasRequestedStudentsHydratedRef = useRef(false);
   const requestedStudentsCountRef = useRef(0);
   const previousStudentCounselorMapRef = useRef(new Map());
@@ -289,7 +288,8 @@ function App({ initialView = "dashboard" }) {
       (students || []).map((student) => [String(student.id || ""), normalizeIdentity(student.counselor)])
     );
     const previousMap = previousStudentCounselorMapRef.current;
-    if (!hasStudentsHydratedRef.current || previousMap.size === 0) {
+    if (previousMap.size === 0) {
+      if (!(students || []).length) return;
       previousStudentCounselorMapRef.current = nextMap;
       return;
     }
@@ -457,7 +457,7 @@ function App({ initialView = "dashboard" }) {
   }, [invoices, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
   const navMyTasksCount = useMemo(() => {
     if (currentRole === "Counselor") {
-      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents).length;
+      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents, counselorIdentitySet).length;
     }
     if (currentRole === "Country Coordinator") {
       const coordTasks = countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
@@ -470,6 +470,7 @@ function App({ initialView = "dashboard" }) {
     currentRole,
     tasks,
     currentUser,
+    counselorIdentitySet,
     counselorScopedStudents,
     countryCoordinatorScope.active,
     countryCoordinatorScopedTasks,
@@ -602,15 +603,20 @@ function App({ initialView = "dashboard" }) {
     loadAdminAvatar();
   }, []);
   useEffect(() => {
-    hasStudentsHydratedRef.current = false;
-  }, [currentRole, authenticatedUser?.email]);
+    if (currentRole !== "Counselor") return;
+    previousStudentCounselorMapRef.current = new Map(
+      (students || []).map((student) => [
+        String(student.id || "").trim(),
+        normalizeIdentity(student.counselor)
+      ])
+    );
+  }, [currentRole, authenticatedUser?.id, authenticatedUser?.email]);
   useEffect(() => {
     const loadStudents = async () => {
       const result = await getStudents();
       if (!result.ok) return;
       setStudents(() => {
         const nextStudents = Array.isArray(result.data) ? result.data : [];
-        hasStudentsHydratedRef.current = true;
         return nextStudents;
       });
     };
@@ -1783,9 +1789,9 @@ function App({ initialView = "dashboard" }) {
       if (currentRole === "Counselor" && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
-      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
+      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
       if (currentView === "student-detail") {
         const selectedSid = selectedStudent ? String(selectedStudent.id ?? "").trim() : "";
         const studentInScope = selectedSid ? coordStudents.find((s) => String(s.id ?? "").trim() === selectedSid) : null;
@@ -1793,7 +1799,7 @@ function App({ initialView = "dashboard" }) {
           ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: studentInScope, userRole: currentRole })
           : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
       }
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
     }
     if (currentRole === "Manager" || currentRole === "Team Lead") {
       const mgrStudents = currentRole === "Manager" && managerDataScope.active ? managerScopedStudents : students;
@@ -1847,8 +1853,8 @@ function App({ initialView = "dashboard" }) {
             ),
           onResetPassword: (row) =>
             addNotification(
-              "Password reset sent",
-              `A reset link was sent to ${row.email} (${row.username}).`,
+              "Password reset",
+              `Password updated for ${row.username} (${row.email}). Share the new password with them securely.`,
               "success"
             )
         });
