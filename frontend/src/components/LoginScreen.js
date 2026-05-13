@@ -5,7 +5,7 @@ import { Lock, Mail } from "lucide-react";
 import { Button } from "./Button";
 import { saveLoginSession } from "../authSession";
 import { changeStudentDefaultPassword, loginAdmin } from "../authApi";
-import { COMPANY_NAME, COMPANY_SHORT_NAME } from "../companyConfig";
+import { COMPANY_NAME, COMPANY_SHORT_NAME, COMPANY_FULL_LOGO, ACTIVE_PROFILE } from "../companyConfig";
 
 const LoginScreen = ({ onLoggedIn }) => {
   const [email, setEmail] = useState("");
@@ -99,7 +99,8 @@ const LoginScreen = ({ onLoggedIn }) => {
               className: "flex flex-col items-center mb-5",
               children: [
                 /* @__PURE__ */ jsx("img", {
-                  src: "/company-full-logo.png",
+                  key: ACTIVE_PROFILE,
+                  src: COMPANY_FULL_LOGO,
                   alt: COMPANY_SHORT_NAME,
                   className:
                     "h-[8.25rem] sm:h-[7.5rem] w-auto object-contain max-w-[510px]",

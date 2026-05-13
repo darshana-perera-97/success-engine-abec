@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { KeyRound, Lock, Mail } from "lucide-react";
 import { Button } from "./Button";
 import { requestPasswordOtp, resetPasswordWithOtp } from "../authApi";
-import { COMPANY_NAME } from "../companyConfig";
+import { COMPANY_NAME, COMPANY_SHORT_NAME, COMPANY_FULL_LOGO, ACTIVE_PROFILE } from "../companyConfig";
 
 const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState("");
@@ -94,14 +94,18 @@ const ForgotPasswordScreen = () => {
         /* @__PURE__ */ jsxs("div", {
           className: "p-6 border-b border-gray-100 bg-gray-50/50",
           children: [
-            /* @__PURE__ */ jsx("div", {
-              className: "flex justify-center mb-5",
-              children: /* @__PURE__ */ jsx("img", {
-                src: "/MainLogo.png",
-                alt: COMPANY_NAME,
-                className: "h-10 w-auto object-contain max-w-[220px]",
-                referrerPolicy: "no-referrer"
-              })
+            /* @__PURE__ */ jsxs("div", {
+              className: "flex flex-col items-center mb-5",
+              children: [
+                /* @__PURE__ */ jsx("img", {
+                  key: ACTIVE_PROFILE,
+                  src: COMPANY_FULL_LOGO,
+                  alt: COMPANY_SHORT_NAME,
+                  className:
+                    "h-[8.25rem] sm:h-[7.5rem] w-auto object-contain max-w-[510px]",
+                  referrerPolicy: "no-referrer"
+                })
+              ]
             }),
             /* @__PURE__ */ jsx("h1", {
               className: "font-semibold text-lg text-[#0F172A] text-center",
