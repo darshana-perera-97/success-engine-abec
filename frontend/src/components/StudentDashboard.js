@@ -4,7 +4,7 @@ import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Plane, X, CheckSqua
 import { Button } from "./Button";
 import { PersonContactCard } from "./PersonContactCard";
 import { COUNTRY_CHECKLISTS } from "../constants";
-import { PIPELINE_STEPS, normalizePipelineStatus } from "../pipeline";
+import { PIPELINE_STEPS, normalizePipelineStatus, getVisibleCountryChecklistStages } from "../pipeline";
 import { buildStudentDashboardCounselorRoster, buildVisaAgentEntries } from "../studentContactHelpers";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
@@ -36,9 +36,12 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
     return 0;
   });
   const checklist = COUNTRY_CHECKLISTS[student.country] || COUNTRY_CHECKLISTS["Default"] || [];
+  const visibleChecklistStages = new Set(getVisibleCountryChecklistStages(student.status));
   const documentTypeOptions = Array.from(
     new Set(
-      checklist.flatMap((category) => category.items.map((item) => item.docType))
+      checklist
+        .filter((category) => visibleChecklistStages.has(category.stage))
+        .flatMap((category) => category.items.map((item) => item.docType))
     )
   );
   const closeUploadModal = () => {

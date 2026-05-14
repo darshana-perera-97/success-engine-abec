@@ -3,7 +3,10 @@ import { useState, useMemo } from "react";
 import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2 } from "lucide-react";
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
+import { getVisibleCountryChecklistStages } from "../pipeline";
 const DELETE_REJECTED_ROLES = new Set(["Counselor", "Manager", "Admin"]);
+const OFFER_LETTER_UPLOAD_ROLES = new Set(["Counselor", "Manager", "Admin"]);
+const OFFER_LETTER_STATUSES = ["Approved", "Conditional", "Rejected"];
 const DocumentManager = ({
   student,
   userRole,
@@ -12,7 +15,8 @@ const DocumentManager = ({
   tasks = [],
   onUpdateTasks,
   onUploadDocument,
-  onUploadProfileOtherDocument
+  onUploadProfileOtherDocument,
+  onUploadUniversityOfferLetters
 }) => {
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [deleteRejectedModal, setDeleteRejectedModal] = useState({ isOpen: false, doc: null });
@@ -22,6 +26,8 @@ const DocumentManager = ({
   const [uploadError, setUploadError] = useState("");
   const [otherDocModal, setOtherDocModal] = useState({ open: false, slot: null, label: "", error: "" });
   const [otherDocUploading, setOtherDocUploading] = useState(false);
+  const [offerLetterModal, setOfferLetterModal] = useState({ open: false, offerStatus: "Approved", error: "" });
+  const [offerLetterUploading, setOfferLetterUploading] = useState(false);
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
   const studentDocuments = useMemo(() => student.documents || [], [student.documents]);
   const profileOtherSlots = useMemo(() => {
@@ -161,6 +167,107 @@ const DocumentManager = ({
     setOtherDocModal({ open: false, slot: null, label: "", error: "" });
     showWhatsappNotification(`Other document "${labelForUpload}" saved (slot ${slot}).`);
   };
+  const universityOfferLetters = useMemo(() => {
+    const raw = student.universityOfferLetters;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((entry) => entry && typeof entry === "object" && entry.url)
+      .sort((a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime());
+  }, [student.universityOfferLetters]);
+  const showUniversityOfferLetters = useMemo(() => {
+    const visibleStages = new Set(getVisibleCountryChecklistStages(student.status));
+    return visibleStages.has("Uni Application") || visibleStages.has("Offer Received");
+  }, [student.status]);
+  const canUploadOfferLetters = OFFER_LETTER_UPLOAD_ROLES.has(userRole) && typeof onUploadUniversityOfferLetters === "function";
+  const getOfferStatusBadgeClass = (status) => {
+    if (status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (status === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
+    return "bg-amber-50 text-amber-700 border-amber-200";
+  };
+  const handleOfferLetterFileChange = async (event) => {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
+    if (!onUploadUniversityOfferLetters) {
+      setOfferLetterModal((prev) => ({ ...prev, error: "Offer letter upload is unavailable." }));
+      event.target.value = "";
+      return;
+    }
+    const allowedTypes = new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]);
+    const files = Array.from(fileList);
+    for (const file of files) {
+      if (!allowedTypes.has(file.type)) {
+        setOfferLetterModal((prev) => ({ ...prev, error: "Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX." }));
+        event.target.value = "";
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setOfferLetterModal((prev) => ({ ...prev, error: "Each file must be under 10MB." }));
+        event.target.value = "";
+        return;
+      }
+    }
+    setOfferLetterModal((prev) => ({ ...prev, error: "" }));
+    setOfferLetterUploading(true);
+    const payloadFiles = [];
+    for (const file of files) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_error"));
+        reader.readAsDataURL(file);
+      }).catch(() => "");
+      if (!dataUrl) {
+        setOfferLetterUploading(false);
+        setOfferLetterModal((prev) => ({ ...prev, error: `Unable to read "${file.name}". Try again.` }));
+        event.target.value = "";
+        return;
+      }
+      payloadFiles.push({ dataUrl, fileName: file.name });
+    }
+    const result = await onUploadUniversityOfferLetters({
+      studentId: student.id,
+      offerStatus: offerLetterModal.offerStatus,
+      files: payloadFiles
+    });
+    setOfferLetterUploading(false);
+    event.target.value = "";
+    if (!result?.ok) {
+      setOfferLetterModal((prev) => ({ ...prev, error: result?.error || "Failed to upload offer letters." }));
+      return;
+    }
+    const count = payloadFiles.length;
+    const statusLabel = offerLetterModal.offerStatus;
+    setOfferLetterModal({ open: false, offerStatus: "Approved", error: "" });
+    const notifs = result?.offerLetterWhatsappNotifications || [];
+    const sentCount = notifs.filter((n) => n?.whatsapp?.status === "sent").length;
+    const failed = notifs.filter((n) => n?.whatsapp?.status === "failed" || n?.whatsapp?.status === "skipped");
+    if (sentCount > 0) {
+      showWhatsappNotification(
+        sentCount === 1
+          ? `Offer letter (${statusLabel}) uploaded. WhatsApp sent to the student from your counselor account.`
+          : `${count} offer letters (${statusLabel}) uploaded. WhatsApp sent for ${sentCount} letter(s) from your counselor account.`
+      );
+    } else if (failed.length > 0) {
+      const reason = failed[0]?.whatsapp?.reason ? ` ${failed[0].whatsapp.reason}` : "";
+      showWhatsappNotification(
+        count === 1
+          ? `Offer letter (${statusLabel}) uploaded. WhatsApp was not sent.${reason}`
+          : `${count} offer letters (${statusLabel}) uploaded. WhatsApp was not sent.${reason}`
+      );
+    } else {
+      showWhatsappNotification(
+        count === 1
+          ? `University offer letter uploaded as ${statusLabel}.`
+          : `${count} university offer letters uploaded as ${statusLabel}.`
+      );
+    }
+  };
   const handleReview = async (doc, status, reason) => {
     const updatedDoc = { ...doc, status, rejectionReason: status === "Rejected" ? reason : void 0 };
     setRejectionModal({ isOpen: false, doc: null });
@@ -193,14 +300,17 @@ const DocumentManager = ({
   };
   const checklist = useMemo(() => {
     const countryChecklist = COUNTRY_CHECKLISTS[student.country] || COUNTRY_CHECKLISTS["Default"];
-    return countryChecklist.map((category) => ({
-      ...category,
-      items: category.items.map((item) => ({
-        ...item,
-        uploadedFiles: studentDocuments.filter((d) => d.type === item.docType || d.type.includes(item.docType) || item.docType.includes(d.type)).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
-      }))
-    }));
-  }, [student.country, studentDocuments]);
+    const visibleStages = new Set(getVisibleCountryChecklistStages(student.status));
+    return countryChecklist
+      .filter((category) => visibleStages.has(category.stage))
+      .map((category) => ({
+        ...category,
+        items: category.items.map((item) => ({
+          ...item,
+          uploadedFiles: studentDocuments.filter((d) => d.type === item.docType || d.type.includes(item.docType) || item.docType.includes(d.type)).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
+        }))
+      }));
+  }, [student.country, student.status, studentDocuments]);
   const isStaff = userRole !== "Student";
   const canDeleteRejectedUpload = DELETE_REJECTED_ROLES.has(userRole) && typeof onDeleteDocument === "function";
   const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
@@ -218,7 +328,7 @@ const DocumentManager = ({
         " Verified"
       ] })
     ] }) }),
-    /* @__PURE__ */ jsx("div", { className: "space-y-6", children: checklist.map((category) => /* @__PURE__ */ jsxs("div", { children: [
+    /* @__PURE__ */ jsx("div", { className: "space-y-6", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => /* @__PURE__ */ jsxs("div", { children: [
       /* @__PURE__ */ jsxs("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider mb-2", children: [
         category.stage,
         " Requirements"
@@ -282,6 +392,39 @@ const DocumentManager = ({
         ] }) })
       ] }, docType)) })
     ] }, category.stage)) }),
+    showUniversityOfferLetters && /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Approved, Conditional, or Rejected." })
+        ] }),
+        canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
+          size: "sm",
+          variant: "secondary",
+          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Approved", error: "" }),
+          children: [
+            /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
+            "Upload offer letters"
+          ]
+        })
+      ] }),
+      universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
+          /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: letter.name }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: letter.uploadedAt ? new Date(letter.uploadedAt).toLocaleString() : "" })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
+          /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus || "Conditional" }),
+          letter.url && /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+            /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+          ] })
+        ] })
+      ] }, letter.id || `${letter.name}-${idx}`)) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
+    ] }),
     /* @__PURE__ */ jsxs("div", { className: "mt-10 pt-8 border-t border-slate-200", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
@@ -417,6 +560,34 @@ const DocumentManager = ({
           /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Uploading…" })
         ] }),
         otherDocModal.error && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: otherDocModal.error })
+      ] })
+    ] }) }),
+    offerLetterModal.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload University Offer Letters" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Select offer status, then choose one or more files." })
+        ] }),
+        !offerLetterUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOfferLetterModal({ open: false, offerStatus: "Approved", error: "" }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Offer status" }),
+          /* @__PURE__ */ jsx("div", { className: "mt-2 grid grid-cols-1 gap-2", children: OFFER_LETTER_STATUSES.map((status) => /* @__PURE__ */ jsxs("label", { className: `flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${offerLetterModal.offerStatus === status ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-slate-300"}`, children: [
+            /* @__PURE__ */ jsx("input", { type: "radio", name: "offerStatus", value: status, checked: offerLetterModal.offerStatus === status, disabled: offerLetterUploading, onChange: () => setOfferLetterModal((prev) => ({ ...prev, offerStatus: status, error: "" })), className: "text-indigo-600 focus:ring-indigo-500" }),
+            /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-800", children: status })
+          ] }, status)) })
+        ] }),
+        !offerLetterUploading ? /* @__PURE__ */ jsxs("label", { className: "border-2 border-dashed border-indigo-200 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors", children: [
+          /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handleOfferLetterFileChange }),
+          /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose one or more offer letters" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB each" })
+        ] }) : /* @__PURE__ */ jsxs("div", { className: "py-6 flex flex-col items-center text-center", children: [
+          /* @__PURE__ */ jsx("div", { className: "w-14 h-14 rounded-full mb-4 bg-indigo-100 text-indigo-600 flex items-center justify-center animate-pulse", children: /* @__PURE__ */ jsx(FileUp, { size: 22 }) }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Uploading offer letters…" })
+        ] }),
+        offerLetterModal.error && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: offerLetterModal.error })
       ] })
     ] }) }),
     uploadModal.isOpen && uploadModal.docType && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [

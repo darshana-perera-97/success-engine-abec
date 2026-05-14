@@ -1,8 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState } from "react";
-import { X, User, MapPin, DollarSign, Phone, Mail, Zap, KeyRound } from "lucide-react";
+import { X, User, MapPin, DollarSign, Phone, Mail, KeyRound } from "lucide-react";
 import { Button } from "./Button";
-const AddStudentModal = ({ isOpen, onClose, onSubmit, onNavigate, userRole, currentUser, counselorOptions = [] }) => {
+const AddStudentModal = ({ isOpen, onClose, onSubmit, userRole, currentUser, counselorOptions = [] }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [formData, setFormData] = useState({
@@ -267,39 +267,7 @@ const AddStudentModal = ({ isOpen, onClose, onSubmit, onNavigate, userRole, curr
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "pt-4 flex flex-wrap gap-3 justify-between items-center border-t border-gray-100 mt-2", children: [
-        /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [
-          /* @__PURE__ */ jsxs(
-            "button",
-            {
-              type: "button",
-              className: "flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm",
-              onClick: () => {
-                onNavigate?.("resume");
-                onClose();
-              },
-              children: [
-                /* @__PURE__ */ jsx(Zap, { size: 14, fill: "currentColor" }),
-                "Nex - AI Resume"
-              ]
-            }
-          ),
-          /* @__PURE__ */ jsxs(
-            "button",
-            {
-              type: "button",
-              className: "flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg border-2 border-slate-200 text-slate-700 hover:bg-slate-50 transition-all hover:border-slate-300",
-              onClick: () => {
-                onNavigate?.("resume");
-                onClose();
-              },
-              children: [
-                /* @__PURE__ */ jsx(User, { size: 14 }),
-                "Upload CV"
-              ]
-            }
-          )
-        ] }),
+      /* @__PURE__ */ jsxs("div", { className: "pt-4 flex flex-wrap gap-3 justify-end items-center border-t border-gray-100 mt-2", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: onClose, disabled: isSaving, children: "Cancel" }),
           /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isSaving, className: "px-6 bg-[#0F172A]", children: "Add Student" })

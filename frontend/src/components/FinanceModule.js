@@ -1,6 +1,6 @@
-import { jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
-import { DollarSign, CheckCircle, Clock, AlertCircle, FileText, Plus, Download, Upload, Eye } from "lucide-react";
+import { DollarSign, CheckCircle, Clock, AlertCircle, FileText, Plus, Download, Upload, Eye, X, MessageCircle } from "lucide-react";
 import { Button } from "./Button";
 import { formatLKR, formatRawLKR } from "../utils";
 import { useExchangeRates } from "../useExchangeRates";
@@ -70,7 +70,7 @@ const generateInvoiceImageDataUrl = async ({ invoice, student }) => {
     return "";
   }
 };
-const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateInvoice }) => {
+const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateInvoice, onNotify }) => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAmount, setNewAmount] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -122,6 +122,26 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
   const [paymentProofFile, setPaymentProofFile] = useState(null);
   const [paymentError, setPaymentError] = useState("");
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [rejectModal, setRejectModal] = useState({ open: false, invoice: null, reason: "", error: "" });
+  const [isRejecting, setIsRejecting] = useState(false);
+  const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
+  const showWhatsappNotification = (message) => {
+    setWhatsappNotification({ show: true, message });
+    setTimeout(() => setWhatsappNotification({ show: false, message: "" }), 4e3);
+  };
+  const showInvoiceWhatsappResult = (result, decisionLabel) => {
+    const ws = result?.invoiceWhatsappNotification?.whatsapp;
+    if (ws?.status === "sent") {
+      showWhatsappNotification(
+        `Invoice payment evidence was ${decisionLabel}. WhatsApp sent to the student from the counselor's linked account.`
+      );
+    } else if (ws?.status === "failed" || ws?.status === "skipped") {
+      const detail = ws?.reason ? ` ${ws.reason}` : "";
+      showWhatsappNotification(
+        `Invoice payment evidence was ${decisionLabel}. WhatsApp was not sent.${detail}`
+      );
+    }
+  };
   const handlePayClick = (invoice) => {
     setSelectedInvoice(invoice);
     setIsPaymentModalOpen(true);
@@ -188,6 +208,11 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         setIsSubmittingPayment(false);
         return;
       }
+      onNotify?.(
+        "Evidence uploaded",
+        `Payment evidence for invoice ${selectedInvoice.id} was submitted for review.`,
+        "success"
+      );
     }
     setIsSubmittingPayment(false);
     setIsPaymentModalOpen(false);
@@ -196,11 +221,48 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
   };
   const handleApprove = async (invoice) => {
     if (!onUpdateInvoice) return;
-    await onUpdateInvoice({
+    const result = await onUpdateInvoice({
       ...invoice,
       status: "Paid",
       generatedReceiptUrl: `REC-${invoice.id}.pdf`
     });
+    if (result?.ok) {
+      onNotify?.(
+        "Payment approved",
+        `Invoice ${invoice.id} payment evidence was approved.`,
+        "success"
+      );
+      showInvoiceWhatsappResult(result, "approved");
+    }
+    return result;
+  };
+  const handleReject = async () => {
+    const invoice = rejectModal.invoice;
+    if (!onUpdateInvoice || !invoice) return;
+    const reason = String(rejectModal.reason || "").trim();
+    if (!reason) {
+      setRejectModal((prev) => ({ ...prev, error: "Please enter a rejection reason." }));
+      return;
+    }
+    setIsRejecting(true);
+    const result = await onUpdateInvoice({
+      ...invoice,
+      status: "Pending",
+      paymentRejectionReason: reason
+    });
+    setIsRejecting(false);
+    if (!result?.ok) {
+      setRejectModal((prev) => ({ ...prev, error: result?.error || "Failed to reject payment evidence." }));
+      return;
+    }
+    onNotify?.(
+      "Payment evidence rejected",
+      `Invoice ${invoice.id} payment evidence was rejected.`,
+      "info"
+    );
+    showInvoiceWhatsappResult(result, "rejected");
+    setRejectModal({ open: false, invoice: null, reason: "", error: "" });
+    setIsDetailsModalOpen(false);
   };
   const getStatusColor = (status) => {
     switch (status) {
@@ -417,10 +479,13 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
           setIsDetailsModalOpen(false);
           handlePayClick(detailsInvoice);
         }, children: "Upload Evidence" }) : null,
-        canAcceptPayment && detailsInvoice.status === "Verifying" ? /* @__PURE__ */ jsx(Button, { className: "flex-1", onClick: async () => {
-          await handleApprove(detailsInvoice);
-          setIsDetailsModalOpen(false);
-        }, children: "Accept Payment" }) : null,
+        canAcceptPayment && detailsInvoice.status === "Verifying" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx(Button, { className: "flex-1", onClick: async () => {
+            await handleApprove(detailsInvoice);
+            setIsDetailsModalOpen(false);
+          }, children: "Accept Payment" }),
+          /* @__PURE__ */ jsx(Button, { variant: "outline", className: "flex-1 border-rose-200 text-rose-700 hover:bg-rose-50", onClick: () => setRejectModal({ open: true, invoice: detailsInvoice, reason: "", error: "" }), children: "Reject Evidence" })
+        ] }) : null,
         /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsDetailsModalOpen(false), children: "Close" })
       ] })
     ] }) }),
@@ -474,6 +539,28 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsPaymentModalOpen(false), children: "Cancel" }),
         /* @__PURE__ */ jsx(Button, { className: "flex-1 bg-indigo-600 hover:bg-indigo-700 text-white", onClick: handlePaymentSubmit, isLoading: isSubmittingPayment, children: paymentMethod === "card" ? "Pay Now" : "Submit Receipt" })
       ] })
+    ] }) }),
+    rejectModal.open && rejectModal.invoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[60] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-2", children: "Reject payment evidence" }),
+      /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mb-4", children: [
+        "Invoice ",
+        rejectModal.invoice.id,
+        " — provide a reason for the student."
+      ] }),
+      /* @__PURE__ */ jsx("textarea", { className: "w-full min-h-[100px] border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500", placeholder: "Rejection reason...", value: rejectModal.reason, onChange: (event) => setRejectModal((prev) => ({ ...prev, reason: event.target.value, error: "" })) }),
+      rejectModal.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-2", children: rejectModal.error }) : null,
+      /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setRejectModal({ open: false, invoice: null, reason: "", error: "" }), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { className: "flex-1 bg-rose-600 hover:bg-rose-700 text-white", onClick: handleReject, isLoading: isRejecting, children: "Reject Evidence" })
+      ] })
+    ] }) }),
+    whatsappNotification.show && /* @__PURE__ */ jsx("div", { className: "fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300", children: /* @__PURE__ */ jsxs("div", { className: "bg-white border border-emerald-100 shadow-xl rounded-lg p-4 flex items-start gap-3 max-w-sm", children: [
+      /* @__PURE__ */ jsx("div", { className: "p-2 bg-emerald-50 rounded-full text-emerald-600", children: /* @__PURE__ */ jsx(MessageCircle, { size: 18 }) }),
+      /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-sm font-bold text-slate-900", children: "WhatsApp Sent" }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-1 leading-relaxed", children: whatsappNotification.message })
+      ] }),
+      /* @__PURE__ */ jsx("button", { onClick: () => setWhatsappNotification({ show: false, message: "" }), className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 16 }) })
     ] }) })
   ] });
 };

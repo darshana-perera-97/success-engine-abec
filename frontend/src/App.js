@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -112,6 +112,8 @@ function App({ initialView = "dashboard" }) {
   const counselorInboundChatNotifyHydratedRef = useRef(false);
   const notifiedCounselorInboundChatIdsRef = useRef(/* @__PURE__ */ new Set());
   const lastCounselorChatNotifyUserIdRef = useRef("");
+  const previousInvoiceStatusRef = useRef(new Map());
+  const invoiceNotifyHydratedRef = useRef(false);
   const appDataLoaded = true;
   const addNotification = useCallback((title, message, type = "info", link = null) => {
     const id = generateId("notif");
@@ -672,13 +674,64 @@ function App({ initialView = "dashboard" }) {
     loadBookingBlocks();
   }, []);
   useEffect(() => {
-    const loadInvoices = async () => {
+    let cancelled = false;
+    const staffRoles = new Set(["Counselor", "Admin", "Manager", "Country Coordinator"]);
+    const pollInvoices = async () => {
       const result = await getInvoices();
-      if (!result.ok) return;
-      setInvoices(result.data);
+      if (!result.ok || cancelled) return;
+      const next = result.data || [];
+      if (staffRoles.has(currentRole)) {
+        for (const inv of next) {
+          const id = String(inv.id || "").trim();
+          if (!id) continue;
+          const newStatus = String(inv.status || "");
+          const prevStatus = previousInvoiceStatusRef.current.get(id);
+          if (!invoiceNotifyHydratedRef.current) {
+            previousInvoiceStatusRef.current.set(id, newStatus);
+            continue;
+          }
+          if (prevStatus === newStatus) continue;
+          const studentId = String(inv.studentId || "").trim();
+          const student = students.find((s) => String(s.id || "").trim() === studentId);
+          const studentName = String(student?.name || "").trim() || studentId || "A student";
+          const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+          const concernsCounselor =
+            currentRole === "Counselor" && counselorId && counselorIdentitySet.has(counselorId);
+          const concernsStaff = currentRole === "Admin" || currentRole === "Manager";
+          const shouldNotify = concernsCounselor || concernsStaff;
+          if (shouldNotify && newStatus === "Verifying" && prevStatus !== "Verifying") {
+            addNotification(
+              "Invoice evidence uploaded",
+              `${studentName} uploaded payment evidence for invoice ${id}.`,
+              "info",
+              studentId ? { studentId } : null
+            );
+            tryShowDesktopAssignmentNotice(
+              "Invoice evidence uploaded",
+              `${studentName} uploaded payment evidence for invoice ${id}.`
+            );
+          }
+          if (shouldNotify && newStatus === "Paid" && prevStatus === "Verifying") {
+            addNotification(
+              "Invoice payment approved",
+              `Payment evidence for ${studentName}'s invoice ${id} was approved.`,
+              "success",
+              studentId ? { studentId } : null
+            );
+          }
+          previousInvoiceStatusRef.current.set(id, newStatus);
+        }
+        invoiceNotifyHydratedRef.current = true;
+      }
+      setInvoices(next);
     };
-    loadInvoices();
-  }, []);
+    pollInvoices();
+    const intervalId = setInterval(pollInvoices, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole, students, counselorIdentitySet, addNotification, tryShowDesktopAssignmentNotice]);
   useEffect(() => {
     const loadActivities = async () => {
       const result = await getActivities();
@@ -1413,11 +1466,22 @@ function App({ initialView = "dashboard" }) {
       return { ok: false, error: saved.error || "Failed to update invoice." };
     }
     setInvoices((prev) => prev.map((inv) => inv.id === saved.data.id ? saved.data : inv));
+    previousInvoiceStatusRef.current.set(String(saved.data.id || ""), String(saved.data.status || ""));
     let action = "updated invoice";
     if (saved.data.status === "Paid") action = "confirmed payment";
     if (saved.data.status === "Verifying") action = "uploaded payment proof";
+    if (saved.data.status === "Pending" && saved.invoiceWhatsappNotification?.decision === "rejected") {
+      action = "rejected payment proof";
+    }
     handleAddActivity({ user: currentRole, role: currentRole, action, target: `${saved.data.id}`, type: "finance", studentId: saved.data.studentId });
-    return { ok: true, data: saved.data };
+    if (saved.data.status === "Verifying" && currentRole === "Student") {
+      addNotification(
+        "Evidence uploaded",
+        `Payment evidence for invoice ${saved.data.id} was submitted for review.`,
+        "success"
+      );
+    }
+    return { ok: true, data: saved.data, invoiceWhatsappNotification: saved.invoiceWhatsappNotification || null };
   };
   const handleBookAppointment = async (newApt) => {
     const saved = await createAppointment(newApt);
@@ -1654,6 +1718,24 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: updatedStudent, profileOtherDocument: result.profileOtherDocument || null };
   };
+  const handleUploadStudentUniversityOfferLetters = async ({ studentId, offerStatus, files }) => {
+    if (!studentId) return { ok: false, error: "Student account not found." };
+    if (!offerStatus) return { ok: false, error: "Select an offer status." };
+    if (!Array.isArray(files) || files.length === 0) return { ok: false, error: "Choose at least one offer letter." };
+    const result = await uploadStudentUniversityOfferLetters(studentId, { offerStatus, files });
+    if (!result.ok) return result;
+    const updatedStudent = result.data;
+    setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
+    if (selectedStudent?.id === updatedStudent.id) {
+      setSelectedStudent(updatedStudent);
+    }
+    return {
+      ok: true,
+      data: updatedStudent,
+      universityOfferLetters: result.universityOfferLetters || [],
+      offerLetterWhatsappNotifications: result.offerLetterWhatsappNotifications || []
+    };
+  };
   const handleOpenCreateTaskModal = (student) => {
     setTaskModalStudent(student);
     setCreateTaskModalOpen(true);
@@ -1735,6 +1817,7 @@ function App({ initialView = "dashboard" }) {
       activities,
       onUploadStudentDocument: handleUploadStudentDocument,
       onUploadStudentProfileOtherDocument: handleUploadStudentProfileOtherDocument,
+      onUploadStudentUniversityOfferLetters: handleUploadStudentUniversityOfferLetters,
       onUploadStudentCv: handleUploadStudentCv,
       currentUser,
       authenticatedUser,
@@ -1751,7 +1834,7 @@ function App({ initialView = "dashboard" }) {
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees });
-      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, userRole: "Student", onUpdateInvoice: handleUpdateInvoice });
+      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
       return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
     }
     const openEscalationStudent = (studentId) => {

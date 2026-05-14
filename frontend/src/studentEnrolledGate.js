@@ -41,6 +41,37 @@ export function collectIncompleteVisaItems(student) {
   return incomplete;
 }
 
+export function buildVisaPilotDocType(item) {
+  return `Visa Pilot - ${item}`;
+}
+
+/**
+ * Visa Pilot uploads required before leaving Documentation stage.
+ * @returns {Array<{ item: string, docType: string }>}
+ */
+export function collectMissingVisaPilotUploads(student) {
+  const country = student?.country;
+  const workflow = VISA_WORKFLOWS[country] || VISA_WORKFLOWS.Default;
+  const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
+  const missing = [];
+  for (const stage of workflow) {
+    for (const item of stage.items) {
+      const docType = buildVisaPilotDocType(item);
+      const hasUploaded = studentDocs.some((d) => {
+        const dt = String(d?.type || "");
+        return dt === docType && String(d?.status || "").trim() !== "Rejected";
+      });
+      if (!hasUploaded) missing.push({ item, docType });
+    }
+  }
+  return missing;
+}
+
+/** @returns {string[]} human-readable visa workflow labels missing an upload */
+export function getMissingVisaPilotUploadLabels(student) {
+  return collectMissingVisaPilotUploads(student).map((m) => m.item);
+}
+
 /** Invoices for this student that are not fully paid (blocks Enrolled). */
 export function getUnpaidInvoicesForStudent(studentId, invoices) {
   const sid = String(studentId || "").trim();

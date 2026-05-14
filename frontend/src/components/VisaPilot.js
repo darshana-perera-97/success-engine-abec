@@ -3,14 +3,19 @@ import { useMemo, useState } from "react";
 import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp } from "lucide-react";
 import { Button } from "./Button";
 import { VISA_WORKFLOWS } from "../visaWorkflows";
+import { isVisaPilotUnlocked, normalizePipelineStatus } from "../pipeline";
+import { buildVisaPilotDocType } from "../studentEnrolledGate";
 const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument }) => {
   const workflow = VISA_WORKFLOWS[student.country] || VISA_WORKFLOWS.Default;
+  const visaPilotUnlocked = isVisaPilotUnlocked(student.status);
+  const isDocumentationStage = normalizePipelineStatus(student.status) === "Documentation";
   const [visaState, setVisaState] = useState(student.visa || {});
   const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0 });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const visaDocuments = useMemo(() => student.documents?.filter((doc) => String(doc.tier || "").toLowerCase() === "visapilot") || [], [student.documents]);
-  const canUploadVisaDocs = userRole !== "Student";
+  const canUploadVisaDocs = userRole !== "Student" && visaPilotUnlocked;
+  const buildVisaDocType = (item) => buildVisaPilotDocType(item);
   let currentStageIndex = 0;
   for (let i = 0; i < workflow.length; i++) {
     const stage = workflow[i];
@@ -25,6 +30,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
     currentStageIndex = workflow.length - 1;
   }
   const handleToggleItem = (item) => {
+    if (!visaPilotUnlocked) return;
     const newState = {
       ...visaState,
       [item]: visaState[item] === "Completed" ? "Pending" : "Completed"
@@ -34,7 +40,6 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       onUpdateStudent({ ...student, visa: newState });
     }
   };
-  const buildVisaDocType = (item) => `Visa Pilot - ${item}`;
   const getItemDocuments = (item) => {
     const docType = buildVisaDocType(item);
     return visaDocuments.filter((doc) => doc.type === docType).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
@@ -105,6 +110,10 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
         student.country
       ] })
     ] }) }),
+    isDocumentationStage && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900", children: [
+      /* @__PURE__ */ jsx("p", { className: "font-semibold", children: "Documentation stage — submit Visa Pilot documents now" }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-800 mt-1", children: "Upload each required visa document before advancing to the Visa stage." })
+    ] }),
     /* @__PURE__ */ jsx("div", { className: "flex flex-col gap-6", children: workflow.map((stage, index) => {
       const isLocked = index > currentStageIndex;
       const isActive = index === currentStageIndex;

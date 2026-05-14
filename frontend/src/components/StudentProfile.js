@@ -37,9 +37,11 @@ import {
   normalizePipelineStatus,
   getCurrentStageSlaDisplay,
   getEffectiveSlaViolationMissingItems,
-  reconcileStudentSlaViolationsWithDocuments
+  reconcileStudentSlaViolationsWithDocuments,
+  getRequiredCountryChecklistStagesBeforeAdvance,
+  isVisaPilotUnlocked
 } from "../pipeline";
-import { getEnrolledAdvanceBlockReasons } from "../studentEnrolledGate.js";
+import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
 function normalizeBranchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -542,6 +544,7 @@ const StudentProfile = ({
   onCreateInvoice,
   onUploadStudentDocument,
   onUploadStudentProfileOtherDocument,
+  onUploadStudentUniversityOfferLetters,
   onUploadStudentCv,
   employees = [],
   currentUser = null,
@@ -582,6 +585,12 @@ const StudentProfile = ({
         ? "bg-orange-50 text-orange-900 border-orange-200"
         : "bg-green-50 text-green-800 border-green-200";
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
+  const visaPilotUnlocked = isVisaPilotUnlocked(effectiveStatus);
+  useEffect(() => {
+    if (!visaPilotUnlocked && activeTab === "visa-pilot") {
+      setActiveTab("pipeline");
+    }
+  }, [visaPilotUnlocked, activeTab]);
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
   const enrolledAdvanceBlockReasons = useMemo(
@@ -727,15 +736,16 @@ const StudentProfile = ({
       };
       let allMissingItems = [];
       const st = normalizePipelineStatus(localStudent.status);
-      const requiredChecklistByStage = {
-        Application: "Documentation",
-        "Interview training": "Uni Application",
-        Documentation: "Offer Received"
-      };
-      const requiredChecklistStage = requiredChecklistByStage[st];
-      if (requiredChecklistStage) {
-        allMissingItems = checkStageRequirements(requiredChecklistStage);
+      const requiredChecklistStages = getRequiredCountryChecklistStagesBeforeAdvance(st);
+      for (const checklistStage of requiredChecklistStages) {
+        allMissingItems.push(...checkStageRequirements(checklistStage));
       }
+      if (st === "Documentation") {
+        for (const { docType } of collectMissingVisaPilotUploads(localStudent)) {
+          allMissingItems.push(docType);
+        }
+      }
+      allMissingItems = [...new Set(allMissingItems)];
       const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
       const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
       const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
@@ -796,7 +806,7 @@ const StudentProfile = ({
           user: userRole,
           role: userRole,
           action: "advanced stage with missing required documents",
-          target: `${requiredChecklistStage || st} requirements (${localStudent.name})`,
+          target: `${requiredChecklistStages.join(" + ") || st} requirements (${localStudent.name})`,
           type: "system",
           studentName: localStudent.name,
           studentId: localStudent.id
@@ -965,13 +975,13 @@ const StudentProfile = ({
             studentId: localStudent.id
           });
           return persistResult;
-        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument });
+        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters });
       case "show-money":
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent });
       case "visa-pilot":
         return /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument });
       case "ledger":
-        return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice });
+        return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice, onNotify });
       case "resume":
         return /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-slate-100 bg-slate-50/50 -mx-1 px-1 py-3 sm:mx-0 sm:px-0", children: /* @__PURE__ */ jsx(AIResumeBuilder, {
           embedMode: true,
@@ -1119,7 +1129,7 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Pipeline", activeTab, tabName: "pipeline", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
+              visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger", activeTab, tabName: "ledger", onClick: setActiveTab })
             ] }) }) }),
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 overflow-y-auto", children: renderContent() })

@@ -1056,6 +1056,16 @@ function resolveChatFileDiskPath(filePath) {
   return path.join(CHAT_FILES_DIR, fileName);
 }
 
+function resolveStudentDocDiskPath(filePath) {
+  let s = String(filePath || "").trim();
+  const permIdx = s.indexOf("/student-docs/permissions/");
+  if (permIdx !== -1) s = s.slice(permIdx);
+  if (!s.startsWith("/student-docs/permissions/")) return "";
+  const fileName = path.basename(s);
+  if (!fileName || fileName.includes("..")) return "";
+  return path.join(STUDENT_PERMISSIONS_DIR, fileName);
+}
+
 function publicStudentDocUrl(req, filePath) {
   if (!filePath) return filePath;
   if (filePath.startsWith("/student-docs/")) {
@@ -1092,7 +1102,23 @@ function publicStudentRecord(req, student) {
       };
     });
   }
+  if (Array.isArray(next.universityOfferLetters)) {
+    next.universityOfferLetters = next.universityOfferLetters.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      return {
+        ...entry,
+        url: publicStudentDocUrl(req, String(entry.url || "")),
+      };
+    });
+  }
   return next;
+}
+
+const UNIVERSITY_OFFER_STATUSES = new Set(["Approved", "Conditional", "Rejected"]);
+
+function normalizeUniversityOfferLetters(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry) => entry && typeof entry === "object" && String(entry.url || "").trim());
 }
 
 function normalizeProfileOtherDocumentsSlots(value) {
@@ -1554,6 +1580,48 @@ function buildInvoiceWhatsappMessage({ studentName, invoiceId, currency, amount,
   return lines.join("\n");
 }
 
+function buildInvoicePaymentDecisionWhatsappMessage({
+  studentName,
+  invoiceId,
+  currency,
+  amount,
+  description,
+  decision,
+  rejectionReason,
+}) {
+  const amountLabel = `${currency || "LKR"} ${Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const invoiceLabel = invoiceId ? `Invoice ${invoiceId}` : "your invoice";
+  if (decision === "approved") {
+    const lines = [
+      `${COMPANY_NAME} — Invoice payment update`,
+      "",
+      `Hi ${studentName || "Student"},`,
+      "",
+      "Good news: your payment evidence has been approved.",
+      invoiceLabel,
+      `Amount: ${amountLabel}`,
+      description ? `Description: ${description}` : "",
+      "",
+      "Your invoice is now marked as paid. Log in to your student portal to review your finance records.",
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
+  const lines = [
+    `${COMPANY_NAME} — Invoice payment update`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your payment evidence could not be approved and needs to be re-uploaded.",
+    invoiceLabel,
+    `Amount: ${amountLabel}`,
+    description ? `Description: ${description}` : "",
+    rejectionReason ? `Reason: ${rejectionReason}` : "",
+    "",
+    "Please sign in to the student portal, review the feedback, and upload corrected payment evidence.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function collectDocumentVerificationTransitions(previousDocs, nextDocs) {
   const prevById = new Map(
     (Array.isArray(previousDocs) ? previousDocs : []).map((d) => [String(d.id || "").trim(), d])
@@ -1613,6 +1681,49 @@ function buildDocumentDecisionWhatsappMessage({ studentName, docName, docType, d
     "",
     "Please sign in to the student portal, review the feedback, and upload a corrected file.",
   ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function buildUniversityOfferWhatsappMessage({ studentName, fileName, offerStatus, letterCount = 1 }) {
+  const friendlyFile = String(fileName || "University offer letter").trim();
+  const countNote =
+    letterCount > 1 ? ` (${letterCount} offer letters uploaded — this message refers to "${friendlyFile}".)` : "";
+  if (offerStatus === "Approved") {
+    const lines = [
+      `${COMPANY_NAME} — University offer update`,
+      "",
+      `Hi ${studentName || "Student"},`,
+      "",
+      "Congratulations! Your university application has been approved.",
+      `Offer letter: ${friendlyFile}${countNote}`,
+      "",
+      "Your counselor has shared the offer letter with you. Log in to your student portal to review all details.",
+    ];
+    return lines.join("\n");
+  }
+  if (offerStatus === "Conditional") {
+    const lines = [
+      `${COMPANY_NAME} — University offer update`,
+      "",
+      `Hi ${studentName || "Student"},`,
+      "",
+      "Your university application has received a conditional offer.",
+      `Offer letter: ${friendlyFile}${countNote}`,
+      "",
+      "Please review the conditions in the attached letter and contact your counselor if you have questions.",
+    ];
+    return lines.join("\n");
+  }
+  const lines = [
+    `${COMPANY_NAME} — University offer update`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "We need to inform you that your university application was not successful at this time.",
+    `Reference: ${friendlyFile}${countNote}`,
+    "",
+    "Your counselor will discuss next steps with you. Please sign in to the student portal or reply on WhatsApp.",
+  ];
   return lines.join("\n");
 }
 
@@ -2429,7 +2540,9 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
         reason: "Only PDF and image attachments can be sent via WhatsApp.",
       };
     }
-    const mediaPath = resolveChatFileDiskPath(String(outgoingAttachment.url || ""));
+    const mediaPath =
+      resolveChatFileDiskPath(String(outgoingAttachment.url || "")) ||
+      resolveStudentDocDiskPath(String(outgoingAttachment.url || ""));
     if (!mediaPath) {
       return {
         attempted: false,
@@ -3834,9 +3947,16 @@ const server = http.createServer(async (req, res) => {
       }
       const currentInvoice = invoices[idx];
       const actorRole = String(body.actorRole || "").trim();
-      const isAcceptingPayment = String(body.status || "") === "Paid" && String(currentInvoice.status || "") === "Verifying";
+      const prevStatus = String(currentInvoice.status || "");
+      const nextStatus = String(body.status || currentInvoice.status || "");
+      const isAcceptingPayment = nextStatus === "Paid" && prevStatus === "Verifying";
+      const isRejectingPayment = nextStatus === "Pending" && prevStatus === "Verifying";
       if (isAcceptingPayment && actorRole !== "Admin" && actorRole !== "Manager") {
         sendJson(res, 403, { ok: false, error: "Only Admin or Manager can accept invoice payments." });
+        return;
+      }
+      if (isRejectingPayment && actorRole !== "Admin" && actorRole !== "Manager") {
+        sendJson(res, 403, { ok: false, error: "Only Admin or Manager can reject invoice payment evidence." });
         return;
       }
       const { actorRole: _actorRole, actorId: _actorId, ...safeBody } = body;
@@ -3846,10 +3966,76 @@ const server = http.createServer(async (req, res) => {
         id: currentInvoice.id,
         updatedAt: new Date().toISOString(),
       };
+      if (isRejectingPayment) {
+        merged.paymentRejectionReason = String(body.paymentRejectionReason || merged.paymentRejectionReason || "").trim();
+        merged.paymentRejectedAt = new Date().toISOString();
+      }
+      if (isAcceptingPayment) {
+        merged.paymentRejectionReason = "";
+        merged.paymentRejectedAt = "";
+      }
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
-      sendJson(res, 200, { ok: true, data: merged });
+
+      let invoiceWhatsappNotification = null;
+      if (isAcceptingPayment || isRejectingPayment) {
+        const students = await readStudemts();
+        const student = students.find((item) => String(item.id || "") === String(merged.studentId || ""));
+        const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+        const decision = isAcceptingPayment ? "approved" : "rejected";
+        if (!student) {
+          invoiceWhatsappNotification = {
+            invoiceId: merged.id,
+            decision,
+            whatsapp: { attempted: false, status: "skipped", reason: "Student record not found." },
+          };
+        } else if (!counselorId || counselorId === "Unassigned") {
+          invoiceWhatsappNotification = {
+            invoiceId: merged.id,
+            decision,
+            whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
+          };
+        } else {
+          const message = buildInvoicePaymentDecisionWhatsappMessage({
+            studentName: String(student.name || "").trim(),
+            invoiceId: merged.id,
+            currency: merged.currency,
+            amount: merged.amount,
+            description: merged.description,
+            decision,
+            rejectionReason: String(merged.paymentRejectionReason || "").trim(),
+          });
+          try {
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId: counselorId,
+              receiverId: String(student.id || ""),
+              content: message,
+            });
+            invoiceWhatsappNotification = {
+              invoiceId: merged.id,
+              decision,
+              whatsapp: {
+                attempted: Boolean(result?.attempted),
+                status: String(result?.status || "failed"),
+                reason: String(result?.reason || ""),
+              },
+            };
+          } catch (error) {
+            invoiceWhatsappNotification = {
+              invoiceId: merged.id,
+              decision,
+              whatsapp: {
+                attempted: true,
+                status: "failed",
+                reason: String(error?.message || "Failed to send WhatsApp message."),
+              },
+            };
+          }
+        }
+      }
+
+      sendJson(res, 200, { ok: true, data: merged, invoiceWhatsappNotification });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -5161,6 +5347,141 @@ const server = http.createServer(async (req, res) => {
           ...newEntry,
           url: publicStudentDocUrl(req, newEntry.url),
         },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname.startsWith("/api/students/") && url.pathname.endsWith("/university-offer-letters")) {
+    try {
+      const studentId = decodeURIComponent(
+        url.pathname.replace("/api/students/", "").replace("/university-offer-letters", "").trim()
+      ).replace(/\/+$/, "");
+      if (!studentId) {
+        sendJson(res, 400, { ok: false, error: "Student ID is required." });
+        return;
+      }
+      const body = await parseBody(req);
+      const offerStatus = String(body.offerStatus || "").trim();
+      if (!UNIVERSITY_OFFER_STATUSES.has(offerStatus)) {
+        sendJson(res, 400, { ok: false, error: "Offer status must be Approved, Conditional, or Rejected." });
+        return;
+      }
+      const rawFiles = Array.isArray(body.files) ? body.files : [];
+      const singleDataUrl = String(body.dataUrl || "");
+      const singleFileName = String(body.fileName || "offer-letter");
+      const fileInputs =
+        rawFiles.length > 0
+          ? rawFiles
+              .map((f) => ({
+                dataUrl: String(f?.dataUrl || ""),
+                fileName: String(f?.fileName || "offer-letter"),
+              }))
+              .filter((f) => f.dataUrl.startsWith("data:"))
+          : singleDataUrl.startsWith("data:")
+            ? [{ dataUrl: singleDataUrl, fileName: singleFileName }]
+            : [];
+      if (fileInputs.length === 0) {
+        sendJson(res, 400, { ok: false, error: "At least one offer letter file is required." });
+        return;
+      }
+      const studemts = await readStudemts();
+      const idx = studemts.findIndex((s) => String(s.id || "") === studentId);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Student not found." });
+        return;
+      }
+      const newEntries = [];
+      for (const fileInput of fileInputs) {
+        const stored = await storeStudentPermissionDataUrl(fileInput.dataUrl, fileInput.fileName);
+        if (!stored) {
+          sendJson(res, 400, { ok: false, error: "Unsupported document format. Use PDF, JPG, PNG, DOC, or DOCX." });
+          return;
+        }
+        if (stored.error) {
+          sendJson(res, 400, { ok: false, error: stored.error });
+          return;
+        }
+        newEntries.push({
+          id: `uol-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+          name: stored.name,
+          offerStatus,
+          mime: stored.mime,
+          size: stored.size,
+          url: stored.url,
+          uploadedAt: new Date().toISOString(),
+        });
+      }
+      const existing = normalizeUniversityOfferLetters(studemts[idx].universityOfferLetters);
+      const merged = {
+        ...studemts[idx],
+        universityOfferLetters: [...existing, ...newEntries],
+        updatedAt: new Date().toISOString(),
+      };
+      const offerLetterWhatsappNotifications = [];
+      const studentName = String(merged.name || "").trim();
+      const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
+      const letterCount = newEntries.length;
+      for (const entry of newEntries) {
+        if (!counselorId || counselorId === "Unassigned") {
+          offerLetterWhatsappNotifications.push({
+            letterId: entry.id,
+            offerStatus: entry.offerStatus,
+            whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
+          });
+          continue;
+        }
+        const message = buildUniversityOfferWhatsappMessage({
+          studentName,
+          fileName: entry.name,
+          offerStatus: entry.offerStatus,
+          letterCount,
+        });
+        const attachment =
+          entry.url && entry.mime && isSupportedWhatsappMediaMime(entry.mime)
+            ? { url: entry.url, mime: entry.mime, name: entry.name }
+            : null;
+        try {
+          const result = await deliverCounselorMessageToStudentWhatsapp({
+            senderId: counselorId,
+            receiverId: studentId,
+            content: message,
+            attachment,
+          });
+          offerLetterWhatsappNotifications.push({
+            letterId: entry.id,
+            offerStatus: entry.offerStatus,
+            whatsapp: {
+              attempted: Boolean(result?.attempted),
+              status: String(result?.status || "failed"),
+              reason: String(result?.reason || ""),
+            },
+          });
+        } catch (error) {
+          offerLetterWhatsappNotifications.push({
+            letterId: entry.id,
+            offerStatus: entry.offerStatus,
+            whatsapp: {
+              attempted: true,
+              status: "failed",
+              reason: String(error?.message || "Failed to send WhatsApp message."),
+            },
+          });
+        }
+      }
+      const updated = [...studemts];
+      updated[idx] = merged;
+      await writeStudemts(updated);
+      sendJson(res, 200, {
+        ok: true,
+        data: publicStudentRecord(req, merged),
+        universityOfferLetters: newEntries.map((entry) => ({
+          ...entry,
+          url: publicStudentDocUrl(req, entry.url),
+        })),
+        offerLetterWhatsappNotifications,
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });

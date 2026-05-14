@@ -280,6 +280,30 @@ export async function uploadStudentProfileOtherDocument(studentId, { dataUrl, fi
   }
 }
 
+export async function uploadStudentUniversityOfferLetters(studentId, { offerStatus, files }) {
+  try {
+    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/university-offer-letters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offerStatus, files })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to upload offer letters." };
+    }
+    return {
+      ok: true,
+      data: data.data,
+      universityOfferLetters: data.universityOfferLetters || [],
+      offerLetterWhatsappNotifications: Array.isArray(data.offerLetterWhatsappNotifications)
+        ? data.offerLetterWhatsappNotifications
+        : []
+    };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function getBranches() {
   try {
     const res = await fetch(`${API_BASE}/api/branches`);
@@ -662,7 +686,11 @@ export async function updateInvoice(appointmentId, payload) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to update invoice." };
     }
-    return { ok: true, data: data.data };
+    return {
+      ok: true,
+      data: data.data,
+      invoiceWhatsappNotification: data.invoiceWhatsappNotification || null,
+    };
   } catch {
     return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
   }

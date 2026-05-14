@@ -74,6 +74,46 @@ export function normalizePipelineStatus(status) {
   return raw;
 }
 
+/** Country checklist section names (see COUNTRY_CHECKLISTS in constants.js). */
+export const COUNTRY_CHECKLIST_STAGES = ["Documentation", "Uni Application", "Offer Received"];
+
+/**
+ * Checklist sections shown in the student profile / upload UI for the current pipeline stage.
+ * Documentation + Offer Received appear from Application onward — not during Inquiry.
+ */
+export function getVisibleCountryChecklistStages(status) {
+  const st = normalizePipelineStatus(status);
+  if (st === "Inquiry") return [];
+  if (st === "Application") return ["Documentation", "Offer Received"];
+  return COUNTRY_CHECKLIST_STAGES;
+}
+
+/**
+ * Checklist sections that must be satisfied before advancing past the current pipeline stage.
+ * Inquiry → Application has no document gate; Application requires Documentation + Offer Received.
+ */
+export function getRequiredCountryChecklistStagesBeforeAdvance(status) {
+  const st = normalizePipelineStatus(status);
+  if (st === "Application") return ["Documentation", "Offer Received"];
+  if (st === "Interview training") return ["Uni Application"];
+  return [];
+}
+
+/** True when the student has reached Documentation or a later pipeline stage. */
+export function isAtOrPastPipelineStage(status, stageName) {
+  const st = normalizePipelineStatus(status);
+  const target = normalizePipelineStatus(stageName);
+  const idx = PIPELINE_STEPS.indexOf(st);
+  const targetIdx = PIPELINE_STEPS.indexOf(target);
+  if (idx === -1 || targetIdx === -1) return false;
+  return idx >= targetIdx;
+}
+
+/** Visa Pilot tab / uploads unlock at Documentation stage. */
+export function isVisaPilotUnlocked(status) {
+  return isAtOrPastPipelineStage(status, "Documentation");
+}
+
 /**
  * Counts students per canonical pipeline stage for dashboards (counselor/manager scope).
  * Unknown / non-canonical statuses are counted under `other`.
