@@ -8,6 +8,12 @@ const nodemailer = require("nodemailer");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const QRCode = require("qrcode");
 const { buildAdminAiSystemPrompt } = require("./prompts");
+const {
+  ACTIVE_PROFILE,
+  COMPANY_NAME,
+  COMPANY_NAME_NBSP,
+  DEFAULT_SMTP_FROM_NAME,
+} = require("./profileConfig");
 
 const PORT = parseInt(process.env.PORT || "", 10) || 3334;
 const USERS_FILE = path.join(__dirname, "data", "users.json");
@@ -63,7 +69,8 @@ const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587", 10) || 587;
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").trim().toLowerCase() === "true";
 const SMTP_USER = String(process.env.SMTP_USER || "").trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || "").trim();
-const SMTP_FROM = String(process.env.SMTP_FROM || "").trim() || SMTP_USER;
+const SMTP_FROM =
+  SMTP_USER && DEFAULT_SMTP_FROM_NAME ? `"${DEFAULT_SMTP_FROM_NAME}" <${SMTP_USER}>` : SMTP_USER;
 /** Base URL of the student/staff portal (no trailing slash). Used in welcome emails — e.g. https://portal.example.com */
 const APP_PUBLIC_URL = String(process.env.APP_PUBLIC_URL || "").trim().replace(/\/+$/, "");
 const STUDENT_SIGN_IN_PATH = String(process.env.STUDENT_SIGN_IN_PATH || "/dashboard")
@@ -1281,7 +1288,7 @@ function splitAdminRecord(users) {
 
 function getSmtpConfigError() {
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
-    return "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM in backend .env.";
+    return "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS in backend .env.";
   }
   return "";
 }
@@ -1311,7 +1318,7 @@ function buildForgotPasswordEmailHtml({ otpCode }) {
 </head>
 <body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-    Your ABEC Premier verification code is ${safe}. Valid for 10 minutes.
+    Your ${COMPANY_NAME} verification code is ${safe}. Valid for 10 minutes.
   </div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
     <tr>
@@ -1326,7 +1333,7 @@ function buildForgotPasswordEmailHtml({ otpCode }) {
                 <tr>
                   <td style="padding:40px 40px 28px;text-align:center;">
                     <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">
-                      ABEC Premier
+                      ${COMPANY_NAME}
                     </p>
                     <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">
                       Secure password reset
@@ -1346,7 +1353,7 @@ function buildForgotPasswordEmailHtml({ otpCode }) {
                       </tr>
                     </table>
                     <p style="margin:16px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.5;color:#94a3b8;">
-                      For your security, never share this code. ABEC&nbsp;Premier will never ask you for it by phone or chat.
+                      For your security, never share this code. ${COMPANY_NAME_NBSP} will never ask you for it by phone or chat.
                     </p>
                   </td>
                 </tr>
@@ -1368,7 +1375,7 @@ function buildForgotPasswordEmailHtml({ otpCode }) {
           <tr>
             <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
               This email was sent automatically for account security.&nbsp;<br/>
-              © ${new Date().getFullYear()} ABEC Premier. All rights reserved.
+              © ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.
             </td>
           </tr>
         </table>
@@ -1382,7 +1389,7 @@ function buildForgotPasswordEmailHtml({ otpCode }) {
 async function sendForgotPasswordOtpEmail({ email, otpCode }) {
   const textBody =
     [
-      "ABEC Premier — password reset",
+      `${COMPANY_NAME} — password reset`,
       "",
       `Your verification code is: ${otpCode}`,
       "",
@@ -1390,7 +1397,7 @@ async function sendForgotPasswordOtpEmail({ email, otpCode }) {
       "",
       "If you didn't request this, you can ignore this email.",
       "",
-      `© ${new Date().getFullYear()} ABEC Premier`,
+      `© ${new Date().getFullYear()} ${COMPANY_NAME}`,
     ].join("\n");
 
   const transporter = nodemailer.createTransport({
@@ -1405,7 +1412,7 @@ async function sendForgotPasswordOtpEmail({ email, otpCode }) {
   const message = {
     from: SMTP_FROM,
     to: email,
-    subject: "Your ABEC Premier verification code",
+    subject: `Your ${COMPANY_NAME} verification code`,
     text: textBody,
     html: buildForgotPasswordEmailHtml({ otpCode }),
   };
@@ -1429,9 +1436,29 @@ async function sendForgotPasswordOtpEmail({ email, otpCode }) {
   }
 }
 
+function normalizePublicBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    if (!parsed.hostname) return "";
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
 function resolveRequestPublicBaseUrl(req) {
   if (!req || !req.headers) return "";
   const headers = req.headers || {};
+
+  const origin = normalizePublicBaseUrl(Array.isArray(headers.origin) ? headers.origin[0] : headers.origin);
+  if (origin) return origin;
+
+  const referer = String(Array.isArray(headers.referer) ? headers.referer[0] : headers.referer || "").trim();
+  const fromReferer = normalizePublicBaseUrl(referer);
+  if (fromReferer) return fromReferer;
+
   const forwardedProtoRaw = headers["x-forwarded-proto"];
   const forwardedHostRaw = headers["x-forwarded-host"];
   const hostRaw = headers.host;
@@ -1447,8 +1474,15 @@ function resolveRequestPublicBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
-function buildStudentPortalLoginUrl(req) {
-  const base = (APP_PUBLIC_URL || resolveRequestPublicBaseUrl(req) || "").trim().replace(/\/+$/, "");
+function buildStudentPortalLoginUrl(req, portalOriginOverride = "") {
+  const base = (
+    APP_PUBLIC_URL ||
+    normalizePublicBaseUrl(portalOriginOverride) ||
+    resolveRequestPublicBaseUrl(req) ||
+    ""
+  )
+    .trim()
+    .replace(/\/+$/, "");
   if (!base) return "";
   const path = STUDENT_SIGN_IN_PATH.startsWith("/") ? STUDENT_SIGN_IN_PATH : `/${STUDENT_SIGN_IN_PATH}`;
   return `${base}${path}`;
@@ -1472,7 +1506,7 @@ function normalizeStage(value) {
 
 function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, password, loginUrl }) {
   const lines = [
-    "ABEC Premier — your student portal login",
+    `${COMPANY_NAME} — your student portal login`,
     "",
     `Hi ${studentName || "Student"},`,
     "",
@@ -1488,7 +1522,7 @@ function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, 
 
 function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, meetingLink }) {
   const lines = [
-    "ABEC Premier — Meeting Details",
+    `${COMPANY_NAME} — Meeting Details`,
     "",
     `Hi ${studentName || "Student"},`,
     "",
@@ -1505,7 +1539,7 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
 
 function buildInvoiceWhatsappMessage({ studentName, invoiceId, currency, amount, description, dueDate }) {
   const lines = [
-    "ABEC Premier - Invoice Generated",
+    `${COMPANY_NAME} - Invoice Generated`,
     "",
     `Hi ${studentName || "Student"},`,
     "",
@@ -1557,7 +1591,7 @@ function buildDocumentDecisionWhatsappMessage({ studentName, docName, docType, d
   const friendlyDoc = docType ? `${docName} (${docType})` : docName;
   if (decision === "verified") {
     const lines = [
-      "ABEC Premier — Document update",
+      `${COMPANY_NAME} — Document update`,
       "",
       `Hi ${studentName || "Student"},`,
       "",
@@ -1569,7 +1603,7 @@ function buildDocumentDecisionWhatsappMessage({ studentName, docName, docType, d
     return lines.join("\n");
   }
   const lines = [
-    "ABEC Premier — Document update",
+    `${COMPANY_NAME} — Document update`,
     "",
     `Hi ${studentName || "Student"},`,
     "",
@@ -1606,7 +1640,7 @@ function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, pas
 </head>
 <body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-    Your ABEC Premier student portal login is ready. Sign in with ${safeEmail}.
+    Your ${COMPANY_NAME} student portal login is ready. Sign in with ${safeEmail}.
   </div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
     <tr>
@@ -1620,7 +1654,7 @@ function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, pas
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
                   <td style="padding:40px 40px 24px;text-align:center;">
-                    <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">ABEC Premier</p>
+                    <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">${COMPANY_NAME}</p>
                     <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">Welcome to your student portal</h1>
                     <p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.55;color:#64748b;">
                       Hi <strong style="color:#334155;">${safeName}</strong>, your account is ready. Use the credentials below to sign in and track your journey with us.
@@ -1675,8 +1709,8 @@ function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, pas
           </tr>
           <tr>
             <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
-              This email was generated when your profile was added to ABEC&nbsp;Premier.<br/>
-              © ${new Date().getFullYear()} ABEC Premier. All rights reserved.
+              This email was generated when your profile was added to ${COMPANY_NAME_NBSP}.<br/>
+              © ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.
             </td>
           </tr>
         </table>
@@ -1687,9 +1721,172 @@ function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, pas
 </html>`;
 }
 
+function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, emailAddress, password, branch }) {
+  const safeName = escapeHtmlEmail(counselorName);
+  const safeUsername = escapeHtmlEmail(username);
+  const safeEmail = escapeHtmlEmail(emailAddress);
+  const safePass = escapeHtmlEmail(password);
+  const safeBranch = escapeHtmlEmail(branch);
+  const safeLogin = escapeHtmlEmail(loginUrl);
+  const branchBlock = branch
+    ? `<tr><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;width:120px;">Branch</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:600;color:#312e81;">${safeBranch}</td></tr>`
+    : "";
+  const ctaBlock = loginUrl
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;"><tr><td bgcolor="#4f46e5" style="border-radius:10px;background-color:#4f46e5;background:linear-gradient(135deg,#4f46e5 0%,#6366f1 100%);"><a href="${safeLogin}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:14px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Open portal</a></td></tr></table><p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.5;color:#94a3b8;word-break:break-all;"><a href="${safeLogin}" style="color:#6366f1;text-decoration:none;">${safeLogin}</a></p>`
+    : `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:1.6;color:#64748b;">Use the portal URL provided by your branch. (Set <strong style="font-weight:600;color:#475569;">APP_PUBLIC_URL</strong> on the server to include a clickable link automatically.)</p>`;
+
+  return `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Counselor portal access</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Your ${COMPANY_NAME} counselor account is ready. Sign in with ${safeEmail}.
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
+    <tr>
+      <td align="center" style="padding:40px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;margin:0 auto;">
+          <tr>
+            <td bgcolor="#4f46e5" style="background-color:#4f46e5;background:linear-gradient(135deg,#4f46e5 0%,#6366f1 50%,#7c3aed 100%);border-radius:12px 12px 0 0;height:4px;line-height:4px;font-size:4px;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="background-color:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 14px 14px;overflow:hidden;box-shadow:0 22px 50px rgba(15,23,42,0.06);">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding:40px 40px 24px;text-align:center;">
+                    <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">${COMPANY_NAME}</p>
+                    <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">Welcome to your counselor account</h1>
+                    <p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.55;color:#64748b;">
+                      Hi <strong style="color:#334155;">${safeName}</strong>, your account has been created. Use the credentials below to sign in to the portal.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 28px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f8fafc" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+                      <tr>
+                        <td style="padding:24px 28px;">
+                          <p style="margin:0 0 14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:#64748b;">Sign-in details</p>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;width:120px;">Username</td>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:13px;font-weight:600;color:#312e81;word-break:break-all;">${safeUsername}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;">Email</td>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:13px;font-weight:600;color:#312e81;word-break:break-all;">${safeEmail}</td>
+                            </tr>
+                            <tr>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;">Password</td>
+                              <td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:13px;font-weight:600;color:#312e81;word-break:break-all;">${safePass}</td>
+                            </tr>
+                            ${branchBlock}
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 28px;text-align:center;">
+                    ${ctaBlock}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 40px 36px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-top:1px solid #f1f5f9;">
+                      <tr>
+                        <td style="padding-top:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.65;color:#64748b;">
+                          <strong style="color:#475569;display:block;margin-bottom:6px;font-size:13px;font-weight:600;">Security</strong>
+                          For your protection, please change your password after your first sign-in (<strong>Forgot password</strong> is available if needed). Do not forward this message or share your password.
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
+              This email was generated when your counselor account was created on ${COMPANY_NAME_NBSP}.<br/>
+              © ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl, emailAddress, password, branch }) {
+  const textLines = [
+    `${COMPANY_NAME} — counselor portal access`,
+    "",
+    `Hi ${counselorName || username || "Counselor"},`,
+    "",
+    "Your account is ready. Sign in using:",
+    `- Username: ${username}`,
+    `- Email: ${emailAddress}`,
+    `- Password: ${password}`,
+    loginUrl ? `- Portal: ${loginUrl}` : `- Portal: (use the URL provided by your branch)`,
+    branch ? `- Branch: ${branch}` : "",
+    "",
+    "Change your password after first sign-in. Do not share this email.",
+    "",
+    `© ${new Date().getFullYear()} ${COMPANY_NAME}`,
+  ].filter(Boolean);
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+  const message = {
+    from: SMTP_FROM,
+    to,
+    subject: `Welcome to ${COMPANY_NAME} — your counselor account`,
+    text: textLines.join("\n"),
+    html: buildCounselorWelcomeEmailHtml({
+      counselorName: counselorName || username,
+      username,
+      loginUrl,
+      emailAddress,
+      password,
+      branch,
+    }),
+  };
+  try {
+    await transporter.sendMail(message);
+    logEvent("email", "counselor welcome email sent", { to });
+  } catch (error) {
+    const shouldRetryWithAuthSender =
+      error &&
+      (error.code === "EENVELOPE" || error.responseCode === 550) &&
+      String(SMTP_USER || "").trim();
+    if (!shouldRetryWithAuthSender) throw error;
+    await transporter.sendMail({
+      ...message,
+      from: SMTP_USER,
+      replyTo: SMTP_FROM || SMTP_USER,
+    });
+    logEvent("email", "counselor welcome email sent (fallback sender)", { to, from: SMTP_USER });
+  }
+}
+
 async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress, password, counselorName }) {
   const textLines = [
-    "ABEC Premier — student portal access",
+    `${COMPANY_NAME} — student portal access`,
     "",
     `Hi ${studentName},`,
     "",
@@ -1702,7 +1899,7 @@ async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress
     "",
     "Change your password after first sign-in. Do not share this email.",
     "",
-    `© ${new Date().getFullYear()} ABEC Premier`,
+    `© ${new Date().getFullYear()} ${COMPANY_NAME}`,
   ];
   const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
@@ -1716,7 +1913,7 @@ async function sendStudentWelcomeEmail({ to, studentName, loginUrl, emailAddress
   const message = {
     from: SMTP_FROM,
     to,
-    subject: "Welcome to ABEC Premier — your student portal login",
+    subject: `Welcome to ${COMPANY_NAME} — your student portal login`,
     text: textLines.join("\n"),
     html: buildStudentWelcomeEmailHtml({
       studentName,
@@ -2335,6 +2532,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/company-profile") {
+    sendJson(res, 200, {
+      ok: true,
+      data: {
+        activeProfile: ACTIVE_PROFILE,
+        companyName: COMPANY_NAME,
+      },
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/exchange-rates") {
     try {
       const data = await loadExchangeRatesFromApi();
@@ -2694,6 +2902,7 @@ const server = http.createServer(async (req, res) => {
       const teamLeadEmail = normalizeEmail(body.teamLeadEmail);
       const avatarDataUrl = String(body.avatar || "");
       const country = String(body.country || "").trim();
+      const phone = String(body.phone || "").trim();
 
       if (!username || !email || !password || !role) {
         sendJson(res, 400, { ok: false, error: "Username, email, password, and role are required." });
@@ -2777,6 +2986,7 @@ const server = http.createServer(async (req, res) => {
         role,
         branch: role === "Admin" ? "" : branch,
         country: role === "Country Coordinator" ? country : "",
+        phone,
         teamLeadId: role === "Consultor" && linkedTeamLead ? teamLeadId : "",
         teamLeadName: role === "Consultor" && linkedTeamLead ? teamLeadName || String(linkedTeamLead?.username || "").trim() : "",
         teamLeadEmail: role === "Consultor" && linkedTeamLead ? teamLeadEmail || normalizeEmail(linkedTeamLead?.email) : "",
@@ -2786,9 +2996,41 @@ const server = http.createServer(async (req, res) => {
 
       const updated = [...users, account];
       await writeUsers(updated);
+
+      let emailDelivery = null;
+      if (isCounselorRole(role)) {
+        emailDelivery = { attempted: false, status: "skipped", reason: "" };
+        try {
+          const smtpError = getSmtpConfigError();
+          if (smtpError) {
+            emailDelivery = { attempted: false, status: "skipped", reason: smtpError };
+          } else {
+            const loginUrl = buildStudentPortalLoginUrl(req, body.portalOrigin);
+            await sendCounselorWelcomeEmail({
+              to: email,
+              counselorName: username,
+              username,
+              loginUrl,
+              emailAddress: email,
+              password,
+              branch: account.branch,
+            });
+            emailDelivery = { attempted: true, status: "sent", reason: "" };
+          }
+        } catch (error) {
+          console.error("Counselor welcome email failed:", error);
+          emailDelivery = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send email."),
+          };
+        }
+      }
+
       sendJson(res, 201, {
         ok: true,
         data: { ...sanitizeAccount(account), avatar: publicAssetUrl(req, account.avatar) },
+        ...(emailDelivery ? { emailDelivery } : {}),
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });

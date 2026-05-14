@@ -9,8 +9,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   Cell,
-  PieChart,
-  Pie,
   AreaChart,
   Area,
 } from "recharts";
@@ -53,6 +51,37 @@ function marketSliceColor(sliceName, destinationList) {
   const i = destinationList.findIndex((c) => String(c).trim().toLowerCase() === String(sliceName).trim().toLowerCase());
   if (i >= 0) return PIE_COLORS[i % PIE_COLORS.length];
   return "#94A3B8";
+}
+function MarketDonutChart({ slices, size = 200, strokeWidth = 28 }) {
+  const total = slices.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+  if (!total) return null;
+  const center = size / 2;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  return /* @__PURE__ */ jsx("svg", { width: size, height: size, viewBox: `0 0 ${size} ${size}`, className: "mx-auto block", role: "img", "aria-label": "Market distribution chart", children: /* @__PURE__ */ jsx("g", { transform: `rotate(-90 ${center} ${center})`, children: slices.map((slice) => {
+    const value = Number(slice.value) || 0;
+    const dash = value / total * circumference;
+    const gap = Math.max(circumference - dash, 0);
+    const fill = slice.fill || marketSliceColor(slice.name, []);
+    const node = /* @__PURE__ */ jsx(
+      "circle",
+      {
+        cx: center,
+        cy: center,
+        r: radius,
+        fill: "none",
+        stroke: fill,
+        strokeWidth,
+        strokeDasharray: `${dash} ${gap}`,
+        strokeDashoffset: -offset,
+        strokeLinecap: "butt"
+      },
+      String(slice.name)
+    );
+    offset += dash;
+    return node;
+  }) }) });
 }
 const Dashboard = ({ students = [], invoices = [], destinationCountries = [], branchLocations = [] }) => {
   const totalStudents = students.length;
@@ -109,6 +138,14 @@ const Dashboard = ({ students = [], invoices = [], destinationCountries = [], br
   }, [destinationCountries]);
   const countryData = useMemo(() => {
     const list = destinationList;
+    if (!list.length) {
+      const counts = new Map();
+      for (const student of students) {
+        const label = String(student.country || "").trim() || "Unknown";
+        counts.set(label, (counts.get(label) || 0) + 1);
+      }
+      return Array.from(counts.entries()).map(([name, value]) => ({ name, value: Number(value) || 0 }));
+    }
     const counts = new Map(list.map((name) => [name, 0]));
     let other = 0;
     for (const student of students) {
@@ -117,18 +154,17 @@ const Dashboard = ({ students = [], invoices = [], destinationCountries = [], br
       else other += 1;
     }
     const rows = list.map((name) => ({ name, value: Number(counts.get(name)) || 0 }));
-    if (other > 0 || list.length === 0) {
-      rows.push({ name: "Other", value: Number(list.length === 0 ? students.length : other) || 0 });
+    if (other > 0) {
+      rows.push({ name: "Other", value: Number(other) || 0 });
     }
     return rows;
   }, [students, destinationList]);
-  const marketPieTotal = useMemo(
-    () => countryData.reduce((sum, row) => sum + (Number(row.value) || 0), 0),
-    [countryData]
-  );
   const marketPieSlices = useMemo(
-    () => countryData.filter((row) => (Number(row.value) || 0) > 0),
-    [countryData]
+    () => countryData.filter((row) => (Number(row.value) || 0) > 0).map((row) => ({
+      ...row,
+      fill: marketSliceColor(row.name, destinationList)
+    })),
+    [countryData, destinationList]
   );
   const revenueData = useMemo(() => {
     const labels = [];
@@ -199,33 +235,17 @@ const Dashboard = ({ students = [], invoices = [], destinationCountries = [], br
           /* @__PURE__ */ jsx(Bar, { dataKey: "value", radius: [0, 4, 4, 0], barSize: 32, children: funnelData.map((entry, index) => /* @__PURE__ */ jsx(Cell, { fill: entry.fill }, `cell-${index}`)) })
         ] }) }) })
       ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm min-h-[350px] flex flex-col", children: [
+        /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-[350px] flex flex-col", children: [
         /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900 mb-2 shrink-0", children: "Market Distribution" }),
         /* @__PURE__ */ jsxs("div", { className: "flex flex-col flex-1 min-h-0", children: [
-          /* @__PURE__ */ jsxs("div", { className: "relative w-full h-[220px] shrink-0", children: [
-            marketPieTotal > 0 && marketPieSlices.length > 0 ? /* @__PURE__ */ jsx(ResponsiveContainer, { width: "100%", height: 220, debounce: 50, children: /* @__PURE__ */ jsxs(PieChart, { margin: { top: 4, right: 4, bottom: 4, left: 4 }, children: [
-              /* @__PURE__ */ jsx(
-                Pie,
-                {
-                  data: marketPieSlices,
-                  nameKey: "name",
-                  cx: "50%",
-                  cy: "50%",
-                  innerRadius: 54,
-                  outerRadius: 76,
-                  paddingAngle: 2,
-                  dataKey: "value",
-                  children: marketPieSlices.map((entry, index) => /* @__PURE__ */ jsx(Cell, { fill: marketSliceColor(entry.name, destinationList) }, `cell-${String(entry.name)}-${index}`))
-                }
-              ),
-              /* @__PURE__ */ jsx(Tooltip, {})
-            ] }) }) : /* @__PURE__ */ jsx("div", { className: "flex h-full w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/80 text-xs text-slate-500 px-4 text-center", children: destinationList.length === 0 ? "Add destination countries under Settings to chart markets here." : "No distribution to display yet (all segments are zero)." }),
-            /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none", children: /* @__PURE__ */ jsxs("div", { className: "text-center", children: [
+          /* @__PURE__ */ jsxs("div", { className: "relative flex-1 min-h-[180px] w-full flex items-center justify-center", children: [
+            marketPieSlices.length > 0 ? /* @__PURE__ */ jsx(MarketDonutChart, { slices: marketPieSlices, size: 200, strokeWidth: 28 }) : /* @__PURE__ */ jsx("div", { className: "flex h-full w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/80 text-xs text-slate-500 px-4 text-center", children: students.length === 0 ? "No students yet to chart market distribution." : destinationList.length === 0 ? "Loading destination countries\u2026" : "No distribution to display yet (all segments are zero)." }),
+            marketPieSlices.length > 0 ? /* @__PURE__ */ jsx("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none", children: /* @__PURE__ */ jsxs("div", { className: "text-center", children: [
               /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: totalStudents }),
               /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-500 uppercase", children: "Active" })
-            ] }) })
+            ] }) }) : null
           ] }),
-          marketPieSlices.length > 0 ? /* @__PURE__ */ jsx("div", { className: "flex flex-wrap justify-center gap-x-3 gap-y-1 mt-2 px-1 text-[10px] text-slate-600", children: marketPieSlices.map((entry) => /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center gap-1", children: [
+          marketPieSlices.length > 0 ? /* @__PURE__ */ jsx("div", { className: "flex flex-wrap justify-center gap-x-3 gap-y-1 mt-2 px-1 shrink-0 text-[10px] text-slate-600", children: marketPieSlices.map((entry) => /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center gap-1", children: [
             /* @__PURE__ */ jsx("span", { className: "inline-block h-2 w-2 rounded-full shrink-0", style: { backgroundColor: marketSliceColor(entry.name, destinationList) } }),
             /* @__PURE__ */ jsxs("span", { children: [
               entry.name,

@@ -1,22 +1,61 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
+
+const DROPDOWN_WIDTH = 280;
+const DROPDOWN_HEIGHT = 320;
+
 const DatePicker = ({ label, value, onChange, required }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [currentDate, setCurrentDate] = useState(value ? new Date(value) : /* @__PURE__ */ new Date());
+  const [dropdownStyle, setDropdownStyle] = useState({ top: 0, left: 0 });
   const containerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const dropdownRef = useRef(null);
+
   const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+  const updateDropdownPosition = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openAbove = spaceBelow < DROPDOWN_HEIGHT && rect.top > DROPDOWN_HEIGHT;
+    const top = openAbove ? rect.top - DROPDOWN_HEIGHT - 4 : rect.bottom + 4;
+    let left = rect.left;
+    if (left + DROPDOWN_WIDTH > window.innerWidth - 8) {
+      left = window.innerWidth - DROPDOWN_WIDTH - 8;
+    }
+    if (left < 8) left = 8;
+    setDropdownStyle({ top, left });
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    updateDropdownPosition();
+    const handleReposition = () => updateDropdownPosition();
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) {
+      const inContainer = containerRef.current?.contains(event.target);
+      const inDropdown = dropdownRef.current?.contains(event.target);
+      if (!inContainer && !inDropdown) {
         setIsOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
   const handleDateClick = (day) => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -24,10 +63,12 @@ const DatePicker = ({ label, value, onChange, required }) => {
     onChange(formattedDate);
     setIsOpen(false);
   };
+
   const changeMonth = (offset) => {
     const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1);
     setCurrentDate(newDate);
   };
+
   const renderCalendar = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -62,6 +103,32 @@ const DatePicker = ({ label, value, onChange, required }) => {
     }
     return slots;
   };
+
+  const calendarDropdown = isOpen ? createPortal(
+    /* @__PURE__ */ jsxs(
+      "div",
+      {
+        ref: dropdownRef,
+        style: { position: "fixed", top: dropdownStyle.top, left: dropdownStyle.left, width: DROPDOWN_WIDTH, zIndex: 9999 },
+        className: "p-4 bg-white border border-gray-200 rounded-xl shadow-xl animate-in fade-in zoom-in-95 duration-100",
+        children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
+            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(-1), className: "p-1 hover:bg-slate-50 rounded-md text-slate-500 transition-colors", children: /* @__PURE__ */ jsx(ChevronLeft, { size: 16 }) }),
+            /* @__PURE__ */ jsxs("span", { className: "text-sm font-semibold text-slate-900", children: [
+              months[currentDate.getMonth()],
+              " ",
+              currentDate.getFullYear()
+            ] }),
+            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(1), className: "p-1 hover:bg-slate-50 rounded-md text-slate-500 transition-colors", children: /* @__PURE__ */ jsx(ChevronRight, { size: 16 }) })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-1 mb-2 text-center", children: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => /* @__PURE__ */ jsx("div", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wider", children: d }, d)) }),
+          /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-1 place-items-center", children: renderCalendar() })
+        ]
+      }
+    ),
+    document.body
+  ) : null;
+
   return /* @__PURE__ */ jsxs("div", { className: "space-y-1.5", ref: containerRef, children: [
     /* @__PURE__ */ jsxs("label", { className: "text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center", children: [
       /* @__PURE__ */ jsx(CalendarIcon, { size: 12, className: "mr-1.5" }),
@@ -72,7 +139,16 @@ const DatePicker = ({ label, value, onChange, required }) => {
       /* @__PURE__ */ jsxs(
         "div",
         {
-          onClick: () => setIsOpen(!isOpen),
+          ref: triggerRef,
+          onClick: () => {
+            setIsOpen((prev) => {
+              const next = !prev;
+              if (next) {
+                requestAnimationFrame(updateDropdownPosition);
+              }
+              return next;
+            });
+          },
           className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all cursor-pointer flex items-center justify-between",
           children: [
             /* @__PURE__ */ jsx("span", { className: value ? "text-slate-900" : "text-slate-400", children: value ? new Date(value).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "Select date..." }),
@@ -80,19 +156,7 @@ const DatePicker = ({ label, value, onChange, required }) => {
           ]
         }
       ),
-      isOpen && /* @__PURE__ */ jsxs("div", { className: "absolute z-50 left-0 mt-1 p-4 bg-white border border-gray-200 rounded-xl shadow-xl w-[280px] animate-in fade-in zoom-in-95 duration-100", children: [
-        /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
-          /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(-1), className: "p-1 hover:bg-slate-50 rounded-md text-slate-500 transition-colors", children: /* @__PURE__ */ jsx(ChevronLeft, { size: 16 }) }),
-          /* @__PURE__ */ jsxs("span", { className: "text-sm font-semibold text-slate-900", children: [
-            months[currentDate.getMonth()],
-            " ",
-            currentDate.getFullYear()
-          ] }),
-          /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(1), className: "p-1 hover:bg-slate-50 rounded-md text-slate-500 transition-colors", children: /* @__PURE__ */ jsx(ChevronRight, { size: 16 }) })
-        ] }),
-        /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-1 mb-2 text-center", children: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => /* @__PURE__ */ jsx("div", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wider", children: d }, d)) }),
-        /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-1 place-items-center", children: renderCalendar() })
-      ] })
+      calendarDropdown
     ] }),
     /* @__PURE__ */ jsx(
       "input",
@@ -103,7 +167,10 @@ const DatePicker = ({ label, value, onChange, required }) => {
         required,
         onChange: () => {
         },
-        onFocus: () => setIsOpen(true)
+        onFocus: () => {
+          setIsOpen(true);
+          requestAnimationFrame(updateDropdownPosition);
+        }
       }
     )
   ] });

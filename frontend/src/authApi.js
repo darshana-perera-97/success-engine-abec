@@ -93,10 +93,11 @@ export async function getAccounts() {
 
 export async function createAccount(payload) {
   try {
+    const portalOrigin = typeof window !== "undefined" ? window.location.origin : "";
     const res = await fetch(`${API_BASE}/api/accounts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, portalOrigin })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.data) {
@@ -1031,6 +1032,25 @@ export async function clearAdminAiChats(email) {
     return {
       ok: false,
       error: "Cannot reach server. Is the backend running on port 3334?"
+    };
+  }
+}
+
+export async function getCompanyProfile() {
+  try {
+    const res = await fetch(`${API_BASE}/api/company-profile`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return {
+        ok: false,
+        error: data.error || "Could not load company profile.",
+      };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach server. Is the backend running on port 3334?",
     };
   }
 }

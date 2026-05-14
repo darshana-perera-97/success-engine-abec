@@ -4,7 +4,10 @@
   "version": "0.0.0",
   "homepage": "/",
   "scripts": {
+    "sync-profile-assets": "node scripts/syncProfilePublicAssets.js",
+    "prestart": "npm run sync-profile-assets",
     "start": "react-scripts start",
+    "prebuild": "npm run sync-profile-assets",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

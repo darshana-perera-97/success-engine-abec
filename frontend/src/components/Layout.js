@@ -25,6 +25,7 @@ import {
   Plug
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
+import { getCompanyProfile } from "../authApi";
 const Layout = ({
   children: pageBody,
   activeView,
@@ -53,8 +54,20 @@ const Layout = ({
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [backendCompanyName, setBackendCompanyName] = useState("");
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const notificationsPanelRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCompanyProfile().then((result) => {
+      if (!cancelled && result.ok && result.data?.companyName) {
+        setBackendCompanyName(String(result.data.companyName).trim());
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (!isNotificationsOpen) return;
     const handlePointerDown = (event) => {
@@ -457,7 +470,7 @@ const Layout = ({
       /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-auto p-4 lg:p-8", children: /* @__PURE__ */ jsx("div", { className: "max-w-7xl mx-auto h-full", children: pageBody }) }),
       /* @__PURE__ */ jsx("footer", { className: "border-t border-gray-200 bg-white px-4 lg:px-8 py-3", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between", children: [
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `© ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.` }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 sm:text-right", children: "Powered by NexGenAI" })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 sm:text-right", children: backendCompanyName ? `Powered by NexGenAI with ${backendCompanyName}` : "Powered by NexGenAI" })
       ] }) })
     ] }),
     isProfileOpen ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain bg-slate-900/50 backdrop-blur-sm flex items-start justify-center py-8 px-4", onClick: handleProfileClose, children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [

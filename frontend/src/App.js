@@ -1126,6 +1126,7 @@ function App({ initialView = "dashboard" }) {
       password: enteredPassword,
       role: "Consultor",
       branch: String(payload?.branch || "Colombo HQ").trim(),
+      phone: String(payload?.phone || "").trim(),
       teamLeadId: "",
       teamLeadName: "",
       teamLeadEmail: ""

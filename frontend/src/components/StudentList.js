@@ -1,8 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts } from "../authApi";
-import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp } from "lucide-react";
-import { normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
+import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock } from "lucide-react";
+import { getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
@@ -44,6 +44,30 @@ function studentTimeMs(student) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function StageSlaCell({ student, now }) {
+  const display = useMemo(() => getCurrentStageSlaDisplay(student, { now }), [student, now]);
+  if (!display) {
+    return /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "—" });
+  }
+  const toneClass =
+    display.visualTone === "red"
+      ? "bg-red-50 text-red-800 border-red-200"
+      : display.visualTone === "orange"
+        ? "bg-orange-50 text-orange-900 border-orange-200"
+        : "bg-green-50 text-green-800 border-green-200";
+  return /* @__PURE__ */ jsxs(
+    "span",
+    {
+      className: `inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold rounded border tabular-nums whitespace-nowrap ${toneClass}`,
+      title: `${display.stage} — target ${display.slaLabel} from stage entry. ${display.text}`,
+      children: [
+        /* @__PURE__ */ jsx(Clock, { size: 12, strokeWidth: 2, className: "flex-shrink-0 opacity-90" }),
+        display.text
+      ]
+    }
+  );
+}
+
 const StudentList = ({
   onSelectStudent,
   students = [],
@@ -71,6 +95,12 @@ const StudentList = ({
   }, [sortPrefs]);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef(null);
+  const [stageSlaClock, setStageSlaClock] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setStageSlaClock((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const stageSlaNow = useMemo(() => Date.now(), [stageSlaClock]);
   useEffect(() => {
     if (!sortMenuOpen) return;
     const onDoc = (e) => {
@@ -402,7 +432,7 @@ const StudentList = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Branch" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Pipeline Stage" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Counselor" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3 text-right", children: "Academic" })
+          /* @__PURE__ */ jsx("th", { className: "px-6 py-3 text-right", children: "Next Stage" })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: counselorMetaReady ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
           "tr",
@@ -437,12 +467,7 @@ const StudentList = ({
                   getCounselor(student.counselor)?.name || student.counselor
                 ] })
               ] }),
-              /* @__PURE__ */ jsxs("td", { className: "px-6 py-3 text-right font-mono text-xs text-slate-500", children: [
-                "GPA ",
-                student.gpa,
-                " | IELTS ",
-                student.ielts
-              ] })
+              /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-right", children: /* @__PURE__ */ jsx(StageSlaCell, { student, now: stageSlaNow }) })
             ]
           },
           student.id
