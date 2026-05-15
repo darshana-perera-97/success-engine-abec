@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
-import { X, AlertCircle } from "lucide-react";
+import { X, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "./Button";
 import { MultiSelect } from "./MultiSelect";
 import { DatePicker } from "./DatePicker";
@@ -11,8 +11,25 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
   const [priority, setPriority] = useState("Medium");
   const [dueDate, setDueDate] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
+  const [requireStudentDocuments, setRequireStudentDocuments] = useState(false);
+  const [docRequestDraft, setDocRequestDraft] = useState("");
+  const [taskDocumentRequests, setTaskDocumentRequests] = useState([]);
   const [submitError, setSubmitError] = useState("");
   if (!isOpen) return null;
+  const addDocumentRequestRow = () => {
+    const label = String(docRequestDraft || "").trim();
+    if (!label) {
+      setSubmitError("Enter a document name before adding.");
+      return;
+    }
+    setSubmitError("");
+    const id = `slot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setTaskDocumentRequests((prev) => [...prev, { id, label }]);
+    setDocRequestDraft("");
+  };
+  const removeDocumentRequestRow = (id) => {
+    setTaskDocumentRequests((prev) => prev.filter((row) => row.id !== id));
+  };
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitError("");
@@ -21,15 +38,22 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
       finalAssignedTo = [currentUser.id];
     }
     if (!description || !studentId || !dueDate) return;
+    if (requireStudentDocuments && taskDocumentRequests.length === 0) {
+      setSubmitError("Add at least one required document, or turn off student document upload.");
+      return;
+    }
+    const effectivePrivate = requireStudentDocuments ? false : isPrivate;
     const newTask = {
       id: `T${Math.floor(Math.random() * 1e4)}`,
       task: description,
       student_id: studentId,
-      assigned_to: isPrivate ? (userRole === "Counselor" || userRole === "Country Coordinator") && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
+      assigned_to: effectivePrivate ? (userRole === "Counselor" || userRole === "Country Coordinator") && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
       priority,
       status: "Pending",
       dueDate,
-      isPrivate
+      isPrivate: effectivePrivate,
+      requiresStudentDocuments: requireStudentDocuments && taskDocumentRequests.length > 0,
+      taskDocumentRequests: requireStudentDocuments && taskDocumentRequests.length > 0 ? taskDocumentRequests : []
     };
     const result = await onSubmit(newTask);
     if (result && result.ok === false) {
@@ -42,6 +66,9 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
     setPriority("Medium");
     setDueDate("");
     setIsPrivate(true);
+    setRequireStudentDocuments(false);
+    setTaskDocumentRequests([]);
+    setDocRequestDraft("");
     setSubmitError("");
     onClose();
   };
@@ -138,7 +165,67 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
           }
         )
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100", children: [
+      /* @__PURE__ */ jsxs("div", { className: "space-y-3 p-3 rounded-lg border border-slate-200 bg-slate-50/80", children: [
+        /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 cursor-pointer", children: [
+          /* @__PURE__ */ jsx("input", {
+            type: "checkbox",
+            className: "mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500",
+            checked: requireStudentDocuments,
+            onChange: (e) => {
+              const on = e.target.checked;
+              setRequireStudentDocuments(on);
+              if (on) setIsPrivate(false);
+            }
+          }),
+          /* @__PURE__ */ jsxs("div", { children: [
+            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Ask student to upload document(s)" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "The task becomes visible to the student. List each file you need, one by one." })
+          ] })
+        ] }),
+        requireStudentDocuments && /* @__PURE__ */ jsxs("div", { className: "space-y-2 pl-1", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row gap-2", children: [
+            /* @__PURE__ */ jsx("input", {
+              type: "text",
+              value: docRequestDraft,
+              onChange: (e) => setDocRequestDraft(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addDocumentRequestRow();
+                }
+              },
+              placeholder: 'e.g. "Bank statement (last 3 months)"',
+              className: "flex-1 px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            }),
+            /* @__PURE__ */ jsxs(Button, { type: "button", variant: "secondary", onClick: addDocumentRequestRow, children: [
+              /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-1" }),
+              "Add"
+            ] })
+          ] }),
+          taskDocumentRequests.length === 0
+            ? /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "No documents added yet — use Add after typing a label." })
+            : /* @__PURE__ */ jsx("ul", {
+                className: "space-y-1.5",
+                children: taskDocumentRequests.map((row) =>
+                  /* @__PURE__ */ jsxs("li", {
+                    key: row.id,
+                    className: "flex items-center justify-between gap-2 rounded-md bg-white border border-slate-100 px-2 py-1.5 text-sm",
+                    children: [
+                      /* @__PURE__ */ jsx("span", { className: "text-slate-800 min-w-0", children: row.label }),
+                      /* @__PURE__ */ jsx("button", {
+                        type: "button",
+                        onClick: () => removeDocumentRequestRow(row.id),
+                        className: "p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50",
+                        "aria-label": "Remove",
+                        children: /* @__PURE__ */ jsx(Trash2, { size: 16 })
+                      })
+                    ]
+                  })
+                )
+              })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: `flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-100 ${requireStudentDocuments ? "opacity-60" : ""}`, children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
           /* @__PURE__ */ jsxs("div", { className: `p-1.5 rounded-md ${isPrivate ? "bg-indigo-100 text-indigo-600" : "bg-slate-200 text-slate-500"}`, children: [
             /* @__PURE__ */ jsx(AlertCircle, { size: 16 }),
@@ -146,12 +233,18 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
           ] }),
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Private Task" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Private: assigned to counselor only. Public: assigned to counselor + student." })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Private: counselor only. Public: counselor + student. Document requests always use a public (student-visible) task." })
           ] })
         ] }),
         /* @__PURE__ */ jsxs("label", { className: "relative inline-flex items-center cursor-pointer", children: [
-          /* @__PURE__ */ jsx("input", { type: "checkbox", className: "sr-only peer", checked: isPrivate, onChange: (e) => setIsPrivate(e.target.checked) }),
-          /* @__PURE__ */ jsx("div", { className: "w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" })
+          /* @__PURE__ */ jsx("input", {
+            type: "checkbox",
+            className: "sr-only peer",
+            checked: isPrivate,
+            disabled: requireStudentDocuments,
+            onChange: (e) => setIsPrivate(e.target.checked)
+          }),
+          /* @__PURE__ */ jsx("div", { className: `w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 ${requireStudentDocuments ? "opacity-50 pointer-events-none" : ""}` })
         ] })
       ] }),
       submitError && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: submitError }),
@@ -160,7 +253,8 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
         /* @__PURE__ */ jsx(Button, { type: "submit", className: "px-6", children: "Create Task" })
       ] })
     ] })
-  ] }) });
+  ] })
+});
 };
 export {
   CreateTaskModal

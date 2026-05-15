@@ -158,7 +158,7 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
     setPaymentError("");
     setIsSubmittingPayment(true);
     if (canUploadEvidence && paymentMethod === "card") {
-      setPaymentError("Students can only upload payment evidence for verification.");
+      setPaymentError("Use Bank Transfer and upload a receipt or document for verification (card checkout is not used for evidence).");
       setIsSubmittingPayment(false);
       return;
     }
@@ -177,6 +177,19 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
     } else {
       if (!paymentProofFile) {
         setPaymentError("Please upload payment proof.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      const proofAllowedTypes = new Set([
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/jpg",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ]);
+      if (paymentProofFile.type && !proofAllowedTypes.has(paymentProofFile.type)) {
+        setPaymentError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
         setIsSubmittingPayment(false);
         return;
       }
@@ -278,9 +291,14 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
-  const isStaff = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Counselor" || userRole === "Country Coordinator";
-  const canAcceptPayment = userRole === "Admin" || userRole === "Manager";
-  const canUploadEvidence = userRole === "Student";
+  const roleNorm = String(userRole || "").trim().toLowerCase();
+  const isStaff = ["admin", "manager", "team lead", "counselor", "country coordinator", "consultor"].includes(roleNorm);
+  const canAcceptPayment = roleNorm === "admin" || roleNorm === "manager";
+  const canUploadEvidence =
+    roleNorm === "student" ||
+    roleNorm === "counselor" ||
+    roleNorm === "country coordinator" ||
+    roleNorm === "consultor";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4", children: [
       /* @__PURE__ */ jsxs("div", { className: "bg-white p-5 rounded-xl border border-gray-200 shadow-sm", children: [
@@ -529,10 +547,10 @@ const FinanceModule = ({ student, invoices, userRole, onCreateInvoice, onUpdateI
         ] })
       ] }),
       paymentMethod === "upload" && /* @__PURE__ */ jsxs("label", { className: "mb-6 border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:bg-slate-50 cursor-pointer transition-colors block", children: [
-        /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf", className: "hidden", onChange: (event) => setPaymentProofFile(event.target.files?.[0] || null) }),
+        /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf,.doc,.docx", className: "hidden", onChange: (event) => setPaymentProofFile(event.target.files?.[0] || null) }),
         /* @__PURE__ */ jsx(Upload, { className: "mx-auto text-slate-400 mb-2", size: 24 }),
         /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-600", children: paymentProofFile ? paymentProofFile.name : "Click to upload receipt" }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: "JPG, PNG or PDF (Max 10MB)" })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: "PDF, JPG, PNG, DOC, or DOCX (max 10MB)" })
       ] }),
       paymentError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-4", children: paymentError }) : null,
       /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [

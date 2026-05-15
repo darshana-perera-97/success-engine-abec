@@ -1,10 +1,21 @@
-import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import { jsx, jsxs } from "react/jsx-runtime";
 import { useMemo, useState } from "react";
 import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp } from "lucide-react";
 import { Button } from "./Button";
 import { VISA_WORKFLOWS } from "../visaWorkflows";
 import { isVisaPilotUnlocked, normalizePipelineStatus } from "../pipeline";
 import { buildVisaPilotDocType } from "../studentEnrolledGate";
+/** Short label for long filenames (matches Paperless Pipeline / DocumentManager). */
+function shortDisplayFileName(name, maxStem = 8) {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  const dot = s.lastIndexOf(".");
+  const hasExt = dot > 0 && dot < s.length - 1;
+  const ext = hasExt ? s.slice(dot) : "";
+  const base = hasExt ? s.slice(0, dot) : s;
+  if (base.length <= maxStem) return s;
+  return `${base.slice(0, maxStem)}…${ext}`;
+}
 const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument }) => {
   const workflow = VISA_WORKFLOWS[student.country] || VISA_WORKFLOWS.Default;
   const visaPilotUnlocked = isVisaPilotUnlocked(student.status);
@@ -56,6 +67,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       "application/pdf",
       "image/png",
       "image/jpeg",
+      "image/jpg",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]);
@@ -162,19 +174,23 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                         " Upload"
                       ] })
                     ] }),
-                    itemDocuments.length > 0 && /* @__PURE__ */ jsx("div", { className: "space-y-2", children: itemDocuments.map((doc) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-2 rounded-lg flex items-center justify-between", children: [
-                      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 min-w-0", children: [
-                        /* @__PURE__ */ jsx(FileText, { size: 14, className: "text-slate-500 shrink-0" }),
-                        /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-                          /* @__PURE__ */ jsx("p", { className: "text-xs font-medium text-slate-700 truncate", children: doc.name }),
-                          /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400", children: doc.uploadedAt })
+                    itemDocuments.length > 0 && /* @__PURE__ */ jsx("div", { className: "space-y-2", children: itemDocuments.map((doc) => {
+                      const docStatus = doc.status;
+                      const iconBoxClass = docStatus === "Verified" ? "bg-emerald-100 text-emerald-600" : docStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-500";
+                      return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
+                        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+                          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBoxClass}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
+                          /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: doc.name, children: shortDisplayFileName(doc.name) }),
+                            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: doc.uploadedAt })
+                          ] })
+                        ] }),
+                        doc.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200 shrink-0", children: [
+                          /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                          /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                         ] })
-                      ] }),
-                      doc.url && /* @__PURE__ */ jsxs(Fragment, { children: [
-                        /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", title: "Preview", children: /* @__PURE__ */ jsx(Eye, { size: 14 }) }),
-                        /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", title: "Download", children: /* @__PURE__ */ jsx(Download, { size: 14 }) })
-                      ] })
-                    ] }, doc.id || `${doc.name}-${doc.uploadedAt}`)) })
+                      ] }, doc.id || `${doc.name}-${doc.uploadedAt}`);
+                    }) })
                   ]
                 },
                 item

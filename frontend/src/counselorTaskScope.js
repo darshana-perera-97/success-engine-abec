@@ -91,3 +91,30 @@ export function isTaskOverdueByDate(task) {
   d.setHours(0, 0, 0, 0);
   return d < today;
 }
+
+const MS_DAY = 864e5;
+
+function startOfLocalDay(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * Human-readable calendar slack until the due date (local midnight), matching Task Manager.
+ */
+export function formatCalendarDaysRemainingLabel(dueDateRaw, now = new Date()) {
+  if (dueDateRaw == null || String(dueDateRaw).trim() === "") return "No due date";
+  const dueStart = startOfLocalDay(String(dueDateRaw));
+  const todayStart = startOfLocalDay(now);
+  if (dueStart == null || todayStart == null) return "—";
+  const diffDays = Math.round((dueStart - todayStart) / MS_DAY);
+  if (diffDays < 0) {
+    const od = -diffDays;
+    return od === 1 ? "Overdue · 1 day" : `Overdue · ${od} days`;
+  }
+  if (diffDays === 0) return "Due today";
+  if (diffDays === 1) return "1 day left";
+  return `${diffDays} days left`;
+}

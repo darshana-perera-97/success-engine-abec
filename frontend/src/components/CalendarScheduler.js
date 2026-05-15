@@ -2,7 +2,8 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect } from "react";
 import { Button } from "./Button";
 import { ChevronLeft, ChevronRight, Clock, User, CheckCircle, AlertTriangle, Video } from "lucide-react";
-const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking, studentsLookup = null }) => {
+import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
+const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking, studentsLookup = null, focusCounselorId = null }) => {
   const [currentDate, setCurrentDate] = useState(/* @__PURE__ */ new Date());
   const [selectedDate, setSelectedDate] = useState(/* @__PURE__ */ new Date());
   const [selectedCounselorId, setSelectedCounselorId] = useState("");
@@ -35,9 +36,23 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   useEffect(() => {
     if (currentRole === "Student") {
       const s = currentUser;
-      if (s.counselor && selectedCounselorId !== s.counselor) {
-        setSelectedCounselorId(s.counselor);
+      const roster = buildCounselorTeamEntriesWithFallback(s, employees);
+      const idSet = new Set(roster.map((entry) => String(entry.id || "").trim()).filter(Boolean));
+      const focus = String(focusCounselorId || "").trim();
+      if (focus && idSet.has(focus)) {
+        setSelectedCounselorId(focus);
+        return;
       }
+      const primary = String(s?.counselor || "").trim();
+      const prev = String(selectedCounselorId || "").trim();
+      if (prev && idSet.has(prev)) return;
+      if (primary && idSet.has(primary)) {
+        setSelectedCounselorId(primary);
+        return;
+      }
+      const first = roster[0]?.id;
+      setSelectedCounselorId(first ? String(first) : "");
+      return;
     } else if (currentRole === "Counselor") {
       if (currentUser.id && selectedCounselorId !== currentUser.id) {
         setSelectedCounselorId(currentUser.id);
@@ -45,7 +60,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     } else if (currentRole === "Country Coordinator") {
       setSelectedCounselorId("");
     }
-  }, [currentRole, currentUser, employees]);
+  }, [currentRole, currentUser, employees, focusCounselorId, selectedCounselorId]);
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
     const month = date.getMonth();

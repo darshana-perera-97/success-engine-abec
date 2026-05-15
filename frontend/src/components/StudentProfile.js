@@ -1,5 +1,6 @@
-import { jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "./Button";
 import {
@@ -25,6 +26,8 @@ import {
   X
 } from "lucide-react";
 import { DocumentManager } from "./DocumentManager";
+import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
+import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
@@ -42,6 +45,7 @@ import {
   isVisaPilotUnlocked
 } from "../pipeline";
 import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
+import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 function normalizeBranchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -52,9 +56,64 @@ function branchesMatch(a, b) {
   if (x === y) return true;
   return x.includes(y) || y.includes(x);
 }
+function resolveProfileStudentKey(record) {
+  if (!record || typeof record !== "object") return "";
+  const raw = record.id ?? record.studentId;
+  return String(raw ?? "").trim();
+}
+function resolveTaskStudentKey(task) {
+  if (!task || typeof task !== "object") return "";
+  const top = task.student_id ?? task.studentId;
+  if (top != null && String(top).trim() !== "") return String(top).trim();
+  const nested = task.student;
+  if (nested && typeof nested === "object") {
+    const n = nested.id ?? nested.studentId;
+    if (n != null && String(n).trim() !== "") return String(n).trim();
+  }
+  return "";
+}
 function isCounselorRole(roleValue) {
   const role = String(roleValue || "").trim().toLowerCase();
   return role.includes("counselor") || role.includes("counsellor") || role.includes("consultor");
+}
+function isMeaningfulGpaDisplay(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+  if (!s) return false;
+  if (s === "—" || s === "-" || s === "n/a" || s === "na" || s === "none" || s === "tbd") return false;
+  const n = Number.parseFloat(s.replace(",", "."));
+  if (!Number.isNaN(n) && n === 0) return false;
+  return true;
+}
+function isMeaningfulIeltsDisplay(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+  if (!s) return false;
+  if (s === "pending" || s === "—" || s === "-" || s === "n/a" || s === "na" || s === "none" || s === "tbd" || s === "to be confirmed") return false;
+  return true;
+}
+function formatExamResultsSubtitle(student) {
+  const raw = student?.examResults;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const parts = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const name = String(r.examName ?? r.exam ?? r.name ?? "").trim();
+    const result = String(r.result ?? r.score ?? "").trim();
+    if (!name || !result) continue;
+    const resLower = result.toLowerCase();
+    if (resLower === "pending" || resLower === "tbd" || resLower === "n/a") continue;
+    parts.push(`${name}: ${result}`);
+  }
+  return parts.length ? parts.join("\u2022") : null;
+}
+function buildLegacyMetricsSubtitleLine(student) {
+  const country = String(student?.country || "").trim();
+  const gpa = String(student?.gpa ?? "").trim();
+  const ielts = String(student?.ielts ?? "").trim();
+  const segments = [];
+  if (country) segments.push(country);
+  if (isMeaningfulGpaDisplay(gpa)) segments.push(`GPA: ${gpa}`);
+  if (isMeaningfulIeltsDisplay(ielts)) segments.push(`IELTS: ${ielts}`);
+  return segments.length ? segments.join("\u2022") : null;
 }
 const KeyDetails = ({ student, canEditContact = false, onEditContact }) => {
   const details = [
@@ -82,9 +141,10 @@ const KeyDetails = ({ student, canEditContact = false, onEditContact }) => {
 const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onNavigateToTask }) => {
   const scrollRef = useRef(null);
   const highlightKey = highlightTaskId != null ? String(highlightTaskId).trim() : "";
+  const profileKey = resolveProfileStudentKey(student);
   const studentTasksRaw = tasks.filter((task) => {
-    const tid = String(task.student_id || task.studentId || "").trim();
-    if (tid !== String(student.id || "").trim()) return false;
+    const tid = resolveTaskStudentKey(task);
+    if (!profileKey || !tid || tid !== profileKey) return false;
     if (userRole === "Student" && task.isPrivate) return false;
     return true;
   });
@@ -550,9 +610,15 @@ const StudentProfile = ({
   currentUser = null,
   authenticatedUser = null,
   onNotify,
+  onSendStaffMessage,
   highlightTaskId = null,
-  onNavigateToTask
+  onNavigateToTask,
+  allStudents = [],
+  onDismissAssignmentAlert,
+  onStudentMovedToRequests,
+  onSelectStudent
 }) => {
+  const [searchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
   const [activeTab, setActiveTab] = useState("pipeline");
   const [advanceDialog, setAdvanceDialog] = useState({
@@ -566,8 +632,18 @@ const StudentProfile = ({
     email: "",
     phone: ""
   });
+  const [slaResolveBusy, setSlaResolveBusy] = useState(false);
   useEffect(() => {
     setLocalStudent(student);
+  }, [student]);
+  const advanceDialogStudentKeyRef = useRef("");
+  useEffect(() => {
+    const key = resolveProfileStudentKey(student);
+    const prev = advanceDialogStudentKeyRef.current;
+    advanceDialogStudentKeyRef.current = key;
+    if (prev && key && prev !== key) {
+      setAdvanceDialog({ open: false, counselorMode: "current", counselorId: "", taskActions: {} });
+    }
   }, [student]);
   const [stageSlaClock, setStageSlaClock] = useState(0);
   useEffect(() => {
@@ -584,6 +660,28 @@ const StudentProfile = ({
       : stageSlaDisplay?.visualTone === "orange"
         ? "bg-orange-50 text-orange-900 border-orange-200"
         : "bg-green-50 text-green-800 border-green-200";
+  const [inquiryTarget, setInquiryTarget] = useState(null);
+  const inquiryNowMs = useMemo(() => Date.now(), [stageSlaClock]);
+  useEffect(() => {
+    setInquiryTarget(null);
+  }, [String(student?.id ?? "")]);
+  const profileMetricsRow = useMemo(() => {
+    const country = String(localStudent.country || "").trim();
+    const examLine = formatExamResultsSubtitle(localStudent);
+    if (examLine) {
+      const text = country ? `${country}\u2022${examLine}` : examLine;
+      return /* @__PURE__ */ jsx("span", {
+        className: "text-sm font-medium text-slate-600 tabular-nums [overflow-wrap:anywhere]",
+        children: text
+      });
+    }
+    const legacyLine = buildLegacyMetricsSubtitleLine(localStudent);
+    if (!legacyLine) return null;
+    return /* @__PURE__ */ jsx("span", {
+      className: "text-sm font-medium text-slate-600 tabular-nums [overflow-wrap:anywhere]",
+      children: legacyLine
+    });
+  }, [localStudent]);
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
   const visaPilotUnlocked = isVisaPilotUnlocked(effectiveStatus);
   useEffect(() => {
@@ -591,13 +689,33 @@ const StudentProfile = ({
       setActiveTab("pipeline");
     }
   }, [visaPilotUnlocked, activeTab]);
+  useEffect(() => {
+    const raw = String(searchParams.get("tab") || "").trim().toLowerCase();
+    const allowed = new Set(["pipeline", "resume", "show-money", "ledger"]);
+    if (raw === "visa-pilot" && visaPilotUnlocked) {
+      setActiveTab("visa-pilot");
+      return;
+    }
+    if (allowed.has(raw)) {
+      setActiveTab(raw);
+      return;
+    }
+    setActiveTab("pipeline");
+  }, [searchParams, student?.id, visaPilotUnlocked]);
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
   const enrolledAdvanceBlockReasons = useMemo(
     () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, invoices) : []),
     [nextStep, localStudent, invoices]
   );
-  const remainingStudentTasks = tasks.filter((task) => task.student_id === localStudent.id && task.status !== "Completed");
+  const profileStudentKey = useMemo(() => resolveProfileStudentKey(localStudent), [localStudent]);
+  const remainingStudentTasks = useMemo(() => {
+    if (!profileStudentKey) return [];
+    return tasks.filter((task) => {
+      const sid = resolveTaskStudentKey(task);
+      return Boolean(sid) && sid === profileStudentKey && task.status !== "Completed";
+    });
+  }, [tasks, profileStudentKey]);
   const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
   const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
   const availableBranchCounselors = employees.filter((employee) => {
@@ -614,6 +732,140 @@ const StudentProfile = ({
     const match = employees.find((employee) => employee.id === localStudent.counselor);
     return match?.name || match?.username || localStudent.counselorName || "";
   })();
+  const slaNoticeCounselorTeam = useMemo(
+    () => buildCounselorTeamEntriesWithFallback(localStudent, employees),
+    [localStudent, employees]
+  );
+  const canEscalateSlaNotice = userRole === "Admin" || userRole === "Manager";
+  const handleSlaResolveNow = async () => {
+    if (!canEscalateSlaNotice || slaResolveBusy) return;
+    if (!onAddTasks) {
+      onNotify?.("Unavailable", "Task creation is not available.", "error");
+      return;
+    }
+    const studentDocs = localStudent.documents || [];
+    const hasOpenSlaGaps = (localStudent.slaViolations || []).some((v) => {
+      if (!v) return false;
+      return getEffectiveSlaViolationMissingItems(v, studentDocs).length > 0;
+    });
+    if (!hasOpenSlaGaps) {
+      onNotify?.("Nothing to resolve", "This SLA notice is already cleared.", "info");
+      return;
+    }
+    const teamIds = slaNoticeCounselorTeam.map((c) => String(c.id || "").trim()).filter((id) => id && id.toLowerCase() !== "unassigned");
+    const branchIds = availableBranchCounselors.map((e) => String(e.id || "").trim()).filter(Boolean);
+    const targetIds = Array.from(new Set(teamIds.length > 0 ? teamIds : branchIds));
+    if (targetIds.length === 0) {
+      onNotify?.(
+        "No counselors",
+        "Assign a counselor on this record or add roster staff for this branch before escalating.",
+        "warning"
+      );
+      return;
+    }
+    const pk = resolveProfileStudentKey(localStudent);
+    const missingLabels = [];
+    const seenMiss = /* @__PURE__ */ new Set();
+    for (const v of localStudent.slaViolations || []) {
+      if (!v) continue;
+      for (const it of getEffectiveSlaViolationMissingItems(v, studentDocs)) {
+        const k = String(it || "").trim();
+        if (!k) continue;
+        const low = k.toLowerCase();
+        if (seenMiss.has(low)) continue;
+        seenMiss.add(low);
+        missingLabels.push(k);
+      }
+    }
+    const missShort =
+      missingLabels.length > 0
+        ? `${missingLabels.slice(0, 6).join(", ")}${missingLabels.length > 6 ? "…" : ""}`
+        : "mandatory requirements";
+    const TASK_PREFIX = "SLA notice (management)";
+    const pendingManagementSlaTask = (counselorId) =>
+      (tasks || []).some((t) => {
+        if (String(t.status || "") === "Completed") return false;
+        if (resolveTaskStudentKey(t) !== pk) return false;
+        const title = String(t.task || "");
+        if (!title.startsWith(TASK_PREFIX)) return false;
+        const to = Array.isArray(t.assigned_to) ? t.assigned_to : [];
+        return to.some((a) => String(a || "").trim() === counselorId);
+      });
+    const toCreate = targetIds.filter((id) => !pendingManagementSlaTask(id));
+    if (toCreate.length === 0) {
+      onNotify?.(
+        "Already escalated",
+        "Each targeted counselor already has an open management SLA task for this student.",
+        "info"
+      );
+      return;
+    }
+    setSlaResolveBusy(true);
+    try {
+      const due = /* @__PURE__ */ new Date();
+      due.setDate(due.getDate() + 1);
+      const dueDate = due.toISOString().split("T")[0];
+      const now = Date.now();
+      const actorLabel = String(currentUser?.name || authenticatedUser?.username || userRole || "Staff").trim() || userRole;
+      const newTasks = toCreate.map((counselorId, idx) => ({
+        id: `T-SLA-${localStudent.id}-${counselorId}-${now}-${idx}`,
+        task: `${TASK_PREFIX}: ${missShort} — ${localStudent.name}`.slice(0, 500),
+        assigned_to: [counselorId],
+        counselor_ids: [counselorId],
+        student_id: localStudent.id,
+        priority: "High",
+        status: "Pending",
+        dueDate,
+        tier: "Global",
+        phase: 1,
+        isBlocking: true,
+        isPrivate: true
+      }));
+      const addRes = await onAddTasks(newTasks);
+      let messagesOk = 0;
+      let messagesFail = 0;
+      if (addRes?.ok && typeof onSendStaffMessage === "function") {
+        const msgBody = `${actorLabel} (${userRole}) escalated an SLA requirement notice for ${localStudent.name} (${localStudent.id}). Gaps: ${missShort}. A HIGH priority task was added to your list — please complete missing items in the pipeline / documents.`;
+        for (const counselorId of toCreate) {
+          const msgRes = await onSendStaffMessage(msgBody, counselorId);
+          if (msgRes?.ok) messagesOk += 1;
+          else messagesFail += 1;
+        }
+      }
+      if (addRes?.ok) {
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "escalated SLA requirement notice",
+          target: `${localStudent.name}: ${toCreate.length} counselor task(s); ${messagesOk} portal message(s)`,
+          type: "task",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
+        if (typeof onSendStaffMessage === "function") {
+          if (messagesFail === 0) {
+            onNotify?.(
+              "Escalation sent",
+              `Created ${toCreate.length} high priority task(s) and notified counselors in Messages.`,
+              "success"
+            );
+          } else {
+            onNotify?.(
+              "Partially sent",
+              `Created ${toCreate.length} task(s). ${messagesOk} counselor message(s) sent; ${messagesFail} failed.`,
+              messagesOk > 0 ? "warning" : "error"
+            );
+          }
+        } else {
+          onNotify?.("Tasks created", `Created ${toCreate.length} high priority counselor task(s).`, "success");
+        }
+      } else {
+        onNotify?.("Escalation issue", addRes?.error || "Some tasks could not be saved.", "error");
+      }
+    } finally {
+      setSlaResolveBusy(false);
+    }
+  };
   const canManagerEditContact = userRole === "Manager";
   const showCounselorsRosterSection = ["Admin", "Manager", "Team Lead", "Counselor", "Country Coordinator"].includes(userRole);
   const handleUpdateStudentLocal = (updated) => {
@@ -770,7 +1022,11 @@ const StudentProfile = ({
       if (allMissingItems.length > 0) {
         const existingTaskTypes = new Set(
           (tasks || [])
-            .filter((t) => String(t.student_id || "").trim() === String(localStudent.id || "").trim() && t.status !== "Completed")
+            .filter((t) => {
+              const tid = resolveTaskStudentKey(t);
+              const pk = resolveProfileStudentKey(localStudent);
+              return Boolean(pk) && Boolean(tid) && tid === pk && t.status !== "Completed";
+            })
             .map((t) => String(t.documentType || "").trim())
             .filter(Boolean)
         );
@@ -918,42 +1174,53 @@ const StudentProfile = ({
       " PRIORITY"
     ] });
   };
+  const handlePipelineDocumentUpdate = async (doc) => {
+    const updatedDocs =
+      localStudent.documents?.map((d) => (String(d.id) === String(doc.id) ? doc : d)) || [];
+    const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
+    const updatedStudent =
+      slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
+    setLocalStudent(updatedStudent);
+    const persistResult = await onUpdateStudent?.(updatedStudent);
+    if (persistResult && persistResult.ok === false) {
+      return persistResult;
+    }
+    if (doc.status === "Rejected") {
+      onAddActivity?.({
+        user: userRole,
+        role: userRole,
+        action: "rejected document",
+        target: `${doc.name} (Reason: ${doc.rejectionReason})`,
+        type: "system",
+        studentName: localStudent.name,
+        studentId: localStudent.id
+      });
+    } else if (doc.status === "Verified") {
+      onAddActivity?.({
+        user: userRole,
+        role: userRole,
+        action: "verified document",
+        target: `${doc.name}`,
+        type: "approval",
+        studentName: localStudent.name,
+        studentId: localStudent.id
+      });
+    }
+    return persistResult;
+  };
   const renderContent = () => {
     switch (activeTab) {
       case "pipeline":
-        return /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: async (doc) => {
-          const updatedDocs = localStudent.documents?.map((d) => d.id === doc.id ? doc : d) || [];
-          const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
-          const updatedStudent =
-            slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
-          setLocalStudent(updatedStudent);
-          const persistResult = await onUpdateStudent?.(updatedStudent);
-          if (persistResult && persistResult.ok === false) {
-            return persistResult;
-          }
-          if (doc.status === "Rejected") {
-            onAddActivity?.({
-              user: userRole,
-              role: userRole,
-              action: "rejected document",
-              target: `${doc.name} (Reason: ${doc.rejectionReason})`,
-              type: "system",
-              studentName: localStudent.name,
-              studentId: localStudent.id
-            });
-          } else if (doc.status === "Verified") {
-            onAddActivity?.({
-              user: userRole,
-              role: userRole,
-              action: "verified document",
-              target: `${doc.name}`,
-              type: "approval",
-              studentName: localStudent.name,
-              studentId: localStudent.id
-            });
-          }
-          return persistResult;
-        }, onDeleteDocument: async (doc) => {
+        return /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx(TaskDocumentRequestsPanel, {
+            student: localStudent,
+            tasks,
+            userRole,
+            onUploadDocument: onUploadStudentDocument,
+            onUpdateDocument: handlePipelineDocumentUpdate,
+            onUpdateTasks
+          }),
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: async (doc) => {
           const previousDocs = localStudent.documents || [];
           const updatedDocs = previousDocs.filter((d) => String(d.id) !== String(doc.id));
           const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
@@ -975,11 +1242,37 @@ const StudentProfile = ({
             studentId: localStudent.id
           });
           return persistResult;
-        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters });
+        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
+        ] });
       case "show-money":
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent });
       case "visa-pilot":
-        return /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument });
+        return /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument }),
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: async (doc) => {
+          const previousDocs = localStudent.documents || [];
+          const updatedDocs = previousDocs.filter((d) => String(d.id) !== String(doc.id));
+          const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
+          const updatedStudent =
+            slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
+          setLocalStudent(updatedStudent);
+          const persistResult = await onUpdateStudent?.(updatedStudent);
+          if (persistResult && persistResult.ok === false) {
+            setLocalStudent({ ...localStudent, documents: previousDocs });
+            return persistResult;
+          }
+          onAddActivity?.({
+            user: userRole,
+            role: userRole,
+            action: "removed rejected document",
+            target: doc.name,
+            type: "system",
+            studentName: localStudent.name,
+            studentId: localStudent.id
+          });
+          return persistResult;
+        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
+        ] });
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice, onNotify });
       case "resume":
@@ -1022,19 +1315,9 @@ const StudentProfile = ({
                   }
                 )
               ] }),
-              /* @__PURE__ */ jsxs("div", { className: "text-sm text-slate-500 font-medium flex items-center gap-x-3 mt-1 flex-wrap", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-700", children: String(localStudent.country || "").trim() || "—" }),
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "\u2022" }),
-                /* @__PURE__ */ jsxs("span", { children: [
-                  "GPA: ",
-                  localStudent.gpa
-                ] }),
-                /* @__PURE__ */ jsx("span", { className: "text-slate-300", children: "\u2022" }),
-                /* @__PURE__ */ jsxs("span", { children: [
-                  "IELTS: ",
-                  localStudent.ielts
-                ] })
-              ] })
+              profileMetricsRow
+                ? /* @__PURE__ */ jsx("div", { className: "mt-1 text-slate-500", children: profileMetricsRow })
+                : null
             ] })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 self-end md:self-auto", children: [
@@ -1048,11 +1331,52 @@ const StudentProfile = ({
             ] })
           ] })
         ] }),
+        effectiveStatus === "Inquiry" && showCounselorsRosterSection && /* @__PURE__ */ jsxs("div", { className: "mb-4 p-3 bg-amber-50 border border-amber-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
+            /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0 mt-1.5" }),
+            /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+              /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
+                localStudent.name || "Student",
+                " is in Inquiry stage"
+              ] }),
+              /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
+                (localStudent.stageEnteredAt || localStudent.createdAt) && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                  "Inquiry SLA ",
+                  /* @__PURE__ */ jsx(InquirySlaBadge, { startedAt: localStudent.stageEnteredAt || localStudent.createdAt, nowMs: inquiryNowMs })
+                ] })
+              ] })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            variant: "ghost",
+            className: "shrink-0 self-start sm:self-auto",
+            onClick: () =>
+              setInquiryTarget({
+                student: localStudent,
+                assignmentAlert: null,
+                _key: `profile-inquiry-${Date.now()}`
+              }),
+            children: "Start Inquiry"
+          })
+        ] }),
         localStudent.slaViolations && localStudent.slaViolations.some((v) => getEffectiveSlaViolationMissingItems(v, localStudent.documents || []).length > 0) && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-4 shadow-sm animate-pulse", children: [
           /* @__PURE__ */ jsx("div", { className: "bg-rose-100 p-2 rounded-xl text-rose-600", children: /* @__PURE__ */ jsx(ShieldAlert, { size: 24 }) }),
           /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-bold text-rose-900", children: "SLA Requirement Notice" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-1", children: "This student was advanced through stages without completing all mandatory requirements. This will impact the counselor's SLA score until resolved." }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-1", children: slaNoticeCounselorTeam.length === 0 ? "This student was advanced through stages without completing all mandatory requirements. SLA impact applies once counselors are assigned to this record." : slaNoticeCounselorTeam.length > 1 ? "This student was advanced through stages without completing all mandatory requirements. This can impact each related counselor's SLA score until resolved." : "This student was advanced through stages without completing all mandatory requirements. This will impact the counselor's SLA score until resolved." }),
+            slaNoticeCounselorTeam.length > 0 ? /* @__PURE__ */ jsxs("div", { className: "mt-2", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-[10px] font-bold uppercase tracking-wide text-rose-800/90", children: "Related counselors" }),
+              /* @__PURE__ */ jsx("div", { className: "mt-1.5 flex flex-wrap gap-1.5", children: slaNoticeCounselorTeam.map((c) => /* @__PURE__ */ jsxs("span", { className: "inline-flex max-w-full items-center gap-1 rounded-lg border border-rose-100 bg-white/70 px-2 py-1 text-[11px] text-rose-900 shadow-sm", children: [
+                /* @__PURE__ */ jsx("span", { className: "font-semibold truncate", children: c.name }),
+                c.badgeLabel ? /* @__PURE__ */ jsx("span", { className: "shrink-0 text-[10px] font-medium text-rose-600", children: [
+                  "(",
+                  c.badgeLabel,
+                  ")"
+                ] }) : null
+              ] }, c.id)) })
+            ] }) : /* @__PURE__ */ jsx("p", { className: "mt-2 text-[11px] text-rose-600/90 italic", children: "No counselors linked on this record yet." }),
             /* @__PURE__ */ jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: (() => {
               const seen = new Map();
               const studentDocs = localStudent.documents || [];
@@ -1078,7 +1402,14 @@ const StudentProfile = ({
               ] }, v.id));
             })() })
           ] }),
-          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", className: "border-rose-200 text-rose-700 hover:bg-rose-100", children: "Resolve Now" })
+          canEscalateSlaNotice && /* @__PURE__ */ jsx(Button, {
+            size: "sm",
+            variant: "outline",
+            className: "border-rose-200 text-rose-700 hover:bg-rose-100 shrink-0 self-start sm:self-center",
+            disabled: slaResolveBusy,
+            onClick: handleSlaResolveNow,
+            children: slaResolveBusy ? "Sending…" : "Resolve Now"
+          })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm flex flex-col lg:flex-row items-stretch overflow-hidden", children: [
           /* @__PURE__ */ jsxs("div", { className: "w-full lg:w-3/4 p-4 overflow-x-auto hide-scrollbar border-b lg:border-b-0 lg:border-r border-gray-100", children: [
@@ -1223,7 +1554,17 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0, children: "Confirm & Continue" })
           ] })
-        ] }) })
+        ] }) }),
+        /* @__PURE__ */ jsx(InquiryCaptureFlowModals, {
+          target: inquiryTarget,
+          onClear: () => setInquiryTarget(null),
+          currentUser,
+          allStudents,
+          onUpdateStudent: handleUpdateStudentLocal,
+          onDismissAssignmentAlert,
+          onStudentMovedToRequests,
+          onSelectStudent
+        })
       ]
     }
   );
@@ -1232,7 +1573,7 @@ const TabButton = ({ icon: Icon, label, activeTab, tabName, onClick }) => /* @__
   "button",
   {
     onClick: () => onClick(tabName),
-    className: `flex-1 py-3 px-4 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-nexgenai-navy ${activeTab === tabName ? "border-indigo-600 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:bg-slate-50"}`,
+    className: `shrink-0 whitespace-nowrap py-3 px-4 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-nexgenai-navy ${activeTab === tabName ? "border-indigo-600 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:bg-slate-50"}`,
     children: [
       /* @__PURE__ */ jsx(Icon, { size: 16, strokeWidth: 1.5 }),
       label

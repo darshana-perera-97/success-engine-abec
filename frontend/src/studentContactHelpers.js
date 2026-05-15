@@ -1,5 +1,4 @@
 import { toAbsoluteAssetUrl } from "./apiConfig";
-import { branchesMatch } from "./pipeline";
 
 export function normalizeCounselorRoleDisplay(role) {
   const value = String(role || "").trim();
@@ -82,48 +81,12 @@ export function buildCounselorTeamEntriesWithFallback(student, employees) {
   ];
 }
 
-function isCounselorEmployee(emp) {
-  const role = String(emp?.role || emp?.position || "").trim().toLowerCase();
-  return role.includes("counselor") || role.includes("counsellor") || role.includes("consultor");
-}
-
-/** Same branch scope as staff reassignment UI: nearest office / branch alignment. */
-function counselorEmployeeMatchesStudentBranch(emp, student) {
-  const studentBranch = String(student.branch || student.nearestOffice || "").trim();
-  if (!studentBranch) return true;
-  const employeeBranch = emp?.branch || emp?.location || emp?.office || "";
-  return branchesMatch(employeeBranch, studentBranch);
-}
-
 /**
- * Student dashboard "Your counselors": assigned/enrolling/previous counselors plus all other
- * counselors at the same branch so students see the full office team at their level.
+ * Student dashboard "Your counselors": only staff linked on the student record —
+ * enrolling (inquiry), primary assigned counselor, and previous transfers.
  */
 export function buildStudentDashboardCounselorRoster(student, employees) {
-  const core = buildCounselorTeamEntriesWithFallback(student, employees);
-  const seen = new Set(core.map((c) => String(c.id || "").trim()).filter(Boolean));
-  const extras = [];
-  for (const emp of employees || []) {
-    const id = String(emp?.id || "").trim();
-    if (!id || seen.has(id)) continue;
-    if (!isCounselorEmployee(emp)) continue;
-    if (!counselorEmployeeMatchesStudentBranch(emp, student)) continue;
-    seen.add(id);
-    extras.push({
-      id,
-      badges: ["Branch team"],
-      badgeLabel: "Branch team",
-      name: emp?.name || emp?.username || "Counselor",
-      role: normalizeCounselorRoleDisplay(emp?.role || emp?.position),
-      email: emp?.email || "Not available",
-      phone: emp?.phone || "Not available",
-      avatar: toAbsoluteAssetUrl(emp?.avatar || "")
-    });
-  }
-  extras.sort((a, b) =>
-    String(a.name || "").localeCompare(String(b.name || ""), void 0, { sensitivity: "base" })
-  );
-  return [...core, ...extras];
+  return buildCounselorTeamEntriesWithFallback(student, employees);
 }
 
 export function normalizeVisaAgentIds(student) {

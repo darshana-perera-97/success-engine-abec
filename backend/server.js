@@ -113,6 +113,31 @@ function isCounselorRole(role) {
   return normalized === "counselor" || normalized === "consultor" || normalized === "counsellor";
 }
 
+/** Manager, Admin, Team Lead, and Country Coordinator: same portal welcome as counselors but role-specific copy. */
+function isStaffWelcomeEmailRole(role) {
+  const r = String(role || "").trim();
+  return r === "Manager" || r === "Admin" || r === "Team Lead" || r === "Country Coordinator";
+}
+
+function staffWelcomeRolePhrase(role) {
+  const r = String(role || "").trim();
+  if (r === "Country Coordinator") return "country coordinator";
+  if (r === "Team Lead") return "team lead";
+  return r.toLowerCase() || "staff";
+}
+
+function staffWelcomeEmailCopy(role) {
+  const displayRole = String(role || "").trim() || "Staff";
+  const phrase = staffWelcomeRolePhrase(role);
+  return {
+    headline: `Welcome to your ${displayRole} account`,
+    pageTitle: `${displayRole} portal access`,
+    rolePhrase: phrase,
+    tagline: `${COMPANY_NAME} — ${phrase} portal access`,
+    subject: `Welcome to ${COMPANY_NAME} — your ${displayRole} account`,
+  };
+}
+
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -1094,7 +1119,8 @@ function publicStudentRecord(req, student) {
     });
   }
   if (Array.isArray(next.profileOtherDocuments)) {
-    next.profileOtherDocuments = next.profileOtherDocuments.map((entry) => {
+    const migrated = migrateProfileOtherDocumentsToSlotEntries(next.profileOtherDocuments);
+    next.profileOtherDocuments = migrated.map((entry) => {
       if (!entry || typeof entry !== "object") return entry;
       return {
         ...entry,
@@ -1121,16 +1147,21 @@ function normalizeUniversityOfferLetters(value) {
   return value.filter((entry) => entry && typeof entry === "object" && String(entry.url || "").trim());
 }
 
-function normalizeProfileOtherDocumentsSlots(value) {
-  const out = [null, null, null];
-  if (!Array.isArray(value)) return out;
-  for (let i = 0; i < 3; i++) {
-    const entry = value[i];
-    if (entry && typeof entry === "object" && String(entry.url || "").trim()) {
-      out[i] = entry;
-    }
+const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
+
+/** Normalize legacy 3-index arrays or slot-tagged entries into a sorted dense list with 1-based .slot. */
+function migrateProfileOtherDocumentsToSlotEntries(value) {
+  if (!Array.isArray(value)) return [];
+  const bySlot = new Map();
+  for (let i = 0; i < value.length; i++) {
+    const e = value[i];
+    if (!e || typeof e !== "object" || !String(e.url || "").trim()) continue;
+    const slotRaw = Number(e.slot);
+    const slot =
+      Number.isFinite(slotRaw) && slotRaw >= 1 && Math.floor(slotRaw) === slotRaw ? Math.floor(slotRaw) : i + 1;
+    bySlot.set(slot, { ...e, slot });
   }
-  return out;
+  return [...bySlot.keys()].sort((a, b) => a - b).map((k) => bySlot.get(k));
 }
 
 async function safeUnlinkStoredPermissionDoc(storedUrl) {
@@ -1277,6 +1308,8 @@ async function storePaymentProofDataUrl(dataUrl, originalName) {
     "image/png",
     "image/jpeg",
     "image/jpg",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ]);
   if (!allowed.has(mime)) return null;
   const ext = extensionFromMime(mime);
@@ -1832,13 +1865,16 @@ function buildStudentWelcomeEmailHtml({ studentName, loginUrl, emailAddress, pas
 </html>`;
 }
 
-function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, emailAddress, password, branch }) {
+function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, emailAddress, password, branch, emailCopy = null }) {
   const safeName = escapeHtmlEmail(counselorName);
   const safeUsername = escapeHtmlEmail(username);
   const safeEmail = escapeHtmlEmail(emailAddress);
   const safePass = escapeHtmlEmail(password);
   const safeBranch = escapeHtmlEmail(branch);
   const safeLogin = escapeHtmlEmail(loginUrl);
+  const safeRolePhrase = escapeHtmlEmail(emailCopy?.rolePhrase || "counselor");
+  const safePageTitle = escapeHtmlEmail(emailCopy?.pageTitle || "Counselor portal access");
+  const safeHeadline = escapeHtmlEmail(emailCopy?.headline || "Welcome to your counselor account");
   const branchBlock = branch
     ? `<tr><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#64748b;width:120px;">Branch</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:600;color:#312e81;">${safeBranch}</td></tr>`
     : "";
@@ -1852,11 +1888,11 @@ function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, ema
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light" />
-  <title>Counselor portal access</title>
+  <title>${safePageTitle}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f1f5f9;-webkit-font-smoothing:antialiased;">
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-    Your ${COMPANY_NAME} counselor account is ready. Sign in with ${safeEmail}.
+    Your ${COMPANY_NAME} ${safeRolePhrase} account is ready. Sign in with ${safeEmail}.
   </div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f1f5f9;">
     <tr>
@@ -1871,7 +1907,7 @@ function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, ema
                 <tr>
                   <td style="padding:40px 40px 24px;text-align:center;">
                     <p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.22em;text-transform:uppercase;color:#6366f1;">${COMPANY_NAME}</p>
-                    <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">Welcome to your counselor account</h1>
+                    <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.25;font-weight:600;color:#0f172a;letter-spacing:-0.02em;">${safeHeadline}</h1>
                     <p style="margin:14px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.55;color:#64748b;">
                       Hi <strong style="color:#334155;">${safeName}</strong>, your account has been created. Use the credentials below to sign in to the portal.
                     </p>
@@ -1925,7 +1961,7 @@ function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, ema
           </tr>
           <tr>
             <td style="padding:28px 8px 0;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:1.6;color:#94a3b8;">
-              This email was generated when your counselor account was created on ${COMPANY_NAME_NBSP}.<br/>
+              This email was generated when your ${safeRolePhrase} account was created on ${COMPANY_NAME_NBSP}.<br/>
               © ${new Date().getFullYear()} ${COMPANY_NAME}. All rights reserved.
             </td>
           </tr>
@@ -1937,11 +1973,11 @@ function buildCounselorWelcomeEmailHtml({ counselorName, username, loginUrl, ema
 </html>`;
 }
 
-async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl, emailAddress, password, branch }) {
+async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl, emailAddress, password, branch, emailCopy = null }) {
   const textLines = [
-    `${COMPANY_NAME} — counselor portal access`,
+    emailCopy?.tagline || `${COMPANY_NAME} — counselor portal access`,
     "",
-    `Hi ${counselorName || username || "Counselor"},`,
+    `Hi ${counselorName || username || (emailCopy ? "there" : "Counselor")},`,
     "",
     "Your account is ready. Sign in using:",
     `- Username: ${username}`,
@@ -1966,7 +2002,7 @@ async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl
   const message = {
     from: SMTP_FROM,
     to,
-    subject: `Welcome to ${COMPANY_NAME} — your counselor account`,
+    subject: emailCopy?.subject || `Welcome to ${COMPANY_NAME} — your counselor account`,
     text: textLines.join("\n"),
     html: buildCounselorWelcomeEmailHtml({
       counselorName: counselorName || username,
@@ -1975,11 +2011,13 @@ async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl
       emailAddress,
       password,
       branch,
+      emailCopy,
     }),
   };
+  const welcomeLogLabel = emailCopy ? "staff welcome email sent" : "counselor welcome email sent";
   try {
     await transporter.sendMail(message);
-    logEvent("email", "counselor welcome email sent", { to });
+    logEvent("email", welcomeLogLabel, { to });
   } catch (error) {
     const shouldRetryWithAuthSender =
       error &&
@@ -1991,7 +2029,7 @@ async function sendCounselorWelcomeEmail({ to, counselorName, username, loginUrl
       from: SMTP_USER,
       replyTo: SMTP_FROM || SMTP_USER,
     });
-    logEvent("email", "counselor welcome email sent (fallback sender)", { to, from: SMTP_USER });
+    logEvent("email", `${welcomeLogLabel} (fallback sender)`, { to, from: SMTP_USER });
   }
 }
 
@@ -3111,7 +3149,7 @@ const server = http.createServer(async (req, res) => {
       await writeUsers(updated);
 
       let emailDelivery = null;
-      if (isCounselorRole(role)) {
+      if (isCounselorRole(role) || isStaffWelcomeEmailRole(role)) {
         emailDelivery = { attempted: false, status: "skipped", reason: "" };
         try {
           const smtpError = getSmtpConfigError();
@@ -3119,6 +3157,7 @@ const server = http.createServer(async (req, res) => {
             emailDelivery = { attempted: false, status: "skipped", reason: smtpError };
           } else {
             const loginUrl = buildStudentPortalLoginUrl(req, body.portalOrigin);
+            const emailCopy = isStaffWelcomeEmailRole(role) ? staffWelcomeEmailCopy(role) : null;
             await sendCounselorWelcomeEmail({
               to: email,
               counselorName: username,
@@ -3127,11 +3166,12 @@ const server = http.createServer(async (req, res) => {
               emailAddress: email,
               password,
               branch: account.branch,
+              emailCopy,
             });
             emailDelivery = { attempted: true, status: "sent", reason: "" };
           }
         } catch (error) {
-          console.error("Counselor welcome email failed:", error);
+          console.error("Portal welcome email failed:", error);
           emailDelivery = {
             attempted: true,
             status: "failed",
@@ -3758,7 +3798,35 @@ const server = http.createServer(async (req, res) => {
       const priority = String(body.priority || "Medium").trim() || "Medium";
       const status = String(body.status || "Pending").trim() || "Pending";
       const dueDate = String(body.dueDate || "").trim();
-      const isPrivate = body.isPrivate === true;
+      let isPrivate = body.isPrivate === true;
+      const requiresStudentDocuments = body.requiresStudentDocuments === true;
+      const rawDocRequests = Array.isArray(body.taskDocumentRequests) ? body.taskDocumentRequests : [];
+      const taskDocumentRequests = [];
+      const seenSlotIds = new Set();
+      for (const item of rawDocRequests) {
+        if (!item || typeof item !== "object") continue;
+        const label = String(item.label || "")
+          .trim()
+          .replace(/\s+/g, " ");
+        if (!label) continue;
+        let sid = String(item.id || "").trim();
+        if (!sid || seenSlotIds.has(sid)) {
+          sid = `slot-${crypto.randomUUID().slice(0, 10)}`;
+        }
+        seenSlotIds.add(sid);
+        taskDocumentRequests.push({
+          id: sid.slice(0, 80),
+          label: label.slice(0, 220),
+        });
+        if (taskDocumentRequests.length >= 30) break;
+      }
+      if (requiresStudentDocuments) {
+        if (taskDocumentRequests.length === 0) {
+          sendJson(res, 400, { ok: false, error: "Add at least one required document when student uploads are enabled." });
+          return;
+        }
+        isPrivate = false;
+      }
       if (!taskName || !studentId || !dueDate) {
         sendJson(res, 400, { ok: false, error: "task, student_id and dueDate are required." });
         return;
@@ -3782,6 +3850,8 @@ const server = http.createServer(async (req, res) => {
         phase: Number.isFinite(Number(body.phase)) ? Number(body.phase) : 1,
         isBlocking: body.isBlocking === true,
         documentType: body.documentType ? String(body.documentType) : undefined,
+        requiresStudentDocuments,
+        taskDocumentRequests: requiresStudentDocuments ? taskDocumentRequests : [],
         createdBy: body.createdBy ? String(body.createdBy) : "",
         createdAt: String(body.createdAt || nowIso),
         updatedAt: nowIso
@@ -3791,7 +3861,69 @@ const server = http.createServer(async (req, res) => {
         await writeTasks([task, ...tasks]);
       });
       logEvent("task", "created", { taskId: task.id, studentId: task.student_id, assignedToCount: task.assigned_to.length });
-      sendJson(res, 201, { ok: true, data: task });
+      let taskAssignmentWhatsapp = { attempted: false, status: "skipped", reason: "Not attempted." };
+      const sidLower = studentId.toLowerCase();
+      const studentIsAssignee = assignedTo.some((a) => String(a || "").trim().toLowerCase() === sidLower);
+      if (studentIsAssignee && !isPrivate) {
+        const studemts = await readStudemts();
+        const stu = studemts.find((s) => String(s.id || "") === studentId);
+        const studentName = String(stu?.name || "there").trim() || "there";
+        const createdById = String(body.createdBy || "").trim();
+        let senderId = "";
+        const creatorCounselor = await resolveCounselor(createdById);
+        if (creatorCounselor) {
+          senderId = String(creatorCounselor.id || "").trim();
+        }
+        if (!senderId && stu) {
+          senderId = String(stu.counselor || "").trim();
+        }
+        const docLines =
+          requiresStudentDocuments && taskDocumentRequests.length > 0
+            ? [
+                "",
+                "Please upload these items in your portal (Pipeline or My Action Plan):",
+                ...taskDocumentRequests.map((r, i) => `${i + 1}. ${r.label}`),
+              ]
+            : [];
+        const message = [
+          `Hi ${studentName},`,
+          "",
+          `You have a new task on your student portal: "${taskName}".`,
+          dueDate ? `Due: ${dueDate}.` : null,
+          ...docLines,
+          "",
+          "Sign in to the portal to view details and upload any requested files.",
+        ]
+          .filter((line) => line != null)
+          .join("\n");
+        if (senderId) {
+          try {
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId,
+              receiverId: studentId,
+              content: message,
+            });
+            taskAssignmentWhatsapp = {
+              attempted: Boolean(result?.attempted),
+              status: String(result?.status || "skipped"),
+              reason: String(result?.reason || ""),
+            };
+          } catch (error) {
+            taskAssignmentWhatsapp = {
+              attempted: true,
+              status: "failed",
+              reason: String(error?.message || "WhatsApp send failed."),
+            };
+          }
+        } else {
+          taskAssignmentWhatsapp = {
+            attempted: false,
+            status: "skipped",
+            reason: "No counselor sender available for WhatsApp.",
+          };
+        }
+      }
+      sendJson(res, 201, { ok: true, data: task, taskAssignmentWhatsapp });
     } catch (error) {
       console.error("Task create failed:", error);
       sendJson(res, 400, { ok: false, error: String(error?.message || "Failed to create task.") });
@@ -4058,7 +4190,7 @@ const server = http.createServer(async (req, res) => {
       }
       const stored = await storePaymentProofDataUrl(dataUrl, fileName);
       if (!stored) {
-        sendJson(res, 400, { ok: false, error: "Unsupported payment proof format. Use PDF, JPG, or PNG." });
+        sendJson(res, 400, { ok: false, error: "Unsupported payment proof format. Use PDF, JPG, PNG, DOC, or DOCX." });
         return;
       }
       if (stored.error) {
@@ -5213,10 +5345,28 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const dataUrl = String(body.dataUrl || "");
       const fileName = String(body.fileName || "document");
-      const docType = String(body.docType || "").trim();
+      let docType = String(body.docType || "").trim();
       const tier = String(body.tier || "Global").trim() || "Global";
       const phaseNumber = Number(body.phase);
       const phase = Number.isFinite(phaseNumber) ? Math.max(1, Math.floor(phaseNumber)) : 1;
+      const rawLink = body.taskDocumentLink && typeof body.taskDocumentLink === "object" ? body.taskDocumentLink : null;
+      const taskDocumentLink = rawLink
+        ? {
+            taskId: String(rawLink.taskId || "").trim(),
+            slotId: String(rawLink.slotId || "").trim(),
+            label: String(rawLink.label || "")
+              .trim()
+              .replace(/\s+/g, " ")
+              .slice(0, 220),
+          }
+        : null;
+      if (taskDocumentLink && (!taskDocumentLink.taskId || !taskDocumentLink.slotId)) {
+        sendJson(res, 400, { ok: false, error: "taskDocumentLink.taskId and taskDocumentLink.slotId are required." });
+        return;
+      }
+      if (taskDocumentLink) {
+        docType = `taskDoc__${taskDocumentLink.taskId}__${taskDocumentLink.slotId}`;
+      }
       if (!docType) {
         sendJson(res, 400, { ok: false, error: "Document type is required." });
         return;
@@ -5251,8 +5401,17 @@ const server = http.createServer(async (req, res) => {
         mime: stored.mime,
         size: stored.size,
         url: stored.url,
+        ...(taskDocumentLink ? { taskDocumentLink } : {}),
       };
-      const existingDocuments = Array.isArray(studemts[idx].documents) ? studemts[idx].documents : [];
+      let existingDocuments = Array.isArray(studemts[idx].documents) ? [...studemts[idx].documents] : [];
+      if (taskDocumentLink) {
+        existingDocuments = existingDocuments.filter((d) => {
+          if (!d || typeof d !== "object") return true;
+          const link = d.taskDocumentLink;
+          if (!link || typeof link !== "object") return true;
+          return !(String(link.taskId || "") === taskDocumentLink.taskId && String(link.slotId || "") === taskDocumentLink.slotId);
+        });
+      }
       const merged = {
         ...studemts[idx],
         documents: [...existingDocuments, newDocument],
@@ -5288,12 +5447,8 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const dataUrl = String(body.dataUrl || "");
       const fileName = String(body.fileName || "document");
-      const slotNum = Number(body.slot);
-      if (!Number.isFinite(slotNum) || slotNum < 1 || slotNum > 3 || Math.floor(slotNum) !== slotNum) {
-        sendJson(res, 400, { ok: false, error: "Slot must be 1, 2, or 3." });
-        return;
-      }
-      const slotIndex = slotNum - 1;
+      const append = Boolean(body.append);
+      const slotNumRaw = Number(body.slot);
       let label = String(body.label || "").trim().replace(/\s+/g, " ");
       if (!label) label = "Other document";
       if (label.length > 120) label = label.slice(0, 120);
@@ -5316,14 +5471,31 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, error: "Student not found." });
         return;
       }
-      const slots = normalizeProfileOtherDocumentsSlots(studemts[idx].profileOtherDocuments);
-      const previous = slots[slotIndex];
+      const entries = migrateProfileOtherDocumentsToSlotEntries(studemts[idx].profileOtherDocuments);
+      let targetSlot;
+      if (append) {
+        targetSlot = entries.length === 0 ? 1 : Math.max(...entries.map((e) => Number(e.slot) || 0)) + 1;
+      } else {
+        if (!Number.isFinite(slotNumRaw) || slotNumRaw < 1 || Math.floor(slotNumRaw) !== slotNumRaw) {
+          sendJson(res, 400, { ok: false, error: "Slot must be a positive integer, or use append to add a new document." });
+          return;
+        }
+        targetSlot = Math.floor(slotNumRaw);
+      }
+      if (targetSlot > PROFILE_OTHER_DOCUMENTS_MAX_SLOT) {
+        sendJson(res, 400, {
+          ok: false,
+          error: `You can store at most ${PROFILE_OTHER_DOCUMENTS_MAX_SLOT} other documents.`,
+        });
+        return;
+      }
+      const previous = entries.find((e) => Number(e.slot) === targetSlot);
       if (previous && previous.url) {
         await safeUnlinkStoredPermissionDoc(String(previous.url));
       }
       const newEntry = {
         id: `pod-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
-        slot: slotIndex + 1,
+        slot: targetSlot,
         label,
         name: stored.name,
         mime: stored.mime,
@@ -5331,10 +5503,12 @@ const server = http.createServer(async (req, res) => {
         url: stored.url,
         uploadedAt: new Date().toISOString(),
       };
-      slots[slotIndex] = newEntry;
+      const nextEntries = [...entries.filter((e) => Number(e.slot) !== targetSlot), newEntry].sort(
+        (a, b) => Number(a.slot) - Number(b.slot)
+      );
       const merged = {
         ...studemts[idx],
-        profileOtherDocuments: slots,
+        profileOtherDocuments: nextEntries,
         updatedAt: new Date().toISOString(),
       };
       const updated = [...studemts];

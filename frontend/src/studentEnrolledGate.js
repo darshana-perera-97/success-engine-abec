@@ -46,16 +46,19 @@ export function buildVisaPilotDocType(item) {
 }
 
 /**
- * Visa Pilot uploads required before leaving Documentation stage.
+ * Visa Pilot items required before leaving Documentation stage.
+ * Satisfied by an upload for the item's doc type, or by ticking the item Complete in Visa Pilot.
  * @returns {Array<{ item: string, docType: string }>}
  */
 export function collectMissingVisaPilotUploads(student) {
   const country = student?.country;
   const workflow = VISA_WORKFLOWS[country] || VISA_WORKFLOWS.Default;
   const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
+  const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
   const missing = [];
   for (const stage of workflow) {
     for (const item of stage.items) {
+      if (visaState[item] === "Completed") continue;
       const docType = buildVisaPilotDocType(item);
       const hasUploaded = studentDocs.some((d) => {
         const dt = String(d?.type || "");
@@ -67,7 +70,7 @@ export function collectMissingVisaPilotUploads(student) {
   return missing;
 }
 
-/** @returns {string[]} human-readable visa workflow labels missing an upload */
+/** @returns {string[]} visa workflow labels not satisfied (no upload and not ticked Complete) */
 export function getMissingVisaPilotUploadLabels(student) {
   return collectMissingVisaPilotUploads(student).map((m) => m.item);
 }

@@ -26,6 +26,32 @@ import {
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
+const whatsappNavStatusLabel = (status) => {
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "WhatsApp connected";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "WhatsApp connecting — scan QR in Integrations";
+  if (s === "auth_failed" || s === "error") return "WhatsApp error — open Integrations to reconnect";
+  return "WhatsApp disconnected — open Integrations to connect";
+};
+const whatsappNavStatusClass = (status) => {
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "text-emerald-600 hover:text-emerald-700";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600 hover:text-amber-700";
+  return "text-rose-600 hover:text-rose-700";
+};
+const WhatsappGlyph = ({ className = "" }) => /* @__PURE__ */ jsx(
+  "svg",
+  {
+    xmlns: "http://www.w3.org/2000/svg",
+    viewBox: "0 0 24 24",
+    className: `w-5 h-5 flex-shrink-0 ${className}`,
+    fill: "currentColor",
+    "aria-hidden": true,
+    children: /* @__PURE__ */ jsx("path", {
+      d: "M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"
+    })
+  }
+);
 const Layout = ({
   children: pageBody,
   activeView,
@@ -49,7 +75,9 @@ const Layout = ({
   pipelineEscalationBadge = "",
   counselorStageEscalationBadge = "",
   counselorStudentsBadge = "",
-  pageLoading = false
+  pageLoading = false,
+  showWhatsappNavIndicator = false,
+  whatsappConnectionStatus = "disconnected"
 }) => {
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -182,6 +210,8 @@ const Layout = ({
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
+          { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
@@ -193,6 +223,8 @@ const Layout = ({
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "Country students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
+          { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
@@ -205,6 +237,7 @@ const Layout = ({
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
           { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
@@ -216,6 +249,7 @@ const Layout = ({
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
@@ -227,6 +261,7 @@ const Layout = ({
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
           { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
@@ -392,6 +427,17 @@ const Layout = ({
               }
             )
           ] }),
+          showWhatsappNavIndicator && /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              className: `relative p-2 rounded-full transition-colors hover:bg-gray-100 ${whatsappNavStatusClass(whatsappConnectionStatus)}`,
+              title: whatsappNavStatusLabel(whatsappConnectionStatus),
+              "aria-label": whatsappNavStatusLabel(whatsappConnectionStatus),
+              onClick: () => onNavigate?.("integration"),
+              children: /* @__PURE__ */ jsx(WhatsappGlyph, {})
+            }
+          ),
           /* @__PURE__ */ jsxs("div", { ref: notificationsPanelRef, className: "relative", children: [
             /* @__PURE__ */ jsxs("button", { className: "relative p-2 text-gray-500 hover:text-slate-900 hover:bg-gray-100 rounded-full transition-colors", onClick: () => setIsNotificationsOpen((prev) => !prev), children: [
               /* @__PURE__ */ jsx(Bell, { size: 20, strokeWidth: 1.5 }),

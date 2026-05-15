@@ -246,12 +246,16 @@ export async function uploadStudentCv(studentId, dataUrl, fileName) {
   }
 }
 
-export async function uploadStudentDocument(studentId, { dataUrl, fileName, docType, phase = 1, tier = "Global" }) {
+export async function uploadStudentDocument(studentId, { dataUrl, fileName, docType, phase = 1, tier = "Global", taskDocumentLink }) {
   try {
+    const body = { dataUrl, fileName, docType, phase, tier };
+    if (taskDocumentLink && typeof taskDocumentLink === "object") {
+      body.taskDocumentLink = taskDocumentLink;
+    }
     const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/documents`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl, fileName, docType, phase, tier })
+      body: JSON.stringify(body)
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.data) {
@@ -263,12 +267,17 @@ export async function uploadStudentDocument(studentId, { dataUrl, fileName, docT
   }
 }
 
-export async function uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot }) {
+export async function uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot, append }) {
   try {
     const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/profile-other-documents`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl, fileName, label, slot })
+      body: JSON.stringify({
+        dataUrl,
+        fileName,
+        label,
+        ...(append === true ? { append: true } : { slot })
+      })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.data) {
@@ -635,7 +644,7 @@ export async function createTask(payload) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to create task." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, taskAssignmentWhatsapp: data.taskAssignmentWhatsapp };
   } catch {
     return { ok: false, error: "Cannot reach task server. Is the backend running on port 3334?" };
   }

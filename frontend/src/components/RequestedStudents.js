@@ -83,11 +83,11 @@ function buildFullDetailRows(row) {
 
 function counselorOptionsForRow(userRole, scopeBranch, requestRow, accounts) {
   const list = (accounts || []).filter(isCounselorAccount);
-  const managerBranch = userRole === "Manager" ? String(scopeBranch || "").trim() : "";
+  const scopedBranch = String(scopeBranch || "").trim();
   const officeFromLead = String(requestRow?.nearestOffice || "").trim();
 
-  if (userRole === "Manager" && managerBranch) {
-    return list.filter((c) => branchesMatch(c.branch, managerBranch));
+  if ((userRole === "Manager" || userRole === "Admin") && scopedBranch) {
+    return list.filter((c) => branchesMatch(c.branch, scopedBranch));
   }
   if (userRole === "Admin" && officeFromLead) {
     return list.filter((c) => branchesMatch(c.branch, officeFromLead));

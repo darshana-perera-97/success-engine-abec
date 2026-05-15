@@ -3,6 +3,21 @@ import { formatLKR } from "../utils";
 import { Download, Calendar, Banknote } from "lucide-react";
 import { Button } from "./Button";
 const IncentiveCalculator = ({ students = [], employees = [] }) => {
+  const now = new Date();
+  const periodStartLabel = new Date(now.getFullYear(), now.getMonth(), 1).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+  const periodEndLabel = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+  const realizedMonthLabel = now.toLocaleDateString("en-US", { month: "short" });
+  const pipelineMonthLabel = new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString("en-US", {
+    month: "short"
+  });
   const counselors = employees.filter((e) => e.role.includes("Counsel") || e.role.includes("Team Lead"));
   const incentiveData = counselors.map((agent) => {
     const successfulVisas = students.filter(
@@ -36,11 +51,11 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-6", children: [
         /* @__PURE__ */ jsxs("div", { className: "text-right hidden sm:block", children: [
-          /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 uppercase font-bold", children: "Realized (Feb)" }),
+          /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 uppercase font-bold", children: `Realized (${realizedMonthLabel})` }),
           /* @__PURE__ */ jsx("p", { className: "text-xl font-bold text-emerald-600", children: formatLKR(totalMonthPayout) })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "text-right hidden sm:block", children: [
-          /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 uppercase font-bold", children: "Pipeline (Mar)" }),
+          /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 uppercase font-bold", children: `Pipeline (${pipelineMonthLabel})` }),
           /* @__PURE__ */ jsx("p", { className: "text-xl font-bold text-slate-900", children: formatLKR(totalPipelineRevenue) })
         ] }),
         /* @__PURE__ */ jsxs(Button, { variant: "secondary", size: "sm", children: [
@@ -96,7 +111,7 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
     /* @__PURE__ */ jsxs("div", { className: "p-4 bg-slate-50 border-t border-gray-200 text-xs text-slate-500 flex justify-between items-center", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
         /* @__PURE__ */ jsx(Calendar, { size: 14 }),
-        /* @__PURE__ */ jsx("span", { children: "Calculation Period: Feb 1, 2026 - Feb 28, 2026" })
+        /* @__PURE__ */ jsx("span", { children: `Calculation Period: ${periodStartLabel} - ${periodEndLabel}` })
       ] }),
       /* @__PURE__ */ jsx("span", { children: "* Volume bonus calculated on confirmed tuition budget" })
     ] })

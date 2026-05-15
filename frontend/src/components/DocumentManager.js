@@ -1,12 +1,42 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2 } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus } from "lucide-react";
 import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { getVisibleCountryChecklistStages } from "../pipeline";
+import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
+
+/** Short label for long filenames: first few stem chars + extension (full name in title/tooltip). */
+function shortDisplayFileName(name, maxStem = 8) {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  const dot = s.lastIndexOf(".");
+  const hasExt = dot > 0 && dot < s.length - 1;
+  const ext = hasExt ? s.slice(dot) : "";
+  const base = hasExt ? s.slice(0, dot) : s;
+  if (base.length <= maxStem) return s;
+  return `${base.slice(0, maxStem)}…${ext}`;
+}
+
 const DELETE_REJECTED_ROLES = new Set(["Counselor", "Manager", "Admin"]);
 const OFFER_LETTER_UPLOAD_ROLES = new Set(["Counselor", "Manager", "Admin"]);
 const OFFER_LETTER_STATUSES = ["Approved", "Conditional", "Rejected"];
+const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
+
+/** Match backend: legacy index-based rows become 1-based .slot; list is sorted by slot. */
+function migrateProfileOtherDocumentsToSlotEntries(value) {
+  if (!Array.isArray(value)) return [];
+  const bySlot = /* @__PURE__ */ new Map();
+  for (let i = 0; i < value.length; i++) {
+    const e = value[i];
+    if (!e || typeof e !== "object" || !String(e.url || "").trim()) continue;
+    const slotRaw = Number(e.slot);
+    const slot =
+      Number.isFinite(slotRaw) && slotRaw >= 1 && Math.floor(slotRaw) === slotRaw ? Math.floor(slotRaw) : i + 1;
+    bySlot.set(slot, { ...e, slot });
+  }
+  return [...bySlot.keys()].sort((a, b) => a - b).map((k) => bySlot.get(k));
+}
 const DocumentManager = ({
   student,
   userRole,
@@ -16,7 +46,10 @@ const DocumentManager = ({
   onUpdateTasks,
   onUploadDocument,
   onUploadProfileOtherDocument,
-  onUploadUniversityOfferLetters
+  onUploadUniversityOfferLetters,
+  showPipelineChecklist = true,
+  showUniversityOfferLettersBlock = true,
+  showProfileOtherDocuments = true
 }) => {
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [deleteRejectedModal, setDeleteRejectedModal] = useState({ isOpen: false, doc: null });
@@ -24,24 +57,21 @@ const DocumentManager = ({
   const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [otherDocModal, setOtherDocModal] = useState({ open: false, slot: null, label: "", error: "" });
+  const [otherDocModal, setOtherDocModal] = useState({ open: false, slot: null, label: "", error: "", append: false });
   const [otherDocUploading, setOtherDocUploading] = useState(false);
-  const [offerLetterModal, setOfferLetterModal] = useState({ open: false, offerStatus: "Approved", error: "" });
+  const [offerLetterModal, setOfferLetterModal] = useState({
+    open: false,
+    offerStatus: "Approved",
+    error: "",
+    pendingFiles: []
+  });
   const [offerLetterUploading, setOfferLetterUploading] = useState(false);
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
   const studentDocuments = useMemo(() => student.documents || [], [student.documents]);
-  const profileOtherSlots = useMemo(() => {
-    const raw = student.profileOtherDocuments;
-    const out = [null, null, null];
-    if (Array.isArray(raw)) {
-      for (let i = 0; i < 3; i++) {
-        if (raw[i] && typeof raw[i] === "object" && raw[i].url) {
-          out[i] = raw[i];
-        }
-      }
-    }
-    return out;
-  }, [student.profileOtherDocuments]);
+  const profileOtherSlotEntries = useMemo(
+    () => migrateProfileOtherDocumentsToSlotEntries(student.profileOtherDocuments),
+    [student.profileOtherDocuments]
+  );
   const showWhatsappNotification = (message) => {
     setWhatsappNotification({ show: true, message });
     setTimeout(() => setWhatsappNotification({ show: false, message: "" }), 4e3);
@@ -58,6 +88,7 @@ const DocumentManager = ({
       "application/pdf",
       "image/png",
       "image/jpeg",
+      "image/jpg",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]);
@@ -114,7 +145,7 @@ const DocumentManager = ({
     const file = event.target.files?.[0];
     const slot = otherDocModal.slot;
     const labelForUpload = otherDocModal.label.trim() || "Other document";
-    if (!file || slot == null) return;
+    if (!file || (!otherDocModal.append && slot == null)) return;
     if (!onUploadProfileOtherDocument) {
       setOtherDocModal((prev) => ({ ...prev, error: "Document upload service is unavailable." }));
       event.target.value = "";
@@ -124,6 +155,7 @@ const DocumentManager = ({
       "application/pdf",
       "image/png",
       "image/jpeg",
+      "image/jpg",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]);
@@ -156,7 +188,8 @@ const DocumentManager = ({
       dataUrl,
       fileName: file.name,
       label: labelForUpload,
-      slot
+      slot,
+      append: otherDocModal.append === true
     });
     setOtherDocUploading(false);
     event.target.value = "";
@@ -164,8 +197,12 @@ const DocumentManager = ({
       setOtherDocModal((prev) => ({ ...prev, error: result?.error || "Failed to upload document." }));
       return;
     }
-    setOtherDocModal({ open: false, slot: null, label: "", error: "" });
-    showWhatsappNotification(`Other document "${labelForUpload}" saved (slot ${slot}).`);
+    setOtherDocModal({ open: false, slot: null, label: "", error: "", append: false });
+    showWhatsappNotification(
+      otherDocModal.append
+        ? `Other document "${labelForUpload}" added.`
+        : `Other document "${labelForUpload}" saved (slot ${slot}).`
+    );
   };
   const universityOfferLetters = useMemo(() => {
     const raw = student.universityOfferLetters;
@@ -184,18 +221,14 @@ const DocumentManager = ({
     if (status === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
     return "bg-amber-50 text-amber-700 border-amber-200";
   };
-  const handleOfferLetterFileChange = async (event) => {
+  const handleOfferLetterFilesSelected = (event) => {
     const fileList = event.target.files;
     if (!fileList || fileList.length === 0) return;
-    if (!onUploadUniversityOfferLetters) {
-      setOfferLetterModal((prev) => ({ ...prev, error: "Offer letter upload is unavailable." }));
-      event.target.value = "";
-      return;
-    }
     const allowedTypes = new Set([
       "application/pdf",
       "image/png",
       "image/jpeg",
+      "image/jpg",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]);
@@ -212,6 +245,16 @@ const DocumentManager = ({
         return;
       }
     }
+    setOfferLetterModal((prev) => ({ ...prev, error: "", pendingFiles: files }));
+    event.target.value = "";
+  };
+  const handleOfferLetterUploadDocuments = async () => {
+    const files = offerLetterModal.pendingFiles;
+    if (!files?.length) return;
+    if (!onUploadUniversityOfferLetters) {
+      setOfferLetterModal((prev) => ({ ...prev, error: "Offer letter upload is unavailable." }));
+      return;
+    }
     setOfferLetterModal((prev) => ({ ...prev, error: "" }));
     setOfferLetterUploading(true);
     const payloadFiles = [];
@@ -225,7 +268,6 @@ const DocumentManager = ({
       if (!dataUrl) {
         setOfferLetterUploading(false);
         setOfferLetterModal((prev) => ({ ...prev, error: `Unable to read "${file.name}". Try again.` }));
-        event.target.value = "";
         return;
       }
       payloadFiles.push({ dataUrl, fileName: file.name });
@@ -236,14 +278,13 @@ const DocumentManager = ({
       files: payloadFiles
     });
     setOfferLetterUploading(false);
-    event.target.value = "";
     if (!result?.ok) {
       setOfferLetterModal((prev) => ({ ...prev, error: result?.error || "Failed to upload offer letters." }));
       return;
     }
     const count = payloadFiles.length;
     const statusLabel = offerLetterModal.offerStatus;
-    setOfferLetterModal({ open: false, offerStatus: "Approved", error: "" });
+    setOfferLetterModal({ open: false, offerStatus: "Approved", error: "", pendingFiles: [] });
     const notifs = result?.offerLetterWhatsappNotifications || [];
     const sentCount = notifs.filter((n) => n?.whatsapp?.status === "sent").length;
     const failed = notifs.filter((n) => n?.whatsapp?.status === "failed" || n?.whatsapp?.status === "skipped");
@@ -279,11 +320,34 @@ const DocumentManager = ({
       return;
     }
     if (status === "Verified" && onUpdateTasks) {
-      const linkedTask = tasks.find(
-        (t) => t.student_id === student.id && t.documentType === doc.type && t.status !== "Completed"
-      );
-      if (linkedTask) {
-        onUpdateTasks([{ ...linkedTask, status: "Completed" }]);
+      const link = doc?.taskDocumentLink;
+      if (link && typeof link === "object") {
+        const tid = String(link.taskId || "").trim();
+        const task = tasks.find(
+          (t) =>
+            String(t.id || "").trim() === tid &&
+            String(t.student_id || t.studentId || "").trim() === String(student.id || "").trim() &&
+            t.requiresStudentDocuments === true
+        );
+        if (task && task.requiresStudentDocuments) {
+          const docsFromServer =
+            persistResult && persistResult.ok === true && Array.isArray(persistResult.data?.documents)
+              ? persistResult.data.documents
+              : null;
+          const nextDocs =
+            docsFromServer ||
+            (student.documents || []).map((d) => (String(d.id) === String(updatedDoc.id) ? updatedDoc : d));
+          if (areAllTaskDocumentSlotsVerified(task, nextDocs)) {
+            onUpdateTasks([{ ...task, status: "Completed" }]);
+          }
+        }
+      } else {
+        const linkedTask = tasks.find(
+          (t) => t.student_id === student.id && t.documentType === doc.type && t.status !== "Completed"
+        );
+        if (linkedTask) {
+          onUpdateTasks([{ ...linkedTask, status: "Completed" }]);
+        }
       }
     }
     const notifs = persistResult?.documentWhatsappNotifications || [];
@@ -312,11 +376,19 @@ const DocumentManager = ({
       }));
   }, [student.country, student.status, studentDocuments]);
   const isStaff = userRole !== "Student";
+  const maxProfileOtherSlotUsed = profileOtherSlotEntries.length
+    ? Math.max(...profileOtherSlotEntries.map((e) => Number(e.slot) || 0))
+    : 0;
+  const canStaffAppendOtherDocument =
+    isStaff && onUploadProfileOtherDocument && maxProfileOtherSlotUsed < PROFILE_OTHER_DOCUMENTS_MAX_SLOT;
   const canDeleteRejectedUpload = DELETE_REJECTED_ROLES.has(userRole) && typeof onDeleteDocument === "function";
   const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
   const totalVerified = checklist.reduce((acc, cat) => acc + cat.items.filter((item) => item.uploadedFiles.some((f) => f.status === "Verified")).length, 0);
+  const showOfferLettersSection = showUniversityOfferLettersBlock && showUniversityOfferLetters;
+  const otherDocumentsSectionClass =
+    showPipelineChecklist || showOfferLettersSection ? "mt-10 pt-8 border-t border-slate-200" : "mt-2 pt-0";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
-    /* @__PURE__ */ jsx("div", { className: "flex justify-between items-center bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: /* @__PURE__ */ jsxs("div", { children: [
+    showPipelineChecklist && /* @__PURE__ */ jsx("div", { className: "flex justify-between items-center bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: /* @__PURE__ */ jsxs("div", { children: [
       /* @__PURE__ */ jsxs("h4", { className: "text-indigo-900 font-semibold", children: [
         "Paperless Pipeline: ",
         student.country
@@ -328,7 +400,7 @@ const DocumentManager = ({
         " Verified"
       ] })
     ] }) }),
-    /* @__PURE__ */ jsx("div", { className: "space-y-6", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => /* @__PURE__ */ jsxs("div", { children: [
+    showPipelineChecklist && /* @__PURE__ */ jsx("div", { className: "space-y-6", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => /* @__PURE__ */ jsxs("div", { children: [
       /* @__PURE__ */ jsxs("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider mb-2", children: [
         category.stage,
         " Requirements"
@@ -347,8 +419,8 @@ const DocumentManager = ({
         uploadedFiles.length > 0 ? uploadedFiles.map((uploadedFile, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
             /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${uploadedFile.status === "Verified" ? "bg-emerald-100 text-emerald-600" : uploadedFile.status === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-500"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: uploadedFile.name }),
+            /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: uploadedFile.name, children: shortDisplayFileName(uploadedFile.name) }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: uploadedFile.uploadedAt })
             ] })
           ] }),
@@ -392,7 +464,7 @@ const DocumentManager = ({
         ] }) })
       ] }, docType)) })
     ] }, category.stage)) }),
-    showUniversityOfferLetters && /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
+    showOfferLettersSection && /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
@@ -401,7 +473,7 @@ const DocumentManager = ({
         canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
           size: "sm",
           variant: "secondary",
-          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Approved", error: "" }),
+          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Approved", error: "", pendingFiles: [] }),
           children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
             "Upload offer letters"
@@ -412,7 +484,7 @@ const DocumentManager = ({
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
           /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: letter.name }),
+            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: shortDisplayFileName(letter.name) }),
             /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: letter.uploadedAt ? new Date(letter.uploadedAt).toLocaleString() : "" })
           ] })
         ] }),
@@ -425,45 +497,91 @@ const DocumentManager = ({
         ] })
       ] }, letter.id || `${letter.name}-${idx}`)) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "mt-10 pt-8 border-t border-slate-200", children: [
+    showProfileOtherDocuments && /* @__PURE__ */ jsxs("div", { className: otherDocumentsSectionClass, children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Other documents" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Up to three files with your own labels. View or download anytime." })
+          !isStaff && /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Up to three files with your own labels. View or download anytime." })
         ] }),
-        !onUploadProfileOtherDocument && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded-md", children: "Upload unavailable" })
+        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 justify-end", children: [
+          canStaffAppendOtherDocument && /* @__PURE__ */ jsxs(Button, {
+            size: "sm",
+            variant: "secondary",
+            onClick: () => setOtherDocModal({ open: true, slot: null, label: "", error: "", append: true }),
+            children: [
+              /* @__PURE__ */ jsx(Plus, { size: 14, className: "mr-2" }),
+              "Add document"
+            ]
+          }),
+          !onUploadProfileOtherDocument && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded-md", children: "Upload unavailable" })
+        ] })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-3", children: [1, 2, 3].map((slotNum) => {
-        const entry = profileOtherSlots[slotNum - 1];
-        return /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
-            /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", slotNum] }),
-            /* @__PURE__ */ jsx(Button, {
-              size: "sm",
-              variant: "secondary",
-              disabled: !onUploadProfileOtherDocument,
-              onClick: () => setOtherDocModal({
-                open: true,
-                slot: slotNum,
-                label: entry?.label || "",
-                error: ""
-              }),
-              children: entry ? "Replace" : "Upload"
-            })
-          ] }),
-          entry ? /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-              /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", title: entry.label, children: entry.label }),
-              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: entry.name, children: entry.name }),
-              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
-            ] }),
-            entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
-              /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-              /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
-            ] })
-          ] }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic mt-1", children: "No file yet. Choose Upload, add a name, then pick a file." })
-        ] }, `profile-other-${slotNum}`);
-      }) })
+      userRole === "Student"
+        ? /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-3", children: [1, 2, 3].map((slotNum) => {
+            const entry = profileOtherSlotEntries.find((e) => Number(e.slot) === slotNum) || null;
+            return /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", slotNum] }),
+                /* @__PURE__ */ jsx(Button, {
+                  size: "sm",
+                  variant: "secondary",
+                  disabled: !onUploadProfileOtherDocument,
+                  onClick: () => setOtherDocModal({
+                    open: true,
+                    slot: slotNum,
+                    label: entry?.label || "",
+                    error: "",
+                    append: false
+                  }),
+                  children: entry ? "Replace" : "Upload"
+                })
+              ] }),
+              entry ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", title: entry.label, children: entry.label }),
+                  /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: entry.name, children: shortDisplayFileName(entry.name) }),
+                  /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
+                ] }),
+                entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
+                  /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                  /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                ] })
+              ] }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic mt-1", children: "No file yet. Choose Upload, add a name, then pick a file." })
+            ] }, `profile-other-${slotNum}`);
+          }) })
+        : /* @__PURE__ */ jsxs(Fragment, { children: [
+            profileOtherSlotEntries.length === 0
+              ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center text-sm text-slate-500", children: "No other documents yet. Use Add document to upload the first file." })
+              : /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3", children: profileOtherSlotEntries.map((entry) => /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+                  /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                    /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", entry.slot] }),
+                    /* @__PURE__ */ jsx(Button, {
+                      size: "sm",
+                      variant: "secondary",
+                      disabled: !onUploadProfileOtherDocument,
+                      onClick: () => setOtherDocModal({
+                        open: true,
+                        slot: Number(entry.slot),
+                        label: entry?.label || "",
+                        error: "",
+                        append: false
+                      }),
+                      children: "Replace"
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs(Fragment, { children: [
+                    /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                      /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", title: entry.label, children: entry.label }),
+                      /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: entry.name, children: shortDisplayFileName(entry.name) }),
+                      /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
+                    ] }),
+                    entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
+                      /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                      /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                    ] })
+                  ] })
+                ] }, entry.id || `profile-other-slot-${entry.slot}`)) })
+          ] })
     ] }),
     deleteRejectedModal.isOpen && deleteRejectedModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
@@ -519,17 +637,13 @@ const DocumentManager = ({
         ] })
       ] })
     ] }) }),
-    otherDocModal.open && otherDocModal.slot != null && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    otherDocModal.open && (otherDocModal.append === true || otherDocModal.slot != null) && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
-          /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Other document" }),
-          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
-            "Slot ",
-            otherDocModal.slot,
-            " — name this file for your records."
-          ] })
+          /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: otherDocModal.append ? "Add other document" : "Other document" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: otherDocModal.append ? "A new slot will be assigned automatically after upload." : `Slot ${otherDocModal.slot} — name this file for your records.` })
         ] }),
-        !otherDocUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOtherDocModal({ open: false, slot: null, label: "", error: "" }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        !otherDocUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOtherDocModal({ open: false, slot: null, label: "", error: "", append: false }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
         /* @__PURE__ */ jsxs("label", { className: "block", children: [
@@ -566,9 +680,9 @@ const DocumentManager = ({
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload University Offer Letters" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Select offer status, then choose one or more files." })
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Choose offer status, add your files, then click Upload Documents." })
         ] }),
-        !offerLetterUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOfferLetterModal({ open: false, offerStatus: "Approved", error: "" }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        !offerLetterUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOfferLetterModal({ open: false, offerStatus: "Approved", error: "", pendingFiles: [] }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
@@ -578,11 +692,21 @@ const DocumentManager = ({
             /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-800", children: status })
           ] }, status)) })
         ] }),
-        !offerLetterUploading ? /* @__PURE__ */ jsxs("label", { className: "border-2 border-dashed border-indigo-200 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors", children: [
-          /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handleOfferLetterFileChange }),
-          /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
-          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose one or more offer letters" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB each" })
+        !offerLetterUploading ? /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+          /* @__PURE__ */ jsxs("label", { className: "border-2 border-dashed border-indigo-200 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors", children: [
+            /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handleOfferLetterFilesSelected }),
+            /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
+            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose one or more offer letters" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB each" })
+          ] }),
+          /* @__PURE__ */ jsx(Button, {
+            type: "button",
+            className: "w-full",
+            size: "sm",
+            disabled: !offerLetterModal.pendingFiles?.length,
+            onClick: handleOfferLetterUploadDocuments,
+            children: "Upload Documents"
+          })
         ] }) : /* @__PURE__ */ jsxs("div", { className: "py-6 flex flex-col items-center text-center", children: [
           /* @__PURE__ */ jsx("div", { className: "w-14 h-14 rounded-full mb-4 bg-indigo-100 text-indigo-600 flex items-center justify-center animate-pulse", children: /* @__PURE__ */ jsx(FileUp, { size: 22 }) }),
           /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Uploading offer letters…" })

@@ -2,8 +2,9 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } from "lucide-react";
 import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
+import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [] }) => {
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -57,16 +58,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const getConversations = () => {
     if (currentRole === "Student") {
       const student = currentUser;
-      const counselorId = String(student?.counselor || "").trim();
-      if (!counselorId) return [];
-      const counselor = employees.find((e) => String(e.id || "").trim() === counselorId);
-      return [
-        {
-          id: counselorId,
-          name: counselor?.name || "My Counselor",
-          avatar: counselor?.avatar || ""
-        }
-      ];
+      const roster = buildCounselorTeamEntriesWithFallback(student, employees);
+      if (roster.length === 0) return [];
+      return roster.map((c) => ({
+        id: c.id,
+        name: c.badgeLabel ? `${c.name} (${c.badgeLabel})` : c.name,
+        avatar: c.avatar || ""
+      }));
     } else if (currentRole === "Counselor") {
       // App already passes counselor-scoped students; avoid re-filtering here.
       return students;
@@ -83,6 +81,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (!lastMsgB) return -1;
     return new Date(lastMsgB.timestamp).getTime() - new Date(lastMsgA.timestamp).getTime();
   });
+  useEffect(() => {
+    if (currentRole !== "Student") return;
+    const peer = String(initialChatPeerId || "").trim();
+    if (!peer) return;
+    const roster = buildCounselorTeamEntriesWithFallback(currentUser, employees);
+    if (!roster.some((c) => String(c.id || "").trim() === peer)) return;
+    setSelectedConversationId(peer);
+  }, [initialChatPeerId, currentRole, currentUser, employees]);
   useEffect(() => {
     if (selectedConversationId) return;
     if (!conversationList.length || !liveMessages.length) return;
@@ -127,7 +133,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return String(currentUser?.id || "").trim();
     }
     if (currentRole === "Student") {
-      return String(currentUser?.counselor || "").trim();
+      return String(activeConversationId || currentUser?.counselor || "").trim();
     }
     const selectedStudent = students.find((s) => String(s.id || "") === String(activeConversationId || ""));
     return String(selectedStudent?.counselor || "").trim();

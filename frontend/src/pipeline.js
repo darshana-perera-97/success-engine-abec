@@ -67,6 +67,49 @@ export const STAGE_CONFIG = {
   }
 };
 
+/** First-contact SLA for Inquiry (matches counselor priority list / STAGE_CONFIG.Inquiry). */
+export const INQUIRY_INTAKE_SLA_MS = 60 * 60 * 1000;
+
+/**
+ * Remaining time until the 1-hour inquiry intake deadline (same wording as counselor dashboard).
+ * @param {number} remainingMs deadline - now
+ * @returns {{ tone: 'overdue'|'urgent'|'soon'|'ok', text: string }}
+ */
+export function formatInquiryIntakeRemainingMs(remainingMs) {
+  const ms = Number(remainingMs) || 0;
+  if (ms <= 0) {
+    const overdue = -ms;
+    const days = Math.floor(overdue / 86400000);
+    const hours = Math.floor((overdue % 86400000) / 3600000);
+    const mins = Math.floor((overdue % 3600000) / 60000);
+    if (days > 0) return { tone: "overdue", text: `Overdue by ${days}d ${hours}h` };
+    if (hours > 0) return { tone: "overdue", text: `Overdue by ${hours}h ${mins}m` };
+    return { tone: "overdue", text: `Overdue by ${Math.max(1, mins)}m` };
+  }
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  if (days > 0) return { tone: days >= 3 ? "ok" : "soon", text: `${days}d ${hours}h left` };
+  if (hours > 0) return { tone: hours >= 6 ? "soon" : "urgent", text: `${hours}h ${mins}m ${secs}s left` };
+  if (mins > 0) return { tone: "urgent", text: `${mins}m ${secs}s left` };
+  return { tone: "urgent", text: `${secs}s left` };
+}
+
+/**
+ * @param {string|number|Date|undefined|null} enteredAtIso stageEnteredAt or createdAt
+ * @param {number} [nowMs]
+ * @returns {{ text: string, tone: string, remainingMs: number } | null}
+ */
+export function getInquiryIntakeSlaRemainingParts(enteredAtIso, nowMs = Date.now()) {
+  if (!enteredAtIso) return null;
+  const start = new Date(enteredAtIso).getTime();
+  if (Number.isNaN(start)) return null;
+  const remainingMs = start + INQUIRY_INTAKE_SLA_MS - nowMs;
+  const { tone, text } = formatInquiryIntakeRemainingMs(remainingMs);
+  return { text, tone, remainingMs };
+}
+
 export function normalizePipelineStatus(status) {
   const raw = String(status || "").trim();
   if (LEGACY_STATUS_TO_CANONICAL[raw]) return LEGACY_STATUS_TO_CANONICAL[raw];
@@ -239,6 +282,43 @@ export function getCurrentStageSlaDisplay(student, options = {}) {
     isOverdue: formatted.isOverdue,
     overdue: formatted.overdue,
     countdown: formatted.countdown
+  };
+}
+
+/**
+ * Remaining time until the end of the *next* pipeline stage's SLA window, projected as if the
+ * student enters that stage at max(now, current stage SLA deadline) (same start anchor as current
+ * stage: stageEnteredAt or createdAt).
+ *
+ * @returns {{ nextStage: string, slaLabel: string, text: string, remainingMs: number, slaMs: number, visualTone: 'green'|'orange'|'red', isOverdue: boolean } | null}
+ */
+export function getNextStageSlaProjection(student, options = {}) {
+  const now = typeof options.now === "number" ? options.now : Date.now();
+  const stage = normalizePipelineStatus(student?.status);
+  const idx = PIPELINE_STEPS.indexOf(stage);
+  if (idx < 0 || idx >= PIPELINE_STEPS.length - 1) return null;
+  const nextStage = PIPELINE_STEPS[idx + 1];
+  const nextCfg = STAGE_CONFIG[nextStage];
+  const curCfg = STAGE_CONFIG[stage];
+  if (!nextCfg?.slaMs || !curCfg?.slaMs) return null;
+  const enteredRaw = student?.stageEnteredAt || student?.createdAt;
+  if (!enteredRaw) return null;
+  const start = new Date(enteredRaw).getTime();
+  if (Number.isNaN(start)) return null;
+  const currentDeadlineMs = start + curCfg.slaMs;
+  const nextStageStartMs = Math.max(now, currentDeadlineMs);
+  const nextDeadlineMs = nextStageStartMs + nextCfg.slaMs;
+  const remainingMs = nextDeadlineMs - now;
+  const formatted = formatRemainingMsForSla(remainingMs);
+  const visualTone = getStageSlaVisualTone(remainingMs, nextCfg.slaMs);
+  return {
+    nextStage,
+    slaLabel: nextCfg.slaLabel,
+    text: formatted.text,
+    remainingMs,
+    slaMs: nextCfg.slaMs,
+    visualTone,
+    isOverdue: formatted.isOverdue
   };
 }
 

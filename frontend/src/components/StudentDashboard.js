@@ -60,7 +60,14 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
       setUploadError("Please choose a file to upload.");
       return;
     }
-    const allowedTypes = new Set(["application/pdf", "image/png", "image/jpeg", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
+    const allowedTypes = new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]);
     if (!allowedTypes.has(selectedFile.type)) {
       setUploadError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
       return;
@@ -289,20 +296,26 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
             /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Your counselors" }),
             /* @__PURE__ */ jsx("div", { className: "h-2 w-2 bg-emerald-500 rounded-full animate-pulse", title: "Online Now" })
           ] }),
-          counselorTeam.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mb-4", children: "Your counselor details will appear here once assigned." }) : /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-[min(28rem,55vh)] overflow-y-auto pr-1 mb-4", children: counselorTeam.map((c) => /* @__PURE__ */ jsx(
-            PersonContactCard,
-            {
-              name: c.name,
-              role: `${c.role} · ${student.country}`,
-              badges: c.badges,
-              email: c.email,
-              phone: c.phone,
-              avatar: c.avatar,
-              avatarClassName: "h-12 w-12 text-base"
-            },
-            c.id
-          )) }),
-          /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-2", children: [
+          counselorTeam.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mb-4", children: "Your counselor details will appear here once assigned." }) : /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-[min(28rem,55vh)] overflow-y-auto pr-1 mb-4", children: counselorTeam.map((c) => /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsx(
+              PersonContactCard,
+              {
+                name: c.name,
+                role: `${c.role} · ${student.country}`,
+                badges: c.badges || [],
+                email: c.email,
+                phone: c.phone,
+                avatar: c.avatar,
+                avatarClassName: "h-12 w-12 text-base"
+              },
+              c.id
+            ),
+            /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-2", children: [
+              /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", size: "sm", onClick: () => onNavigate("messages", { counselorId: c.id }), children: "Message" }),
+              /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", size: "sm", onClick: () => onNavigate("calendar", { counselorId: c.id }), children: "Book Call" })
+            ] })
+          ] }, c.id)) }),
+          counselorTeam.length === 0 && /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-2", children: [
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("messages"), children: "Message" }),
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("calendar"), children: "Book Call" })
           ] })

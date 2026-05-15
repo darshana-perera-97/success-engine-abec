@@ -16,7 +16,8 @@ const StageEscalations = ({
   requirementViolations = [],
   employees = [],
   variant = "admin",
-  onOpenStudent
+  onOpenStudent,
+  embedded = false
 }) => {
   const emptyCopy =
     variant === "counselor"
@@ -31,23 +32,34 @@ const StageEscalations = ({
         ? "Students on your branch advanced through stages without completing all mandatory requirements. Each open notice impacts the assigned counselor's SLA score."
         : "Students advanced through stages without completing all mandatory requirements. Each open notice impacts the assigned counselor's SLA score.";
   return /* @__PURE__ */ jsxs("div", {
-    className: "space-y-4 animate-in fade-in duration-500",
+    className: embedded ? "space-y-3" : "space-y-4 animate-in fade-in duration-500",
     children: [
       /* @__PURE__ */ jsxs("div", {
         className: "flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3",
         children: [
           /* @__PURE__ */ jsxs("div", {
-            children: [
-              /* @__PURE__ */ jsx("h2", {
-                className: "text-xl font-semibold tracking-tight text-[#0F172A]",
-                children: "Stage SLA escalations"
-              }),
-              /* @__PURE__ */ jsx("p", {
-                className: "text-sm text-slate-500 mt-1 max-w-2xl",
-                children:
-                  "Students who have exceeded the time limit for their current pipeline stage. Inquiry (1h), Application (24h), Interview training (72h), Documentation (7d), Visa (30d), Enrolled (14d)."
-              })
-            ]
+            children: embedded
+              ? [
+                  /* @__PURE__ */ jsx("h3", {
+                    className: "text-sm font-bold text-slate-800 uppercase tracking-wide",
+                    children: "Pipeline stage SLA"
+                  }),
+                  /* @__PURE__ */ jsx("p", {
+                    className: "text-xs text-slate-500 mt-0.5",
+                    children: "Students past the time limit for their current stage."
+                  })
+                ]
+              : [
+                  /* @__PURE__ */ jsx("h2", {
+                    className: "text-xl font-semibold tracking-tight text-[#0F172A]",
+                    children: "Stage SLA escalations"
+                  }),
+                  /* @__PURE__ */ jsx("p", {
+                    className: "text-sm text-slate-500 mt-1 max-w-2xl",
+                    children:
+                      "Students who have exceeded the time limit for their current pipeline stage. Inquiry (1h), Application (24h), Interview training (72h), Documentation (7d), Visa (30d), Enrolled (14d)."
+                  })
+                ]
           }),
           /* @__PURE__ */ jsxs("div", {
             className:

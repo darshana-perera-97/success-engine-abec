@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
-import { clearLoginSession, getLoginSessionUser, hasLoginSession, saveLoginSession } from "./authSession";
+import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
 import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
@@ -17,6 +17,7 @@ import { StudentDashboard } from "./components/StudentDashboard";
 import { ChatInterface } from "./components/ChatInterface";
 import { UniversityKnowledgeBase } from "./components/UniversityKnowledgeBase";
 import { FinanceModule } from "./components/FinanceModule";
+import { StaffFinanceHub } from "./components/StaffFinanceHub";
 import { CalendarScheduler } from "./components/CalendarScheduler";
 import { CounselorManagement } from "./components/CounselorManagement";
 import { AccountsManagement } from "./components/AccountsManagement";
@@ -67,6 +68,8 @@ function App({ initialView = "dashboard" }) {
   const [students, setStudents] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
   const [activities, setActivities] = useState([]);
   const [messages, setMessages] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -85,9 +88,10 @@ function App({ initialView = "dashboard" }) {
     }
   });
   const [currentView, setCurrentView] = useState(initialView);
-  const [currentRole, setCurrentRole] = useState(
-    authenticatedUser?.role === "Manager" || authenticatedUser?.role === "Team Lead" || authenticatedUser?.role === "Counselor" || authenticatedUser?.role === "Country Coordinator" || authenticatedUser?.role === "Student" ? authenticatedUser.role : "Admin"
-  );
+  const [currentRole, setCurrentRole] = useState(() => {
+    const role = normalizePortalRole(authenticatedUser?.role);
+    return role === "Manager" || role === "Team Lead" || role === "Counselor" || role === "Country Coordinator" || role === "Student" ? role : "Admin";
+  });
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [studentDetailFocusTaskId, setStudentDetailFocusTaskId] = useState(null);
@@ -97,6 +101,8 @@ function App({ initialView = "dashboard" }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationHistory, setNotificationHistory] = useState([]);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [studentMessagesInitialPeerId, setStudentMessagesInitialPeerId] = useState(null);
+  const [studentCalendarFocusCounselorId, setStudentCalendarFocusCounselorId] = useState(null);
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
   const [assignmentAlerts, setAssignmentAlerts] = useState([]);
@@ -112,10 +118,13 @@ function App({ initialView = "dashboard" }) {
   const counselorInboundChatNotifyHydratedRef = useRef(false);
   const notifiedCounselorInboundChatIdsRef = useRef(/* @__PURE__ */ new Set());
   const lastCounselorChatNotifyUserIdRef = useRef("");
+  const tasksFetchCycleReadyRef = useRef(false);
+  const taskAssignNotifySeededRef = useRef(false);
+  const previousTaskDirectAssignRef = useRef(/* @__PURE__ */ new Map());
   const previousInvoiceStatusRef = useRef(new Map());
   const invoiceNotifyHydratedRef = useRef(false);
   const appDataLoaded = true;
-  const addNotification = useCallback((title, message, type = "info", link = null) => {
+  const addNotification = useCallback((title, message, type = "info", link = null, durationMs = 5000) => {
     const id = generateId("notif");
     const notification = {
       id,
@@ -127,9 +136,11 @@ function App({ initialView = "dashboard" }) {
     };
     setNotifications((prev) => [...prev, notification]);
     setNotificationHistory((prev) => [notification, ...prev].slice(0, 100));
+    const ttl = Number(durationMs);
+    const ms = Number.isFinite(ttl) && ttl > 0 ? ttl : 5000;
     setTimeout(() => {
       setNotifications((prev) => prev.filter((n) => n.id !== id));
-    }, 5e3);
+    }, ms);
   }, []);
   const tryShowDesktopAssignmentNotice = useCallback((title, body) => {
     if (typeof window === "undefined" || typeof Notification === "undefined") return;
@@ -253,6 +264,15 @@ function App({ initialView = "dashboard" }) {
   };
   const currentUser = getCurrentUserObject();
   const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
+  /** Match pipeline scope: primary counselor, else inquiry counselor (legacy rows may only set one). */
+  const effectiveAssignedCounselorKey = (student) => {
+    const primary = normalizeIdentity(student?.counselor);
+    const inquiry = normalizeIdentity(student?.inquiryCounselorId);
+    const isUnassigned = (v) => !v || v === "unassigned" || v === "none" || v === "null";
+    if (!isUnassigned(primary)) return primary;
+    if (!isUnassigned(inquiry)) return inquiry;
+    return "";
+  };
   const counselorIdentitySet = useMemo(() => {
     const identitySet = /* @__PURE__ */ new Set();
     const addIdentity = (value) => {
@@ -287,7 +307,7 @@ function App({ initialView = "dashboard" }) {
       return;
     }
     const nextMap = new Map(
-      (students || []).map((student) => [String(student.id || ""), normalizeIdentity(student.counselor)])
+      (students || []).map((student) => [String(student.id || ""), effectiveAssignedCounselorKey(student)])
     );
     const previousMap = previousStudentCounselorMapRef.current;
     if (previousMap.size === 0) {
@@ -299,7 +319,7 @@ function App({ initialView = "dashboard" }) {
     (students || []).forEach((student) => {
       const studentId = String(student.id || "").trim();
       if (!studentId) return;
-      const currentCounselor = normalizeIdentity(student.counselor);
+      const currentCounselor = effectiveAssignedCounselorKey(student);
       const previousCounselor = previousMap.get(studentId) || "";
       const isAssignedNowToMe = counselorIdentitySet.has(currentCounselor);
       const wasAssignedToMeBefore = counselorIdentitySet.has(previousCounselor);
@@ -327,7 +347,7 @@ function App({ initialView = "dashboard" }) {
         const title =
           alert.type === "reassigned" ? "Student reassigned to you" : "New student assigned to you";
         const message = `${alert.studentName} — reach out and start onboarding.`;
-        addNotification(title, message, "info", { studentId: alert.studentId });
+        addNotification(title, message, "info", { studentId: alert.studentId }, 14000);
         tryShowDesktopAssignmentNotice(title, message);
       });
     }
@@ -360,6 +380,7 @@ function App({ initialView = "dashboard" }) {
     });
   })();
   const managerDataScope = useMemo(() => {
+    // Branch scoping applies to managers only. Admins always see all branches.
     if (currentRole !== "Manager") {
       return { active: false, branchKey: "", branchLabel: "" };
     }
@@ -367,7 +388,7 @@ function App({ initialView = "dashboard" }) {
     return { active: !!raw, branchKey: raw.toLowerCase(), branchLabel: raw };
   }, [currentRole, currentUser?.branch, authenticatedUser?.branch]);
   const managerScopedStudents = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return students;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return students;
     return students.filter(
       (s) => String(s.branch || "").trim().toLowerCase() === managerDataScope.branchKey
     );
@@ -382,7 +403,7 @@ function App({ initialView = "dashboard" }) {
     [managerScopedStudents]
   );
   const managerScopedTasks = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return tasks;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return tasks;
     return tasks.filter((t) => {
       const sid = t.student_id || t.studentId;
       if (!sid) return false;
@@ -390,13 +411,13 @@ function App({ initialView = "dashboard" }) {
     });
   }, [tasks, currentRole, managerDataScope.active, managerScopedStudentIds]);
   const managerScopedEmployees = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return employees;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return employees;
     return employees.filter(
       (e) => String(e.branch || "").trim().toLowerCase() === managerDataScope.branchKey
     );
   }, [employees, currentRole, managerDataScope.active, managerDataScope.branchKey]);
   const managerScopedActivities = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return activities;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return activities;
     return activities.filter((a) => {
       const sid = a.studentId || a.student_id;
       if (!sid) return true;
@@ -404,7 +425,7 @@ function App({ initialView = "dashboard" }) {
     });
   }, [activities, currentRole, managerDataScope.active, managerScopedStudentIds]);
   const managerScopedAppointments = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return appointments;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return appointments;
     const branchCounselorIds = new Set(
       managerScopedEmployees.map((e) => String(e?.id ?? "").trim()).filter(Boolean)
     );
@@ -421,7 +442,7 @@ function App({ initialView = "dashboard" }) {
     managerScopedEmployees
   ]);
   const managerScopedInvoices = useMemo(() => {
-    if (currentRole !== "Manager" || !managerDataScope.active) return invoices;
+    if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return invoices;
     return invoices.filter((inv) => managerScopedStudentIds.has(String(inv.studentId || "")));
   }, [invoices, currentRole, managerDataScope.active, managerScopedStudentIds]);
   const countryCoordinatorScope = useMemo(() => {
@@ -478,9 +499,88 @@ function App({ initialView = "dashboard" }) {
     countryCoordinatorScopedTasks,
     countryCoordinatorScopedStudents
   ]);
+  useEffect(() => {
+    const staffTaskNotifyRoles = /* @__PURE__ */ new Set(["Counselor", "Country Coordinator"]);
+    if (!staffTaskNotifyRoles.has(currentRole)) {
+      return;
+    }
+    if (!tasksFetchCycleReadyRef.current) {
+      return;
+    }
+    const taskDirectlyAssignsIdentities = (task) => {
+      const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+      const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
+      return (
+        assignedTo.some((assignee) => counselorIdentitySet.has(normalizeIdentity(assignee))) ||
+        relatedCounselorIds.some((counselorId) => counselorIdentitySet.has(normalizeIdentity(counselorId)))
+      );
+    };
+    const createdBySelf = (task) => {
+      const c = normalizeIdentity(task.createdBy);
+      return Boolean(c) && counselorIdentitySet.has(c);
+    };
+    const scopedTasks = (() => {
+      if (currentRole === "Counselor") {
+        const sidSet = new Set(
+          (counselorScopedStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean)
+        );
+        return (tasks || []).filter((t) => {
+          const sid = String(t.student_id || t.studentId || "").trim();
+          if (!sid) return true;
+          return sidSet.has(sid);
+        });
+      }
+      if (currentRole === "Country Coordinator" && countryCoordinatorScope.active) {
+        return (tasks || []).filter((t) => {
+          const sid = String(t.student_id || t.studentId || "").trim();
+          if (!sid) return false;
+          return countryCoordinatorStudentIds.has(sid);
+        });
+      }
+      return tasks || [];
+    })();
+    const nextMap = /* @__PURE__ */ new Map();
+    for (const task of scopedTasks) {
+      const id = String(task?.id || "").trim();
+      if (!id) continue;
+      nextMap.set(id, taskDirectlyAssignsIdentities(task));
+    }
+    if (!taskAssignNotifySeededRef.current) {
+      previousTaskDirectAssignRef.current = nextMap;
+      taskAssignNotifySeededRef.current = true;
+      return;
+    }
+    const prev = previousTaskDirectAssignRef.current;
+    for (const task of scopedTasks) {
+      const id = String(task?.id || "").trim();
+      if (!id) continue;
+      const now = taskDirectlyAssignsIdentities(task);
+      const was = prev.get(id) ?? false;
+      if (now && !was && !createdBySelf(task)) {
+        const sid = String(task.student_id || task.studentId || "").trim();
+        const student = sid ? students.find((s) => String(s.id || "").trim() === sid) : null;
+        const studentName = String(student?.name || "").trim() || sid || "A student";
+        const title = prev.has(id) ? "Task assigned to you" : "New task assigned";
+        const body = `${String(task.task || "Task").trim()} — ${studentName}.`;
+        addNotification(title, body, "info", sid ? { studentId: sid } : null);
+        tryShowDesktopAssignmentNotice(title, body);
+      }
+    }
+    previousTaskDirectAssignRef.current = nextMap;
+  }, [
+    tasks,
+    currentRole,
+    students,
+    counselorIdentitySet,
+    counselorScopedStudents,
+    countryCoordinatorScope.active,
+    countryCoordinatorStudentIds,
+    addNotification,
+    tryShowDesktopAssignmentNotice
+  ]);
   const pipelineEscalationsAll = useMemo(() => computePipelineEscalations(students), [students]);
   const managerScopedEscalations = useMemo(() => {
-    if (currentRole !== "Manager") return [];
+    if (currentRole !== "Manager" && currentRole !== "Admin") return [];
     if (!managerDataScope.active || !managerDataScope.branchLabel) return pipelineEscalationsAll;
     return filterEscalationsForManager(pipelineEscalationsAll, managerDataScope.branchLabel, employees);
   }, [
@@ -509,7 +609,7 @@ function App({ initialView = "dashboard" }) {
     [students]
   );
   const managerScopedRequirementViolations = useMemo(() => {
-    if (currentRole !== "Manager") return [];
+    if (currentRole !== "Manager" && currentRole !== "Admin") return [];
     if (!managerDataScope.active || !managerDataScope.branchLabel) return requirementViolationsAll;
     return filterRequirementViolationsForManager(requirementViolationsAll, managerDataScope.branchLabel);
   }, [
@@ -534,6 +634,10 @@ function App({ initialView = "dashboard" }) {
   );
   const pipelineEscalationNavBadge = useMemo(() => {
     if (currentRole === "Admin") {
+      if (managerDataScope.active && managerDataScope.branchLabel) {
+        const total = managerScopedEscalations.length + managerScopedRequirementViolations.length;
+        return total > 0 ? String(total) : "";
+      }
       const total = pipelineEscalationsAll.length + requirementViolationsAll.length;
       return total > 0 ? String(total) : "";
     }
@@ -553,7 +657,9 @@ function App({ initialView = "dashboard" }) {
     teamLeadScopedEscalations.length,
     requirementViolationsAll.length,
     managerScopedRequirementViolations.length,
-    teamLeadScopedRequirementViolations.length
+    teamLeadScopedRequirementViolations.length,
+    managerDataScope.active,
+    managerDataScope.branchLabel
   ]);
   const counselorStageNavBadge = useMemo(() => {
     if (currentRole === "Counselor") {
@@ -609,7 +715,7 @@ function App({ initialView = "dashboard" }) {
     previousStudentCounselorMapRef.current = new Map(
       (students || []).map((student) => [
         String(student.id || "").trim(),
-        normalizeIdentity(student.counselor)
+        effectiveAssignedCounselorKey(student)
       ])
     );
   }, [currentRole, authenticatedUser?.id, authenticatedUser?.email]);
@@ -638,16 +744,25 @@ function App({ initialView = "dashboard" }) {
     else if (students.length > 0) setSelectedStudent(null);
   }, [searchParams, students]);
   useEffect(() => {
+    let cancelled = false;
+    tasksFetchCycleReadyRef.current = false;
+    taskAssignNotifySeededRef.current = false;
+    previousTaskDirectAssignRef.current = /* @__PURE__ */ new Map();
     const loadTasks = async () => {
       const result = await getTasks();
+      if (cancelled) return;
       if (!result.ok) return;
+      tasksFetchCycleReadyRef.current = true;
       setTasks(result.data);
     };
     loadTasks();
     const pollTasksRoles = new Set(["Counselor", "Country Coordinator"]);
     if (!pollTasksRoles.has(currentRole)) return undefined;
     const intervalId = setInterval(loadTasks, 5e3);
-    return () => clearInterval(intervalId);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
   }, [currentRole]);
   useEffect(() => {
     const loadMeetingSettings = async () => {
@@ -836,7 +951,7 @@ function App({ initialView = "dashboard" }) {
     }
     const loadRequestedStudents = async () => {
       const params =
-        currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel
+        (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active && managerDataScope.branchLabel
           ? { branch: managerDataScope.branchLabel }
           : {};
       const result = await getReqStudents(params);
@@ -919,20 +1034,20 @@ function App({ initialView = "dashboard" }) {
     const intervalId = setInterval(tick, 4000);
     return () => clearInterval(intervalId);
   }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification]);
-  useEffect(() => {
-    if (notifications.length === 0) return;
-    const handlePointerDown = (event) => {
-      const el = toastStackRef.current;
-      if (el && !el.contains(event.target)) {
-        setNotifications([]);
-      }
-    };
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [notifications.length]);
-  const handleNavigate = (view) => {
+  const handleNavigate = (view, options = {}) => {
     if (view === "counselors" && currentView === "counselors") {
       setCounselorListResetSignal((prev) => prev + 1);
+    }
+    const counselorNav = String(options?.counselorId ?? "").trim();
+    if (view === "messages") {
+      setStudentMessagesInitialPeerId(counselorNav || null);
+    } else {
+      setStudentMessagesInitialPeerId(null);
+    }
+    if (view === "calendar") {
+      setStudentCalendarFocusCounselorId(counselorNav || null);
+    } else {
+      setStudentCalendarFocusCounselorId(null);
     }
     setCurrentView(view);
     const nextPath = VIEW_TO_PATH[view];
@@ -961,6 +1076,11 @@ function App({ initialView = "dashboard" }) {
     const qs = new URLSearchParams();
     qs.set("student", sid);
     if (focus) qs.set("task", focus);
+    const profileTab = String(options?.profileTab || "").trim().toLowerCase();
+    const allowedProfileTabs = new Set(["pipeline", "resume", "show-money", "visa-pilot", "ledger"]);
+    if (profileTab && allowedProfileTabs.has(profileTab)) {
+      qs.set("tab", profileTab);
+    }
     navigate({ pathname: path, search: `?${qs.toString()}` });
   };
   const handleSelectTask = (taskId) => {
@@ -1082,15 +1202,7 @@ function App({ initialView = "dashboard" }) {
     }
     const newTasks = generateTasks(payload);
     if (newTasks.length > 0) {
-      const batchResult = await handleAddTasks(newTasks);
-      const firstTaskId =
-        Array.isArray(batchResult?.data) && batchResult.data[0]?.id ? String(batchResult.data[0].id) : "";
-      addNotification(
-        "Auto Task Generation",
-        `${newTasks.length} new tasks generated for ${payload.name}`,
-        "info",
-        firstTaskId ? { taskId: firstTaskId } : payload?.id ? { studentId: String(payload.id) } : null
-      );
+      await handleAddTasks(newTasks, { suppressTaskSyncNotification: true });
     }
     setStudents((prev) => prev.map((s) => s.id === payload.id ? payload : s));
     if (selectedStudent?.id === payload.id) {
@@ -1105,6 +1217,20 @@ function App({ initialView = "dashboard" }) {
     setStudents((prev) => prev.map((s) => s.id === savedStudent.id ? savedStudent : s));
     if (selectedStudent?.id === savedStudent.id) {
       setSelectedStudent(savedStudent);
+    }
+    const prevStage = normalizePipelineStatus(previous?.status);
+    const nextStage = normalizePipelineStatus(savedStudent.status);
+    if (previous && prevStage !== "Application" && nextStage === "Application") {
+      const sid = String(savedStudent.id || "").trim();
+      const pendingIntake = tasksRef.current.filter((t) => {
+        const tid = String(t.student_id || t.studentId || "").trim();
+        if (!sid || tid !== sid) return false;
+        if (!String(t.task || "").trim().startsWith("New student intake")) return false;
+        return String(t.status || "").trim().toLowerCase() !== "completed";
+      });
+      if (pendingIntake.length > 0) {
+        handleUpdateTasks(pendingIntake.map((t) => ({ ...t, status: "Completed" })));
+      }
     }
     return {
       ok: true,
@@ -1204,7 +1330,7 @@ function App({ initialView = "dashboard" }) {
   };
   const handleAddStudent = async (payload) => {
     let scopedPayload = payload;
-    if (currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel) {
+    if ((currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active && managerDataScope.branchLabel) {
       scopedPayload = { ...payload, branch: managerDataScope.branchLabel };
     }
     if (currentRole === "Country Coordinator" && countryCoordinatorScope.active && countryCoordinatorScope.countryLabel) {
@@ -1218,8 +1344,8 @@ function App({ initialView = "dashboard" }) {
     setStudents((prev) => [created, ...prev]);
     addNotification("Student onboarded", `${created.name} added successfully.`, "success");
 
-    const counselorId = String(created.counselor || "").trim();
-    const hasCounselor = counselorId && counselorId.toLowerCase() !== "unassigned";
+    const counselorKey = effectiveAssignedCounselorKey(created);
+    const hasCounselor = Boolean(counselorKey);
     if (hasCounselor) {
       const due = new Date();
       due.setDate(due.getDate() + 7);
@@ -1227,7 +1353,8 @@ function App({ initialView = "dashboard" }) {
       const taskPayload = {
         task: `New student intake — ${created.name}`,
         student_id: created.id,
-        assigned_to: [counselorId],
+        assigned_to: [counselorKey],
+        counselor_ids: [counselorKey],
         priority: "High",
         status: "Pending",
         dueDate,
@@ -1274,7 +1401,7 @@ function App({ initialView = "dashboard" }) {
     const byEmp = employees.find((e) => String(e.id || "") === String(counselorId));
     if (!counselorBranch && byEmp) counselorBranch = String(byEmp.branch || "").trim();
     const branch =
-      currentRole === "Manager" && managerDataScope.active && managerDataScope.branchLabel
+      (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active && managerDataScope.branchLabel
         ? managerDataScope.branchLabel
         : counselorBranch || String(requestRow.nearestOffice || "").trim() || "Colombo HQ";
     const random = Math.random().toString(36).slice(-5);
@@ -1349,9 +1476,18 @@ function App({ initialView = "dashboard" }) {
       target: saved.data.task,
       type: "task"
     });
+    const wa = saved.taskAssignmentWhatsapp;
+    if (wa && wa.status === "sent") {
+      addNotification("WhatsApp sent", "The student was notified about the new task.", "success");
+    } else if (wa && wa.attempted && wa.status === "failed") {
+      addNotification("WhatsApp failed", wa.reason || "Could not send task notification to the student.", "warning");
+    } else if (wa && wa.status === "skipped" && String(wa.reason || "").trim()) {
+      addNotification("WhatsApp skipped", wa.reason, "warning");
+    }
     return { ok: true, data: saved.data };
   };
-  const handleAddTasks = async (newTasks) => {
+  const handleAddTasks = async (newTasks, options = {}) => {
+    const suppressTaskSyncNotification = options.suppressTaskSyncNotification === true;
     if (!Array.isArray(newTasks) || newTasks.length === 0) {
       return { ok: true, data: [] };
     }
@@ -1387,7 +1523,7 @@ function App({ initialView = "dashboard" }) {
         type: "system"
       });
     }
-    if (failedTasks.length > 0) {
+    if (failedTasks.length > 0 && !suppressTaskSyncNotification) {
       addNotification(
         "Task sync issue",
         `${failedTasks.length} task(s) could not be saved to backend.`,
@@ -1404,18 +1540,20 @@ function App({ initialView = "dashboard" }) {
     setTasks((prev) => {
       const newTasks = [...prev];
       updatedTasks.forEach((updated) => {
-        const index = newTasks.findIndex((t) => t.id === updated.id);
+        const uid = String(updated?.id ?? "").trim();
+        const index = newTasks.findIndex((t) => String(t?.id ?? "").trim() === uid);
         if (index !== -1) {
-          if (newTasks[index].status !== updated.status) {
+          const merged = { ...newTasks[index], ...updated, id: newTasks[index].id };
+          if (newTasks[index].status !== merged.status) {
             handleAddActivity({
               user: currentRole,
               role: currentRole,
-              action: `moved task to ${updated.status}`,
-              target: updated.task,
+              action: `moved task to ${merged.status}`,
+              target: merged.task,
               type: "task"
             });
           }
-          newTasks[index] = updated;
+          newTasks[index] = merged;
         }
       });
       return newTasks;
@@ -1437,6 +1575,80 @@ function App({ initialView = "dashboard" }) {
       return { ok: false, error: result.error || "Failed to send message." };
     }
     return { ok: true, data: result.data };
+  };
+  const handleReassignDeskTask = async (sourceTask) => {
+    if (!sourceTask) return;
+    const sid = String(sourceTask.student_id || sourceTask.studentId || "").trim();
+    if (!sid) {
+      addNotification("Reassign", "This task is not linked to a student, so a reassignment task could not be created.", "error");
+      return;
+    }
+    const related = students.find((s) => String(s.id || "").trim() === sid);
+    const studentName = String(related?.name || sid).trim() || sid;
+    let counselorId = String(related?.counselor || "").trim();
+    const sidLower = sid.toLowerCase();
+    if (!counselorId && Array.isArray(sourceTask.assigned_to)) {
+      for (const a of sourceTask.assigned_to) {
+        const aid = String(a || "").trim();
+        if (aid && aid.toLowerCase() !== sidLower) {
+          counselorId = aid;
+          break;
+        }
+      }
+    }
+    if (!counselorId) {
+      addNotification(
+        "Reassign",
+        "No counselor is assigned for this student. Assign a counselor on the student profile first.",
+        "error"
+      );
+      return;
+    }
+    const counselorEmp = employees.find(
+      (e) => String(e.id || "").trim().toLowerCase() === counselorId.toLowerCase()
+    );
+    const counselorDisplay =
+      String(counselorEmp?.name || counselorEmp?.username || counselorEmp?.email || "").trim() || "Counselor";
+    const sourceTitle = String(sourceTask.task || "Task").trim() || "Task";
+    const truncated = sourceTitle.length > 140 ? `${sourceTitle.slice(0, 140)}…` : sourceTitle;
+    const due = new Date();
+    due.setDate(due.getDate() + 7);
+    const dueDate = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+    const newTaskPayload = {
+      task: `Reassign (manager): Review handoff for "${truncated}" — ${studentName}`,
+      student_id: sid,
+      assigned_to: [counselorId],
+      counselor_ids: [counselorId],
+      priority: "High",
+      status: "Pending",
+      dueDate,
+      isPrivate: true,
+      tier: "Global",
+      phase: 1,
+      isBlocking: false
+    };
+    const result = await handleAddTask(newTaskPayload);
+    if (!result || result.ok === false) return;
+    const created = result.data;
+    const tid = String(created?.id || "").trim();
+    const chatText = `Manager reassignment: a new HIGH priority task was added to your list for ${studentName}: "${String(created?.task || newTaskPayload.task).slice(0, 220)}${String(created?.task || newTaskPayload.task).length > 220 ? "…" : ""}". Please open Task Manager.`;
+    const msgRes = await handleSendMessage(chatText, counselorId);
+    if (msgRes?.ok) {
+      addNotification(
+        "Reassign sent",
+        `High priority task created for ${counselorDisplay}, and they were notified in Messages.`,
+        "success",
+        tid ? { taskId: tid } : null
+      );
+    } else {
+      addNotification(
+        "Task created",
+        `High priority task created for ${counselorDisplay}, but the portal message could not be sent (${msgRes?.error || "unknown"}).`,
+        "warning",
+        tid ? { taskId: tid } : null
+      );
+    }
+    tryShowDesktopAssignmentNotice("Reassign sent", `New high priority task for ${counselorDisplay}.`);
   };
   const handleCreateInvoice = async (newInv) => {
     const creatorName = String(currentUser?.name || authenticatedUser?.username || authenticatedUser?.email || currentRole || "System").trim();
@@ -1690,11 +1902,11 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: updatedStudent };
   };
-  const handleUploadStudentDocument = async ({ studentId, dataUrl, fileName, docType, phase, tier }) => {
+  const handleUploadStudentDocument = async ({ studentId, dataUrl, fileName, docType, phase, tier, taskDocumentLink }) => {
     if (!studentId) return { ok: false, error: "Student account not found." };
     if (!dataUrl) return { ok: false, error: "No document file selected." };
     if (!docType) return { ok: false, error: "Document type is required." };
-    const result = await uploadStudentDocument(studentId, { dataUrl, fileName, docType, phase, tier });
+    const result = await uploadStudentDocument(studentId, { dataUrl, fileName, docType, phase, tier, taskDocumentLink });
     if (!result.ok) return result;
     const slaNext = reconcileStudentSlaViolationsWithDocuments(result.data);
     const updatedStudent =
@@ -1705,11 +1917,11 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: updatedStudent, document: result.document || null };
   };
-  const handleUploadStudentProfileOtherDocument = async ({ studentId, dataUrl, fileName, label, slot }) => {
+  const handleUploadStudentProfileOtherDocument = async ({ studentId, dataUrl, fileName, label, slot, append }) => {
     if (!studentId) return { ok: false, error: "Student account not found." };
     if (!dataUrl) return { ok: false, error: "No document file selected." };
-    if (!slot || slot < 1 || slot > 3) return { ok: false, error: "Choose a document slot (1–3)." };
-    const result = await uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot });
+    if (!append && (!slot || slot < 1)) return { ok: false, error: "Choose a document slot." };
+    const result = await uploadStudentProfileOtherDocument(studentId, { dataUrl, fileName, label, slot, append });
     if (!result.ok) return result;
     const updatedStudent = result.data;
     setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
@@ -1751,10 +1963,10 @@ function App({ initialView = "dashboard" }) {
           ? counselorScopedStudents
           : currentRole === "Country Coordinator" && countryCoordinatorScope.active
             ? countryCoordinatorScopedStudents
-            : currentRole === "Manager" && managerDataScope.active
+            : (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active
               ? managerScopedStudents
               : students;
-      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees });
+      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId });
     }
     if (currentView === "resume") {
       return /* @__PURE__ */ jsx(AIResumeBuilder, {
@@ -1766,11 +1978,13 @@ function App({ initialView = "dashboard" }) {
       });
     }
     if (currentView === "university") {
-      return /* @__PURE__ */ jsx(UniversityKnowledgeBase, { onNavigate: handleNavigate, currentRole, students });
+      const uniStudents =
+        currentRole === "Admin" && managerDataScope.active ? managerScopedStudents : students;
+      return /* @__PURE__ */ jsx(UniversityKnowledgeBase, { onNavigate: handleNavigate, currentRole, students: uniStudents });
     }
     if (currentView === "calendar") {
       const calendarAppointments =
-        currentRole === "Manager" && managerDataScope.active
+        (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active
           ? managerScopedAppointments
           : currentRole === "Country Coordinator" && countryCoordinatorScope.active
             ? countryCoordinatorScopedAppointments
@@ -1784,6 +1998,7 @@ function App({ initialView = "dashboard" }) {
         currentRole,
         currentUser,
         employees,
+        focusCounselorId: currentRole === "Student" ? studentCalendarFocusCounselorId : null,
         meetingSettings,
         onAddBusyBooking: async (payload) => {
         const result = await createBooking(payload);
@@ -1806,6 +2021,7 @@ function App({ initialView = "dashboard" }) {
       onUpdateStudent: handleUpdateStudent,
       onAddActivity: handleAddActivity,
       onNotify: addNotification,
+      onSendStaffMessage: handleSendMessage,
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
       invoices,
       onCreateInvoice: handleCreateInvoice,
@@ -1827,13 +2043,17 @@ function App({ initialView = "dashboard" }) {
         if (!id) return;
         setStudentDetailFocusTaskId(null);
         handleSelectTask(id);
-      }
+      },
+      allStudents: students,
+      onDismissAssignmentAlert: handleDismissAssignmentAlert,
+      onStudentMovedToRequests: handleStudentMovedToRequests,
+      onSelectStudent: handleSelectStudent
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
-      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees });
+      if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees, onUploadStudentDocument: handleUploadStudentDocument });
       if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
       return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
     }
@@ -1873,6 +2093,10 @@ function App({ initialView = "dashboard" }) {
       if (currentRole === "Counselor" && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
+      if (currentView === "branch") {
+        const coordBranch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
+        return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: coordBranch || null });
+      }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
@@ -1882,6 +2106,13 @@ function App({ initialView = "dashboard" }) {
         return selectedStudent && studentInScope
           ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: studentInScope, userRole: currentRole })
           : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
+      }
+      if (currentView === "finance") {
+        return /* @__PURE__ */ jsx(StaffFinanceHub, {
+          students: coordStudents,
+          invoices: coordProfileProps.invoices,
+          onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
+        });
       }
       return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
     }
@@ -1894,7 +2125,20 @@ function App({ initialView = "dashboard" }) {
         currentRole === "Manager" && managerDataScope.active
           ? { ...studentProfileProps, tasks: mgrTasks, invoices: managerScopedInvoices }
           : studentProfileProps;
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, {
+        activities: mgrActivities,
+        tasks: mgrTasks,
+        students: mgrStudents,
+        employees: mgrEmployees,
+        currentUser,
+        onNavigate: handleNavigate,
+        onReassignDeskTask: handleReassignDeskTask,
+        invoices: mgrProfileProps.invoices,
+        onUpdateInvoice: handleUpdateInvoice,
+        onSelectStudent: handleSelectStudent,
+        onNotify: addNotification,
+        canApproveInvoicePayments: currentRole === "Manager"
+      });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
       if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
@@ -1910,19 +2154,68 @@ function App({ initialView = "dashboard" }) {
               variant: "manager",
               onOpenStudent: openEscalationStudent
             }),
-            /* @__PURE__ */ jsx(TaskManager, { userRole: "Manager", tasks: mgrTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: mgrStudents, employees: mgrEmployees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate })
+            /* @__PURE__ */ jsx(TaskManager, {
+              userRole: "Manager",
+              tasks: mgrTasks,
+              currentUser,
+              selectedTaskId,
+              onUpdateTasks: handleUpdateTasks,
+              onAddTask: handleAddTask,
+              monitoredStudents: mgrStudents,
+              employees: mgrEmployees,
+              onSelectStudent: handleSelectStudent,
+              onNavigate: handleNavigate,
+              wrapClassName: "mt-8"
+            })
           ]
         });
       }
       if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
-      return /* @__PURE__ */ jsx(ManagerDashboard, { activities: mgrActivities, tasks: mgrTasks, students: mgrStudents, employees: mgrEmployees, currentUser, onNavigate: handleNavigate });
+      if (currentView === "finance") {
+        return /* @__PURE__ */ jsx(StaffFinanceHub, {
+          students: mgrStudents,
+          invoices: mgrProfileProps.invoices,
+          onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
+        });
+      }
+      return /* @__PURE__ */ jsx(ManagerDashboard, {
+        activities: mgrActivities,
+        tasks: mgrTasks,
+        students: mgrStudents,
+        employees: mgrEmployees,
+        currentUser,
+        onNavigate: handleNavigate,
+        onReassignDeskTask: handleReassignDeskTask,
+        invoices: mgrProfileProps.invoices,
+        onUpdateInvoice: handleUpdateInvoice,
+        onSelectStudent: handleSelectStudent,
+        onNotify: addNotification,
+        canApproveInvoicePayments: currentRole === "Manager"
+      });
     }
+    const adminBranchScoped = currentRole === "Admin" && managerDataScope.active;
+    const adminViewStudents = adminBranchScoped ? managerScopedStudents : students;
+    const adminViewTasks = adminBranchScoped ? managerScopedTasks : tasks;
+    const adminViewEmployees = adminBranchScoped ? managerScopedEmployees : employees;
+    const adminViewActivities = adminBranchScoped ? managerScopedActivities : activities;
+    const adminViewProfileProps = adminBranchScoped
+      ? { ...studentProfileProps, tasks: adminViewTasks, invoices: managerScopedInvoices }
+      : studentProfileProps;
     switch (currentView) {
       case "dashboard":
-        return /* @__PURE__ */ jsx(AdminDashboard, { activities, tasks, students, invoices, currentUser, onSelectStudent: handleSelectStudent });
+        return /* @__PURE__ */ jsx(AdminDashboard, {
+          activities: adminViewActivities,
+          tasks: adminViewTasks,
+          students: adminViewStudents,
+          employees: adminViewEmployees,
+          invoices: adminBranchScoped ? managerScopedInvoices : invoices,
+          currentUser,
+          onSelectStudent: handleSelectStudent,
+          studentsScopeLabel: adminBranchScoped ? managerDataScope.branchLabel || null : null,
+        });
       case "counselors":
-        return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students, employees, tasks, onTransferStudents: handleTransferStudents, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
+        return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: adminViewStudents, employees: adminViewEmployees, tasks: adminViewTasks, onTransferStudents: handleTransferStudents, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
       case "accounts":
         return /* @__PURE__ */ jsx(AccountsManagement, {
           onAdminAvatarUpdated: (row) => {
@@ -1953,24 +2246,30 @@ function App({ initialView = "dashboard" }) {
           }
         }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Settings are available for Admin only." });
       case "branch":
-        return /* @__PURE__ */ jsx(BranchAnalytics, {});
+        return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null });
       case "students":
-        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "requested-students":
-        return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: null, onAddFromRequest: handleAddFromRequest });
+        return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
       case "student-detail":
-        return selectedStudent ? /* @__PURE__ */ jsx(StudentProfile, { ...studentProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      case "finance":
+        return /* @__PURE__ */ jsx(StaffFinanceHub, {
+          students: adminViewStudents,
+          invoices: adminViewProfileProps.invoices,
+          onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
+        });
       case "tasks":
         return /* @__PURE__ */ jsxs(Fragment, {
           children: [
             /* @__PURE__ */ jsx(StageEscalations, {
-              escalations: pipelineEscalationsAll,
-              requirementViolations: requirementViolationsAll,
+              escalations: managerScopedEscalations,
+              requirementViolations: managerScopedRequirementViolations,
               employees,
               variant: "admin",
               onOpenStudent: openEscalationStudent
             }),
-            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: students, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate })
+            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate })
           ]
         });
       default:
@@ -1981,7 +2280,7 @@ function App({ initialView = "dashboard" }) {
     return /* @__PURE__ */ jsx(LoginScreen, {
       onLoggedIn: (user) => {
         setAuthenticatedUser(user || null);
-        const nextRole = user?.role;
+        const nextRole = normalizePortalRole(user?.role);
         if (nextRole === "Manager" || nextRole === "Team Lead" || nextRole === "Counselor" || nextRole === "Country Coordinator" || nextRole === "Student" || nextRole === "Admin") {
           setCurrentRole(nextRole);
         } else {
@@ -2018,6 +2317,8 @@ function App({ initialView = "dashboard" }) {
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
         pageLoading: !appDataLoaded,
+        showWhatsappNavIndicator: currentRole === "Counselor",
+        whatsappConnectionStatus,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);
@@ -2035,7 +2336,7 @@ function App({ initialView = "dashboard" }) {
         student: taskModalStudent,
         currentUser,
         userRole: currentRole,
-        students: currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedStudents : currentRole === "Counselor" ? counselorScopedStudents : students,
+        students: currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedStudents : currentRole === "Counselor" ? counselorScopedStudents : currentRole === "Admin" && managerDataScope.active ? managerScopedStudents : students,
         employees
       }
     ),

@@ -16,10 +16,14 @@ import {
   Minimize2,
   Stamp,
   ChevronRight,
+  User,
+  FileText,
 } from "lucide-react";
 import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearAdminAiChats, getCountries, getBranches } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
+import { buildUniversityOfferLetterRows, offerStatusBadgeClass } from "../utils/universityOfferLetters";
+import { Button } from "./Button";
 
 const SUGGESTED_PROMPTS = [
   "Which branch is underperforming this month?",
@@ -109,7 +113,16 @@ function deriveDisplayName(currentUser) {
   return "Admin";
 }
 
-const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUser = null, onSelectStudent }) => {
+const AdminDashboard = ({
+  activities,
+  tasks,
+  students,
+  invoices = [],
+  employees = [],
+  currentUser = null,
+  onSelectStudent,
+  studentsScopeLabel = null,
+}) => {
   const [destinationCountries, setDestinationCountries] = React.useState([]);
   const [branchLocations, setBranchLocations] = React.useState([]);
   React.useEffect(() => {
@@ -171,6 +184,11 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
         String(a?.name || a?.id || "").localeCompare(String(b?.name || b?.id || ""), undefined, { sensitivity: "base" })
       );
   }, [students]);
+
+  const adminOfferLetterRows = React.useMemo(
+    () => buildUniversityOfferLetterRows(Array.isArray(students) ? students : [], employees),
+    [students, employees]
+  );
 
   const [messages, setMessages] = React.useState([]);
   const [inputValue, setInputValue] = React.useState("");
@@ -651,6 +669,61 @@ const AdminDashboard = ({ activities, tasks, students, invoices = [], currentUse
                 }),
               });
             }) }) }),
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col w-full", children: [
+          /* @__PURE__ */ jsxs("div", { className: "mb-4", children: [
+            /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 flex items-center gap-2", children: [
+              /* @__PURE__ */ jsx(FileText, { size: 18, className: "text-indigo-600" }),
+              "Offer letters",
+            ] }),
+            studentsScopeLabel
+              ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+                  "University offer letters for students in ",
+                  /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: studentsScopeLabel }),
+                  " (",
+                  adminOfferLetterRows.length,
+                  ").",
+                ] })
+              : /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+                  "Approved, conditional, and rejected letters across all branches (",
+                  adminOfferLetterRows.length,
+                  ").",
+                ] }),
+          ] }),
+          adminOfferLetterRows.length === 0
+            ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "No offer letters uploaded yet." })
+            : /* @__PURE__ */ jsx("div", { className: "overflow-y-auto max-h-[480px] pr-1 -mr-1 space-y-2", children: adminOfferLetterRows.map((row) =>
+                /* @__PURE__ */ jsxs(
+                  "div",
+                  {
+                    key: row.key,
+                    className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-slate-50 border border-slate-100 rounded-lg",
+                    children: [
+                      /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1 space-y-0.5", children: [
+                        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: row.studentName }),
+                        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600", children: row.counselorLabel }),
+                      ] }),
+                      /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 shrink-0", children: [
+                        /* @__PURE__ */ jsx("span", {
+                          className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${offerStatusBadgeClass(row.offerStatus)}`,
+                          children: row.offerStatus,
+                        }),
+                        typeof onSelectStudent === "function" &&
+                          /* @__PURE__ */ jsx(Button, {
+                            type: "button",
+                            size: "sm",
+                            variant: "outline",
+                            className: "h-8 w-8 min-w-[2rem] p-0 shrink-0",
+                            title: "Student profile",
+                            "aria-label": `Open student profile for ${row.studentName}`,
+                            onClick: () => onSelectStudent(row.student, { profileTab: "pipeline" }),
+                            children: /* @__PURE__ */ jsx(User, { size: 16, "aria-hidden": true }),
+                          }),
+                      ] }),
+                    ],
+                  }
+                )
+              ) }),
         ] }),
       ] }),
     ] }),
