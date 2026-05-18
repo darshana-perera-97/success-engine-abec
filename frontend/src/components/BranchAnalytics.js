@@ -5,10 +5,14 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
 import { createBranch, getAccounts, getBranches, getStudents } from "../authApi";
-import { normalizePipelineStatus } from "../pipeline";
+import { buildBranchConversionMetrics } from "../pipeline";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
 
-const BranchAnalytics = ({ scopeBranch = null }) => {
+const BranchAnalytics = ({
+  scopeBranch = null,
+  students: providedStudents = null,
+  branchScopedStudents = false
+}) => {
   const formatRevenueNumber = (value) => {
     const formatted = formatRawLKR(value);
     return formatted.replace(/^LKR\s*/, "");
@@ -19,23 +23,20 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [managerAccounts, setManagerAccounts] = useState([]);
-  const [students, setStudents] = useState([]);
+  const [fetchedStudents, setFetchedStudents] = useState([]);
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
+  const usesProvidedStudents = Array.isArray(providedStudents);
   const [pageLoads, setPageLoads] = useState({
     branches: false,
     managers: false,
-    students: false
+    students: usesProvidedStudents
   });
   const { updatedAt: fxUpdatedAt, live: fxLive } = useExchangeRates();
+  const students = usesProvidedStudents ? providedStudents : fetchedStudents;
   const branchPageReady = pageLoads.branches && pageLoads.managers && pageLoads.students;
 
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
-
-  const branchesForMetrics = useMemo(() => {
-    if (!scopeKey) return branches;
-    return branches.filter((b) => String(b.location || "").trim().toLowerCase() === scopeKey);
-  }, [branches, scopeKey]);
 
   useEffect(() => {
     const loadBranches = async () => {
@@ -70,48 +71,28 @@ const BranchAnalytics = ({ scopeBranch = null }) => {
   }, [scopeKey]);
 
   useEffect(() => {
+    if (usesProvidedStudents) return;
     const loadStudents = async () => {
       try {
         const result = await getStudents();
         if (!result.ok) return;
-        setStudents(result.data);
+        setFetchedStudents(result.data);
       } finally {
         setPageLoads((p) => ({ ...p, students: true }));
       }
     };
     loadStudents();
-  }, []);
+  }, [usesProvidedStudents]);
 
   const branchData = useMemo(
     () =>
-      branchesForMetrics.map((branch) => {
-        const branchStudents = students.filter(
-          (student) => String(student.branch || "").trim().toLowerCase() === String(branch.location || "").trim().toLowerCase()
-        );
-        const studentsCount = branchStudents.length;
-        const conversionsCount = branchStudents.filter((student) => {
-          const x = normalizePipelineStatus(student.status);
-          return ["Application", "Interview training", "Documentation", "Visa", "Enrolled"].includes(x);
-        }).length;
-        const visaGrantedCount = branchStudents.filter((student) => {
-          const stage = normalizePipelineStatus(student.status);
-          return stage === "Visa" || stage === "Enrolled";
-        }).length;
-        const liveRevenue = branchStudents.reduce((sum, student) => {
-          const numericBudget = Number(String(student.budget || "").replace(/[^\d.]/g, ""));
-          return Number.isFinite(numericBudget) ? sum + numericBudget : sum;
-        }, 0);
-        const revenue = liveRevenue > 0 ? liveRevenue : branch.revenue || 0;
-        return {
-          name: branch.location,
-          students: studentsCount,
-          revenue,
-          conversions: conversionsCount,
-          visaGranted: visaGrantedCount,
-          conversionRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0
-        };
+      buildBranchConversionMetrics({
+        branches,
+        students,
+        scopeBranch: scopeKey ? scopeBranch : null,
+        branchScopedStudents: branchScopedStudents && !!scopeKey
       }),
-    [branchesForMetrics, students]
+    [branches, students, scopeKey, scopeBranch, branchScopedStudents]
   );
   const totalRevenue = useMemo(
     () => branchData.reduce((sum, branch) => sum + branch.revenue, 0),

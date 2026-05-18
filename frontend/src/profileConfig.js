@@ -4,7 +4,7 @@ import * as ds from "./profile/ds/companyConfig";
 
 // Change this single value to switch the whole app between company profiles.
 // Supported values: "abec" | "beacanadian" | "ds"
-export const ACTIVE_PROFILE = "beacanadian";
+export const ACTIVE_PROFILE = "abec";
 
 const profiles = { abec, beacanadian, ds };
 const config = profiles[ACTIVE_PROFILE];

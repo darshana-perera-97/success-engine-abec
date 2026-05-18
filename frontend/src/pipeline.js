@@ -177,6 +177,98 @@ export function computePipelineStageCounts(students = []) {
   return { byStage, other, total: list.length };
 }
 
+/** Canonical stages counted as a regional conversion (past initial inquiry). */
+export const BRANCH_CONVERSION_STAGES = [
+  "Application",
+  "Interview training",
+  "Documentation",
+  "Visa",
+  "Enrolled"
+];
+
+export function normalizeBranchKey(branch) {
+  return String(branch || "").trim().toLowerCase();
+}
+
+export function isBranchConversionStatus(status) {
+  return BRANCH_CONVERSION_STAGES.includes(normalizePipelineStatus(status));
+}
+
+export function isVisaGrantedStatus(status) {
+  const stage = normalizePipelineStatus(status);
+  return stage === "Visa" || stage === "Enrolled" || String(status || "").trim() === "Visa Pilot";
+}
+
+/**
+ * Per-branch metrics for Regional Conversion Performance and related analytics.
+ * Merges registered branches with any branch labels present on student records.
+ * When `branchScopedStudents` is true (manager view), every student in `students` counts
+ * toward `scopeBranch` — including those matched via branch counselors, not only `branch` field.
+ */
+export function buildBranchConversionMetrics({
+  branches = [],
+  students = [],
+  scopeBranch = null,
+  branchScopedStudents = false
+} = {}) {
+  const scopeKey = scopeBranch ? normalizeBranchKey(scopeBranch) : "";
+  const locationByKey = new Map();
+
+  const registerLocation = (location) => {
+    const label = String(location || "").trim();
+    if (!label) return;
+    const key = normalizeBranchKey(label);
+    if (scopeKey && key !== scopeKey) return;
+    if (!locationByKey.has(key)) {
+      locationByKey.set(key, label);
+    }
+  };
+
+  if (scopeKey) {
+    registerLocation(scopeBranch);
+  }
+  (Array.isArray(branches) ? branches : []).forEach((branch) => registerLocation(branch?.location));
+  (Array.isArray(students) ? students : []).forEach((student) =>
+    registerLocation(getStudentBranchLabel(student))
+  );
+
+  const branchList = Array.isArray(branches) ? branches : [];
+  const studentList = Array.isArray(students) ? students : [];
+
+  return Array.from(locationByKey.entries())
+    .map(([key, name]) => {
+      const branchStudents =
+        scopeKey && branchScopedStudents
+          ? studentList
+          : studentList.filter(
+              (student) => normalizeBranchKey(getStudentBranchLabel(student)) === key
+            );
+      const branchRecord = branchList.find((branch) => normalizeBranchKey(branch?.location) === key);
+      const studentsCount = branchStudents.length;
+      const conversionsCount = branchStudents.filter((student) =>
+        isBranchConversionStatus(student?.status)
+      ).length;
+      const visaGrantedCount = branchStudents.filter((student) =>
+        isVisaGrantedStatus(student?.status)
+      ).length;
+      const liveRevenue = branchStudents.reduce((sum, student) => {
+        const numericBudget = Number(String(student?.budget || "").replace(/[^\d.]/g, ""));
+        return Number.isFinite(numericBudget) ? sum + numericBudget : sum;
+      }, 0);
+      const revenue = liveRevenue > 0 ? liveRevenue : Number(branchRecord?.revenue) || 0;
+
+      return {
+        name,
+        students: studentsCount,
+        revenue,
+        conversions: conversionsCount,
+        visaGranted: visaGrantedCount,
+        conversionRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 const MS_SEC = 1000;
 const MS_MIN = 60 * MS_SEC;
 const MS_HOUR = 60 * MS_MIN;
@@ -328,6 +420,47 @@ export function branchesMatch(branchA, branchB) {
   if (!a || !b) return false;
   if (a === b) return true;
   return a.includes(b) || b.includes(a);
+}
+
+/** Branch label on a student record (`branch` or inquiry `nearestOffice`). */
+export function getStudentBranchLabel(student) {
+  return String(student?.branch || student?.nearestOffice || "").trim();
+}
+
+/** Counselor/consultor account ids and emails at a branch (normalized lowercase). */
+export function buildBranchCounselorIdentitySet(employees = [], managerBranch) {
+  const branch = String(managerBranch || "").trim();
+  if (!branch) return new Set();
+  const identitySet = new Set();
+  const n = (v) => String(v || "").trim().toLowerCase();
+  const addIdentity = (value) => {
+    const normalized = n(value);
+    if (normalized) identitySet.add(normalized);
+  };
+  for (const employee of Array.isArray(employees) ? employees : []) {
+    const role = String(employee?.role || "").trim().toLowerCase();
+    if (!role.includes("counsel") && role !== "consultor") continue;
+    if (!branchesMatch(employee?.branch, branch)) continue;
+    addIdentity(employee.id);
+    addIdentity(employee.email);
+    addIdentity(employee.username);
+  }
+  return identitySet;
+}
+
+/**
+ * Whether a student belongs to a manager's branch: matching office label or assigned
+ * to a counselor at that branch.
+ */
+export function studentMatchesManagerBranch(student, managerBranch, branchCounselorIds = null) {
+  const branch = String(managerBranch || "").trim();
+  if (!branch) return true;
+  const studentBranch = getStudentBranchLabel(student);
+  if (studentBranch && branchesMatch(studentBranch, branch)) return true;
+  if (branchCounselorIds && branchCounselorIds.size > 0) {
+    return studentMatchesCounselorIdentitySet(student, branchCounselorIds);
+  }
+  return false;
 }
 
 export function counselorOwnsStudent(student, currentUser) {

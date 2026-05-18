@@ -360,7 +360,7 @@ const ManagerDashboard = ({
             /* @__PURE__ */ jsx(Zap, { size: 18, className: "text-indigo-600", fill: "currentColor" }),
             "Live Operations Feed"
           ] }) }),
-          /* @__PURE__ */ jsx("div", { className: "flex-1 min-h-[250px] overflow-y-auto", children: /* @__PURE__ */ jsx(ActivityFeed, { activities, limit: 5, showRoleBadge: false }) })
+          /* @__PURE__ */ jsx("div", { className: "flex-1 min-h-[250px] overflow-y-auto", children: /* @__PURE__ */ jsx(ActivityFeed, { activities, limit: 5, showRoleBadge: false, showCounselorBadge: false }) })
         ] })
       ] })
     ] })

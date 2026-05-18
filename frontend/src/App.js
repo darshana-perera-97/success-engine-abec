@@ -30,6 +30,7 @@ import { Bell, X } from "lucide-react";
 import { filterTasksForCounselor } from "./counselorTaskScope";
 import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "./apiConfig";
 import {
+  buildBranchCounselorIdentitySet,
   computePipelineEscalations,
   computeRequirementViolations,
   filterEscalationsForCounselor,
@@ -37,7 +38,9 @@ import {
   filterRequirementViolationsForCounselor,
   filterRequirementViolationsForManager,
   normalizePipelineStatus,
-  reconcileStudentSlaViolationsWithDocuments
+  reconcileStudentSlaViolationsWithDocuments,
+  studentMatchesManagerBranch,
+  branchesMatch
 } from "./pipeline";
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 const VIEW_TO_PATH = {
@@ -387,12 +390,16 @@ function App({ initialView = "dashboard" }) {
     const raw = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
     return { active: !!raw, branchKey: raw.toLowerCase(), branchLabel: raw };
   }, [currentRole, currentUser?.branch, authenticatedUser?.branch]);
+  const branchCounselorIdentitySet = useMemo(() => {
+    if (!managerDataScope.active || !managerDataScope.branchLabel) return new Set();
+    return buildBranchCounselorIdentitySet(employees, managerDataScope.branchLabel);
+  }, [employees, managerDataScope.active, managerDataScope.branchLabel]);
   const managerScopedStudents = useMemo(() => {
     if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return students;
-    return students.filter(
-      (s) => String(s.branch || "").trim().toLowerCase() === managerDataScope.branchKey
+    return students.filter((s) =>
+      studentMatchesManagerBranch(s, managerDataScope.branchLabel, branchCounselorIdentitySet)
     );
-  }, [students, currentRole, managerDataScope.active, managerDataScope.branchKey]);
+  }, [students, currentRole, managerDataScope.active, managerDataScope.branchLabel, branchCounselorIdentitySet]);
   const managerScopedStudentIds = useMemo(
     () =>
       new Set(
@@ -412,10 +419,8 @@ function App({ initialView = "dashboard" }) {
   }, [tasks, currentRole, managerDataScope.active, managerScopedStudentIds]);
   const managerScopedEmployees = useMemo(() => {
     if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return employees;
-    return employees.filter(
-      (e) => String(e.branch || "").trim().toLowerCase() === managerDataScope.branchKey
-    );
-  }, [employees, currentRole, managerDataScope.active, managerDataScope.branchKey]);
+    return employees.filter((e) => branchesMatch(e.branch, managerDataScope.branchLabel));
+  }, [employees, currentRole, managerDataScope.active, managerDataScope.branchLabel]);
   const managerScopedActivities = useMemo(() => {
     if ((currentRole !== "Manager" && currentRole !== "Admin") || !managerDataScope.active) return activities;
     return activities.filter((a) => {
@@ -2140,7 +2145,7 @@ function App({ initialView = "dashboard" }) {
         canApproveInvoicePayments: currentRole === "Manager"
       });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
-      if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, students: managerDataScope.active ? mgrStudents : void 0, branchScopedStudents: managerDataScope.active });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
