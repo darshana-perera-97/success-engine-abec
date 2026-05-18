@@ -1428,6 +1428,8 @@ function App({ initialView = "dashboard" }) {
       counselor: counselorId,
       notes,
       city: String(requestRow.city || "").trim(),
+      livingStatus: String(requestRow.livingStatus || "").trim(),
+      visaRejectionAnyCountry: String(requestRow.visaRejectionAnyCountry || "No").trim(),
       currentEducationLevel: String(requestRow.currentEducationLevel || "").trim(),
       intendedProgram: String(requestRow.intendedProgram || "").trim(),
       message: String(requestRow.message || "").trim(),

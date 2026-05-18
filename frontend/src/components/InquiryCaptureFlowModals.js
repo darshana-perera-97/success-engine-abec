@@ -1,35 +1,16 @@
 import React, { Fragment, useEffect, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { Plus, Trash2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "./Button";
 import { getBranches, getCountries, moveStudentToRequests } from "../authApi";
 import { getInquiryIntakeSlaRemainingParts } from "../pipeline";
-
-const EDUCATION_LEVELS = [
-  "High school",
-  "Foundation / pathway",
-  "Diploma",
-  "Bachelor's degree",
-  "Master's degree",
-  "Doctorate / PhD",
-  "Professional qualification",
-  "Other"
-];
-
-function newInquiryExamResultRow() {
-  return { id: `er-${Date.now()}-${Math.floor(Math.random() * 1e6)}`, examName: "", result: "" };
-}
-
-function examResultsRowsFromStudent(student) {
-  const raw = student?.examResults;
-  if (!Array.isArray(raw) || raw.length === 0) return [newInquiryExamResultRow()];
-  const rows = raw.map((r, idx) => ({
-    id: String(r?.id || "").trim() || `er-${idx}-${Date.now()}`,
-    examName: String(r?.examName ?? r?.exam ?? r?.name ?? ""),
-    result: String(r?.result ?? r?.score ?? "")
-  }));
-  return rows.length ? rows : [newInquiryExamResultRow()];
-}
+import {
+  examResultsRowsFromStudent,
+  InquiryIntakeForm,
+  inquiryFormToStudentFields,
+  newInquiryExamResultRow,
+  validateInquiryFormRequired
+} from "./InquiryIntakeForm";
 
 export function InquirySlaBadge({ startedAt, nowMs }) {
   const meta = getInquiryIntakeSlaRemainingParts(startedAt, nowMs);
@@ -65,6 +46,10 @@ const InquiryCaptureFlowModals = ({
     countryToVisit: "",
     nearestOffice: "",
     city: "",
+    livingStatus: "",
+    budget: "",
+    budgetCurrency: "LKR",
+    visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
     message: "",
@@ -117,6 +102,10 @@ const InquiryCaptureFlowModals = ({
       countryToVisit: String(student.countryToVisit || student.country || countries[0] || ""),
       nearestOffice: String(student.nearestOffice || student.branch || offices[0] || ""),
       city: String(student.city || ""),
+      livingStatus: String(student.livingStatus || ""),
+      budget: String(student.budget || ""),
+      budgetCurrency: String(student.budgetCurrency || "LKR"),
+      visaRejectionAnyCountry: String(student.visaRejectionAnyCountry || "No"),
       currentEducationLevel: String(student.currentEducationLevel || ""),
       intendedProgram: String(student.intendedProgram || ""),
       message: String(student.message || ""),
@@ -147,30 +136,6 @@ const InquiryCaptureFlowModals = ({
     onClear?.();
   };
 
-  const updateInquiryExamRow = (id, field, value) => {
-    setInquiryForm((prev) => ({
-      ...prev,
-      examResults: (prev.examResults || []).map((row) => (row.id === id ? { ...row, [field]: value } : row))
-    }));
-  };
-
-  const addInquiryExamRow = () => {
-    setInquiryForm((prev) => ({
-      ...prev,
-      examResults: [...(prev.examResults || []), newInquiryExamResultRow()]
-    }));
-  };
-
-  const removeInquiryExamRow = (id) => {
-    setInquiryForm((prev) => {
-      const rows = prev.examResults || [];
-      if (rows.length <= 1) {
-        return { ...prev, examResults: [newInquiryExamResultRow()] };
-      }
-      return { ...prev, examResults: rows.filter((r) => r.id !== id) };
-    });
-  };
-
   const handleSaveInquiry = async (e) => {
     e.preventDefault();
     const studentId = String(target?.student?.id || "").trim();
@@ -180,45 +145,18 @@ const InquiryCaptureFlowModals = ({
       setInquiryError("Student not found.");
       return;
     }
-    setIsSavingInquiry(true);
-    setInquiryError("");
-    const sanitizedExamResults = (inquiryForm.examResults || [])
-      .map((row) => ({
-        examName: String(row.examName || "").trim(),
-        result: String(row.result || "").trim()
-      }))
-      .filter((row) => row.examName || row.result);
-    const updatedStudent = {
-      ...existingStudent,
-      name: String(inquiryForm.name || "").trim(),
-      email: String(inquiryForm.email || "").trim(),
-      phone: String(inquiryForm.phone || "").trim(),
-      countryToVisit: String(inquiryForm.countryToVisit || "").trim(),
-      nearestOffice: String(inquiryForm.nearestOffice || "").trim(),
-      city: String(inquiryForm.city || "").trim(),
-      currentEducationLevel: String(inquiryForm.currentEducationLevel || "").trim(),
-      intendedProgram: String(inquiryForm.intendedProgram || "").trim(),
-      message: String(inquiryForm.message || "").trim(),
-      examResults: sanitizedExamResults,
-      country: String(inquiryForm.countryToVisit || "").trim() || existingStudent.country,
-      branch: String(inquiryForm.nearestOffice || "").trim() || existingStudent.branch,
-      status: existingStudent.status,
-      priority: String(inquiryForm.priority || "").trim() || existingStudent.priority,
-      notes: existingStudent.notes
-    };
-    if (
-      !updatedStudent.name ||
-      !updatedStudent.email ||
-      !updatedStudent.phone ||
-      !updatedStudent.countryToVisit ||
-      !updatedStudent.nearestOffice ||
-      !updatedStudent.currentEducationLevel ||
-      !updatedStudent.intendedProgram
-    ) {
-      setIsSavingInquiry(false);
-      setInquiryError("Please fill all required interest form fields.");
+    const validation = validateInquiryFormRequired(inquiryForm);
+    if (!validation.ok) {
+      setInquiryError(validation.error);
       return;
     }
+    setIsSavingInquiry(true);
+    setInquiryError("");
+    const updatedStudent = inquiryFormToStudentFields(inquiryForm, {
+      ...existingStudent,
+      status: existingStudent.status,
+      notes: existingStudent.notes
+    });
     try {
       await onUpdateStudent?.(updatedStudent);
       setSummaryStudent(updatedStudent);
@@ -346,273 +284,17 @@ const InquiryCaptureFlowModals = ({
                   })
                 ]
               }),
-              /* @__PURE__ */ jsxs("form", {
+              /* @__PURE__ */ jsx(InquiryIntakeForm, {
+                form: inquiryForm,
+                setForm: setInquiryForm,
+                countries,
+                offices,
+                error: inquiryError,
+                isSaving: isSavingInquiry,
                 onSubmit: handleSaveInquiry,
-                className: "p-5 space-y-4 overflow-y-auto",
-                children: [
-                  inquiryError
-                    ? /* @__PURE__ */ jsx("div", {
-                        className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2",
-                        children: inquiryError
-                      })
-                    : null,
-                  /* @__PURE__ */ jsxs("div", {
-                    className: "grid grid-cols-1 sm:grid-cols-2 gap-3",
-                    children: [
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Name" }),
-                          /* @__PURE__ */ jsx("input", {
-                            type: "text",
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.name,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, name: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Email" }),
-                          /* @__PURE__ */ jsx("input", {
-                            type: "email",
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.email,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, email: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Phone" }),
-                          /* @__PURE__ */ jsx("input", {
-                            type: "tel",
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.phone,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, phone: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", {
-                            className: "text-xs font-semibold text-slate-700 mb-1 block",
-                            children: "Country you wish to visit"
-                          }),
-                          /* @__PURE__ */ jsxs("select", {
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.countryToVisit,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, countryToVisit: e.target.value })),
-                            children: [
-                              /* @__PURE__ */ jsx("option", { value: "", children: "Select..." }),
-                              ...(countries || []).map((country) => /* @__PURE__ */ jsx("option", { value: country, children: country }, country))
-                            ]
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Nearest office" }),
-                          /* @__PURE__ */ jsxs("select", {
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.nearestOffice,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, nearestOffice: e.target.value })),
-                            children: [
-                              /* @__PURE__ */ jsx("option", { value: "", children: "Select..." }),
-                              ...(offices || []).map((office) => /* @__PURE__ */ jsx("option", { value: office, children: office }, office))
-                            ]
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "City / location" }),
-                          /* @__PURE__ */ jsx("input", {
-                            type: "text",
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.city,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, city: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        children: [
-                          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Priority" }),
-                          /* @__PURE__ */ jsxs("select", {
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.priority,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, priority: e.target.value })),
-                            children: [
-                              /* @__PURE__ */ jsx("option", { value: "Low", children: "Low" }),
-                              /* @__PURE__ */ jsx("option", { value: "Medium", children: "Medium" }),
-                              /* @__PURE__ */ jsx("option", { value: "High", children: "High" })
-                            ]
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        className: "sm:col-span-2",
-                        children: [
-                          /* @__PURE__ */ jsx("label", {
-                            className: "text-xs font-semibold text-slate-700 mb-1 block",
-                            children: "Current education level"
-                          }),
-                          /* @__PURE__ */ jsxs("select", {
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.currentEducationLevel,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, currentEducationLevel: e.target.value })),
-                            children: [
-                              /* @__PURE__ */ jsx("option", { value: "", children: "Select..." }),
-                              ...EDUCATION_LEVELS.map((level) => /* @__PURE__ */ jsx("option", { value: level, children: level }, level))
-                            ]
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        className: "sm:col-span-2",
-                        children: [
-                          /* @__PURE__ */ jsx("label", {
-                            className: "text-xs font-semibold text-slate-700 mb-1 block",
-                            children: "Intended program of study"
-                          }),
-                          /* @__PURE__ */ jsx("input", {
-                            type: "text",
-                            required: true,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.intendedProgram,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, intendedProgram: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        className: "sm:col-span-2",
-                        children: [
-                          /* @__PURE__ */ jsx("label", {
-                            className: "text-xs font-semibold text-slate-700 mb-1 block",
-                            children: "Additional message"
-                          }),
-                          /* @__PURE__ */ jsx("textarea", {
-                            rows: 3,
-                            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                            value: inquiryForm.message,
-                            onChange: (e) => setInquiryForm((prev) => ({ ...prev, message: e.target.value }))
-                          })
-                        ]
-                      }),
-                      /* @__PURE__ */ jsxs("div", {
-                        className: "sm:col-span-2",
-                        children: [
-                          /* @__PURE__ */ jsxs("div", {
-                            className: "flex flex-wrap items-center justify-between gap-2 mb-1",
-                            children: [
-                              /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700", children: "Exam results" }),
-                              /* @__PURE__ */ jsxs(Button, {
-                                type: "button",
-                                variant: "ghost",
-                                size: "sm",
-                                className: "shrink-0",
-                                onClick: addInquiryExamRow,
-                                children: [/* @__PURE__ */ jsx(Plus, { size: 14, className: "mr-1" }), "Add row"]
-                              })
-                            ]
-                          }),
-                          /* @__PURE__ */ jsx("p", {
-                            className: "text-[11px] text-slate-500 mb-2",
-                            children: "Optional. Add as many rows as you need (exam or qualification name and score or grade)."
-                          }),
-                          /* @__PURE__ */ jsx("div", {
-                            className: "border border-gray-200 rounded-md overflow-hidden",
-                            children: /* @__PURE__ */ jsxs("table", {
-                              className: "w-full text-sm",
-                              children: [
-                                /* @__PURE__ */ jsx("thead", {
-                                  className: "bg-slate-50 border-b border-gray-200",
-                                  children: /* @__PURE__ */ jsxs("tr", {
-                                    children: [
-                                      /* @__PURE__ */ jsx("th", {
-                                        className: "text-left px-3 py-2 text-xs font-semibold text-slate-600",
-                                        children: "Exam name"
-                                      }),
-                                      /* @__PURE__ */ jsx("th", {
-                                        className: "text-left px-3 py-2 text-xs font-semibold text-slate-600",
-                                        children: "Result"
-                                      }),
-                                      /* @__PURE__ */ jsx("th", { className: "w-11 px-1 py-2", children: "" })
-                                    ]
-                                  })
-                                }),
-                                /* @__PURE__ */ jsx("tbody", {
-                                  className: "divide-y divide-gray-100 bg-white",
-                                  children: (inquiryForm.examResults || []).map((row) =>
-                                    /* @__PURE__ */ jsxs(
-                                      "tr",
-                                      {
-                                        children: [
-                                          /* @__PURE__ */ jsx("td", {
-                                            className: "px-2 py-1.5 align-middle",
-                                            children: /* @__PURE__ */ jsx("input", {
-                                              type: "text",
-                                              className:
-                                                "w-full min-w-0 px-2 py-1.5 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                                              value: row.examName,
-                                              onChange: (e) => updateInquiryExamRow(row.id, "examName", e.target.value),
-                                              placeholder: "e.g. IELTS"
-                                            })
-                                          }),
-                                          /* @__PURE__ */ jsx("td", {
-                                            className: "px-2 py-1.5 align-middle",
-                                            children: /* @__PURE__ */ jsx("input", {
-                                              type: "text",
-                                              className:
-                                                "w-full min-w-0 px-2 py-1.5 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-                                              value: row.result,
-                                              onChange: (e) => updateInquiryExamRow(row.id, "result", e.target.value),
-                                              placeholder: "e.g. 7.5"
-                                            })
-                                          }),
-                                          /* @__PURE__ */ jsx("td", {
-                                            className: "px-1 py-1.5 align-middle text-center",
-                                            children: /* @__PURE__ */ jsx("button", {
-                                              type: "button",
-                                              className:
-                                                "inline-flex items-center justify-center rounded-md p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50",
-                                              "aria-label": "Remove row",
-                                              onClick: () => removeInquiryExamRow(row.id),
-                                              children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
-                                            })
-                                          })
-                                        ]
-                                      },
-                                      row.id
-                                    )
-                                  )
-                                })
-                              ]
-                            })
-                          })
-                        ]
-                      })
-                    ]
-                  }),
-                  /* @__PURE__ */ jsxs("div", {
-                    className: "flex justify-end gap-2 pt-2 border-t border-gray-100",
-                    children: [
-                      /* @__PURE__ */ jsx(Button, {
-                        type: "button",
-                        variant: "ghost",
-                        onClick: closeInquiryPopup,
-                        disabled: isSavingInquiry,
-                        children: "Cancel"
-                      }),
-                      /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isSavingInquiry, children: "Save" })
-                    ]
-                  })
-                ]
+                onCancel: closeInquiryPopup,
+                submitLabel: "Save",
+                cancelLabel: "Cancel"
               })
             ]
           })
@@ -725,7 +407,7 @@ const InquiryCaptureFlowModals = ({
                           value: summaryBranch,
                           onChange: (e) => setSummaryBranch(e.target.value),
                           children: [
-                            /* @__PURE__ */ jsx("option", { value: "", children: "Select..." }),
+                            /* @__PURE__ */ jsx("option", { value: "", disabled: true, children: "Select..." }),
                             ...(offices || []).map((office) => /* @__PURE__ */ jsx("option", { value: office, children: office }, office))
                           ]
                         }),

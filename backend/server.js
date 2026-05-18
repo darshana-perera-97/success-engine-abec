@@ -3495,6 +3495,8 @@ const server = http.createServer(async (req, res) => {
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
       const message = String(body.message || "").trim();
+      const livingStatus = String(body.livingStatus || "").trim();
+      const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim();
 
       if (!name || !email || !phone || !countryToVisitRaw) {
         sendJson(res, 400, {
@@ -3545,6 +3547,24 @@ const server = http.createServer(async (req, res) => {
         nearestOffice = matchedOffice;
       }
 
+      const allowedLivingStatuses = new Set(["Married", "Single"]);
+      if (!livingStatus || !allowedLivingStatuses.has(livingStatus)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Please choose a valid living status (Married or Single).",
+        });
+        return;
+      }
+      const allowedYesNo = new Set(["Yes", "No"]);
+      const visaRejection = visaRejectionAnyCountry || "No";
+      if (!allowedYesNo.has(visaRejection)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Please choose Yes or No for visa rejection history.",
+        });
+        return;
+      }
+
       const entry = {
         id: `REQ-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
         submittedAt: new Date().toISOString(),
@@ -3554,6 +3574,8 @@ const server = http.createServer(async (req, res) => {
         countryToVisit: String(matchedCountry).trim(),
         city: city || null,
         nearestOffice,
+        livingStatus,
+        visaRejectionAnyCountry: visaRejection,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
         message: message || null,
@@ -4740,6 +4762,8 @@ const server = http.createServer(async (req, res) => {
         String(body.lastEducationDate || "").trim() || new Date().toISOString().split("T")[0];
       const documents = Array.isArray(body.documents) ? body.documents : [];
       const city = String(body.city || "").trim();
+      const livingStatus = String(body.livingStatus || "").trim();
+      const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
       const message = String(body.message || "").trim();
@@ -4807,6 +4831,8 @@ const server = http.createServer(async (req, res) => {
         lastEducationDate,
         documents,
         city: city || null,
+        livingStatus: livingStatus || null,
+        visaRejectionAnyCountry: visaRejectionAnyCountry || null,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
         message: message || null,

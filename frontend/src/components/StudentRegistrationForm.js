@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
+import { LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
 import { Button } from "./Button";
 
 const EDUCATION_LEVELS = [
@@ -29,6 +30,8 @@ export function StudentRegistrationForm() {
     countryToVisit: "",
     city: "",
     nearestOffice: "",
+    livingStatus: "",
+    visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
     message: ""
@@ -83,6 +86,8 @@ export function StudentRegistrationForm() {
       countryToVisit: form.countryToVisit.trim(),
       city: form.city.trim(),
       nearestOffice: form.nearestOffice.trim(),
+      livingStatus: form.livingStatus.trim(),
+      visaRejectionAnyCountry: form.visaRejectionAnyCountry.trim(),
       currentEducationLevel: form.currentEducationLevel,
       intendedProgram: form.intendedProgram.trim(),
       message: form.message.trim()
@@ -240,6 +245,45 @@ export function StudentRegistrationForm() {
               onChange={(e) => update("city", e.target.value)}
               placeholder="Where you currently live"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Living status <span className="text-rose-500">*</span>
+            </label>
+            <select
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.livingStatus}
+              onChange={(e) => update("livingStatus", e.target.value)}
+            >
+              <option value="" disabled>
+                Select…
+              </option>
+              {LIVING_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
+              Any visa rejection for any country <span className="text-rose-500">*</span>
+            </label>
+            <select
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              value={form.visaRejectionAnyCountry}
+              onChange={(e) => update("visaRejectionAnyCountry", e.target.value)}
+            >
+              {YES_NO_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>

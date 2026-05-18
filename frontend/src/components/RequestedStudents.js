@@ -44,6 +44,8 @@ const DETAIL_FIELD_ORDER = [
   ["nearestOffice", "Nearest office"],
   ["countryToVisit", "Country to visit"],
   ["city", "City"],
+  ["livingStatus", "Living status"],
+  ["visaRejectionAnyCountry", "Visa rejection (any country)"],
   ["currentEducationLevel", "Current education"],
   ["intendedProgram", "Intended program"],
   ["message", "Message"],

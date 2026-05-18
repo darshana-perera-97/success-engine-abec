@@ -493,7 +493,7 @@ const StudentList = ({
         isOpen: isAddModalOpen,
         onClose: () => setIsAddModalOpen(false),
         onSubmit: handleAddStudent,
-        onNavigate,
+        onUpdateStudent,
         userRole,
         currentUser,
         counselorOptions
