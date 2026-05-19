@@ -36,7 +36,13 @@ const MEETING_DATA_FILE = path.join(DATA_DIR, "meetingData.json");
 const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
-const ST_INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
+function resolveStInvoicesSourcePath() {
+  const fromEnv = String(process.env.ST_INVOICES_SOURCE || "").trim();
+  if (!fromEnv) return path.join(DATA_DIR, "invoices.json");
+  return path.isAbsolute(fromEnv) ? path.resolve(fromEnv) : path.resolve(DATA_DIR, fromEnv);
+}
+/** Read-only source for GET /api/st-invoices (defaults to DATA_DIR/invoices.json). */
+const ST_INVOICES_SOURCE_FILE = resolveStInvoicesSourcePath();
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
 const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
@@ -541,29 +547,74 @@ async function writeInvoices(invoices) {
   await fs.writeFile(INVOICES_FILE, JSON.stringify(invoices, null, 2));
 }
 
-async function readStInvoices() {
-  let fromSt = [];
+/** Extract invoice rows from invoices.json without using readInvoices(). */
+function extractStInvoiceRecords(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed.filter((row) => row && typeof row === "object");
+  }
+  if (parsed && typeof parsed === "object") {
+    for (const key of ["invoices", "data", "items", "records"]) {
+      if (Array.isArray(parsed[key])) {
+        return parsed[key].filter((row) => row && typeof row === "object");
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * Direct file read for /api/st-invoices — separate from the /api/invoices store helpers.
+ */
+async function loadStInvoicesFromFile() {
+  const sourceFile = ST_INVOICES_SOURCE_FILE;
+  const readAt = new Date().toISOString();
+  const baseMeta = {
+    store: "st-invoices",
+    source: path.basename(sourceFile),
+    readAt,
+  };
   try {
-    const raw = await fs.readFile(ST_INVOICES_FILE, "utf8");
-    fromSt = parseJsonArray(JSON.parse(raw));
+    const [raw, stat] = await Promise.all([fs.readFile(sourceFile, "utf8"), fs.stat(sourceFile)]);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {
+        records: [],
+        meta: {
+          ...baseMeta,
+          exists: true,
+          count: 0,
+          fileSizeBytes: stat.size,
+          fileModifiedAt: stat.mtime.toISOString(),
+          parseError: "Invalid JSON in source file.",
+        },
+      };
+    }
+    const records = extractStInvoiceRecords(parsed);
+    return {
+      records,
+      meta: {
+        ...baseMeta,
+        exists: true,
+        count: records.length,
+        fileSizeBytes: stat.size,
+        fileModifiedAt: stat.mtime.toISOString(),
+      },
+    };
   } catch (error) {
-    if (error && error.code !== "ENOENT") throw error;
+    if (error && error.code === "ENOENT") {
+      return {
+        records: [],
+        meta: {
+          ...baseMeta,
+          exists: false,
+          count: 0,
+        },
+      };
+    }
+    throw error;
   }
-  if (fromSt.length > 0) return fromSt;
-  const legacy = await readInvoices();
-  if (legacy.length > 0) {
-    await writeStInvoices(legacy);
-  }
-  return legacy;
-}
-
-async function writeStInvoices(invoices) {
-  await fs.mkdir(path.dirname(ST_INVOICES_FILE), { recursive: true });
-  await fs.writeFile(ST_INVOICES_FILE, JSON.stringify(invoices, null, 2));
-}
-
-async function mirrorStInvoicesStore(invoices) {
-  await writeStInvoices(Array.isArray(invoices) ? invoices : []);
 }
 
 const { pathToFileURL } = require("url");
@@ -3882,12 +3933,16 @@ const server = http.createServer(async (req, res) => {
         /\/+$/,
         ""
       );
-      let invoices = await readStInvoices();
+      const { records, meta } = await loadStInvoicesFromFile();
       const studentId = String(url.searchParams.get("studentId") || "").trim();
+      const rawMode =
+        String(url.searchParams.get("raw") || "").trim().toLowerCase() === "1" ||
+        String(url.searchParams.get("raw") || "").trim().toLowerCase() === "true";
+      let filtered = records;
       if (studentId) {
-        invoices = invoices.filter((inv) => String(inv.studentId || "").trim() === studentId);
+        filtered = filtered.filter((inv) => String(inv.studentId || "").trim() === studentId);
       }
-      const data = invoices.map((inv) => publicInvoiceRecord(req, inv));
+      const data = rawMode ? filtered : filtered.map((inv) => publicInvoiceRecord(req, inv));
       if (invoiceId && url.pathname !== "/api/st-invoices") {
         const match = data.find((inv) => String(inv.id || "").trim() === invoiceId);
         if (!match) {
@@ -3896,32 +3951,36 @@ const server = http.createServer(async (req, res) => {
         }
         logEvent("invoice", "GET /api/st-invoices/:id", {
           host: req.headers.host || "",
-          file: ST_INVOICES_FILE,
+          file: ST_INVOICES_SOURCE_FILE,
           invoiceId,
+          raw: rawMode,
         });
-        sendJson(res, 200, { ok: true, data: match });
+        sendJson(res, 200, { ok: true, data: match, meta: { ...meta, count: 1, filteredByStudentId: studentId || undefined } });
         return;
       }
       const payload = {
         ok: true,
         data,
         meta: {
+          ...meta,
           count: data.length,
-          store: "invoices.json",
-          legacyFallback: true,
+          filteredByStudentId: studentId || undefined,
+          raw: rawMode,
         },
       };
       logEvent("invoice", "GET /api/st-invoices", {
         host: req.headers.host || "",
-        file: ST_INVOICES_FILE,
+        file: ST_INVOICES_SOURCE_FILE,
         count: data.length,
         studentId: studentId || undefined,
+        raw: rawMode,
+        sourceExists: meta.exists,
         responseBytes: Buffer.byteLength(JSON.stringify(payload), "utf8"),
       });
       sendJson(res, 200, payload);
     } catch (error) {
       console.error("st-invoices read failed:", error);
-      sendJson(res, 500, { ok: false, error: "Failed to load student invoices." });
+      sendJson(res, 500, { ok: false, error: "Failed to load st-invoices store." });
     }
     return;
   }
@@ -4207,7 +4266,6 @@ const server = http.createServer(async (req, res) => {
       const invoices = await readInvoices();
       const nextInvoices = [invoice, ...invoices];
       await writeInvoices(nextInvoices);
-      await mirrorStInvoicesStore(nextInvoices);
       sendJson(res, 201, { ok: true, data: invoice });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -4261,7 +4319,6 @@ const server = http.createServer(async (req, res) => {
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
-      await mirrorStInvoicesStore(updated);
 
       let invoiceWhatsappNotification = null;
       if (isAcceptingPayment || isRejectingPayment) {
@@ -4367,7 +4424,6 @@ const server = http.createServer(async (req, res) => {
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
-      await mirrorStInvoicesStore(updated);
       sendJson(res, 200, { ok: true, data: merged });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -6194,7 +6250,7 @@ server.on("error", (error) => {
 async function logDataStoreStatus() {
   const stores = [
     ["invoices.json", INVOICES_FILE],
-    ["invoices.json", ST_INVOICES_FILE],
+    ["st-invoices source", ST_INVOICES_SOURCE_FILE],
     ["studemts.json", STUDEMTS_FILE],
     ["tasks.json", TASKS_FILE],
     ["branches.json", BRANCHES_FILE],
@@ -6220,10 +6276,12 @@ async function logDataStoreStatus() {
     console.warn(`invoices.json: failed to read ${INVOICES_FILE}`, error);
   }
   try {
-    const stInvoiceCount = (await readStInvoices()).length;
-    console.log(`invoices.json: ${stInvoiceCount} record(s) at ${ST_INVOICES_FILE}`);
+    const stStore = await loadStInvoicesFromFile();
+    console.log(
+      `st-invoices (${stStore.meta.source}): ${stStore.meta.count} record(s) at ${ST_INVOICES_SOURCE_FILE}`
+    );
   } catch (error) {
-    console.warn(`invoices.json: failed to read ${ST_INVOICES_FILE}`, error);
+    console.warn(`st-invoices: failed to read ${ST_INVOICES_SOURCE_FILE}`, error);
   }
 }
 
