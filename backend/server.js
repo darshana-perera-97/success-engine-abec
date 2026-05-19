@@ -36,6 +36,7 @@ const MEETING_DATA_FILE = path.join(DATA_DIR, "meetingData.json");
 const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
+const ST_INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
 const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
@@ -538,6 +539,31 @@ async function readInvoices() {
 async function writeInvoices(invoices) {
   await fs.mkdir(path.dirname(INVOICES_FILE), { recursive: true });
   await fs.writeFile(INVOICES_FILE, JSON.stringify(invoices, null, 2));
+}
+
+async function readStInvoices() {
+  let fromSt = [];
+  try {
+    const raw = await fs.readFile(ST_INVOICES_FILE, "utf8");
+    fromSt = parseJsonArray(JSON.parse(raw));
+  } catch (error) {
+    if (error && error.code !== "ENOENT") throw error;
+  }
+  if (fromSt.length > 0) return fromSt;
+  const legacy = await readInvoices();
+  if (legacy.length > 0) {
+    await writeStInvoices(legacy);
+  }
+  return legacy;
+}
+
+async function writeStInvoices(invoices) {
+  await fs.mkdir(path.dirname(ST_INVOICES_FILE), { recursive: true });
+  await fs.writeFile(ST_INVOICES_FILE, JSON.stringify(invoices, null, 2));
+}
+
+async function mirrorStInvoicesStore(invoices) {
+  await writeStInvoices(Array.isArray(invoices) ? invoices : []);
 }
 
 const { pathToFileURL } = require("url");
@@ -1116,6 +1142,33 @@ function publicStudentDocUrl(req, filePath) {
   }
   return filePath;
 }
+
+function publicInvoiceRecord(req, invoice) {
+  if (!invoice || typeof invoice !== "object") return invoice;
+  const next = { ...invoice };
+  const host = String(req.headers.host || "").trim();
+  const absolutize = (urlValue) => {
+    const u = String(urlValue || "").trim();
+    if (!u || !host) return u;
+    if (u.startsWith("/payments/") || u.startsWith("/chat-files/") || u.startsWith("/assets/")) {
+      return `http://${host}${u}`;
+    }
+    if (/^https?:\/\/localhost(:\d+)?/i.test(u)) {
+      const pathPart = u.replace(/^https?:\/\/[^/]+/i, "");
+      return pathPart ? `http://${host}${pathPart}` : u;
+    }
+    return u;
+  };
+  if (next.paymentProofUrl) next.paymentProofUrl = absolutize(next.paymentProofUrl);
+  if (next.generatedReceiptUrl) {
+    const receipt = String(next.generatedReceiptUrl || "");
+    if (receipt.startsWith("/chat-files/")) {
+      next.generatedReceiptUrl = publicChatFileUrl(req, receipt);
+    } else {
+      next.generatedReceiptUrl = absolutize(receipt);
+    }
+  }
+  return next;}
 
 function publicStudentRecord(req, student) {
   if (!student || typeof student !== "object") return student;
@@ -3823,6 +3876,56 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname.startsWith("/api/st-invoices")) {
+    try {
+      const invoiceId = decodeURIComponent(url.pathname.replace("/api/st-invoices/", "").trim()).replace(
+        /\/+$/,
+        ""
+      );
+      let invoices = await readStInvoices();
+      const studentId = String(url.searchParams.get("studentId") || "").trim();
+      if (studentId) {
+        invoices = invoices.filter((inv) => String(inv.studentId || "").trim() === studentId);
+      }
+      const data = invoices.map((inv) => publicInvoiceRecord(req, inv));
+      if (invoiceId && url.pathname !== "/api/st-invoices") {
+        const match = data.find((inv) => String(inv.id || "").trim() === invoiceId);
+        if (!match) {
+          sendJson(res, 404, { ok: false, error: "Invoice not found." });
+          return;
+        }
+        logEvent("invoice", "GET /api/st-invoices/:id", {
+          host: req.headers.host || "",
+          file: ST_INVOICES_FILE,
+          invoiceId,
+        });
+        sendJson(res, 200, { ok: true, data: match });
+        return;
+      }
+      const payload = {
+        ok: true,
+        data,
+        meta: {
+          count: data.length,
+          store: "invoices.json",
+          legacyFallback: true,
+        },
+      };
+      logEvent("invoice", "GET /api/st-invoices", {
+        host: req.headers.host || "",
+        file: ST_INVOICES_FILE,
+        count: data.length,
+        studentId: studentId || undefined,
+        responseBytes: Buffer.byteLength(JSON.stringify(payload), "utf8"),
+      });
+      sendJson(res, 200, payload);
+    } catch (error) {
+      console.error("st-invoices read failed:", error);
+      sendJson(res, 500, { ok: false, error: "Failed to load student invoices." });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/tasks") {
     try {
       const tasks = await readTasks();
@@ -4102,7 +4205,9 @@ const server = http.createServer(async (req, res) => {
       }
       invoice.whatsappDelivery = whatsappDelivery;
       const invoices = await readInvoices();
-      await writeInvoices([invoice, ...invoices]);
+      const nextInvoices = [invoice, ...invoices];
+      await writeInvoices(nextInvoices);
+      await mirrorStInvoicesStore(nextInvoices);
       sendJson(res, 201, { ok: true, data: invoice });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -4156,6 +4261,7 @@ const server = http.createServer(async (req, res) => {
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
+      await mirrorStInvoicesStore(updated);
 
       let invoiceWhatsappNotification = null;
       if (isAcceptingPayment || isRejectingPayment) {
@@ -4261,6 +4367,7 @@ const server = http.createServer(async (req, res) => {
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
+      await mirrorStInvoicesStore(updated);
       sendJson(res, 200, { ok: true, data: merged });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -6087,6 +6194,7 @@ server.on("error", (error) => {
 async function logDataStoreStatus() {
   const stores = [
     ["invoices.json", INVOICES_FILE],
+    ["invoices.json", ST_INVOICES_FILE],
     ["studemts.json", STUDEMTS_FILE],
     ["tasks.json", TASKS_FILE],
     ["branches.json", BRANCHES_FILE],
@@ -6110,6 +6218,12 @@ async function logDataStoreStatus() {
     console.log(`invoices.json: ${invoiceCount} record(s) at ${INVOICES_FILE}`);
   } catch (error) {
     console.warn(`invoices.json: failed to read ${INVOICES_FILE}`, error);
+  }
+  try {
+    const stInvoiceCount = (await readStInvoices()).length;
+    console.log(`invoices.json: ${stInvoiceCount} record(s) at ${ST_INVOICES_FILE}`);
+  } catch (error) {
+    console.warn(`invoices.json: failed to read ${ST_INVOICES_FILE}`, error);
   }
 }
 
