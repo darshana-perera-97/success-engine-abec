@@ -3,7 +3,7 @@ node_modules/
 /data
 .wwebjs_cache
 
-# Runtime data — ignore bulky/sensitive dirs; JSON store files in data/ may be committed for deploys.
+# Runtime data — live server only; not committed. Ignore bulky/sensitive subdirs:
 /data/chats/
 /data/payments/
 /data/whatsapp-connections/

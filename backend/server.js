@@ -17,7 +17,13 @@ const {
 
 const PORT = parseInt(process.env.PORT || "", 10) || 3334;
 // Override with DATA_DIR on deploy when JSON stores live on a persistent volume (see backend/.env.example).
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
+// Relative paths resolve against this package (not process.cwd()) so PM2/Docker cwd does not matter.
+function resolveDataDir() {
+  const fromEnv = String(process.env.DATA_DIR || "").trim();
+  if (!fromEnv) return path.join(__dirname, "data");
+  return path.isAbsolute(fromEnv) ? path.resolve(fromEnv) : path.resolve(__dirname, fromEnv);
+}
+const DATA_DIR = resolveDataDir();
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const STUDEMTS_FILE = path.join(DATA_DIR, "studemts.json");
 const BRANCHES_FILE = path.join(DATA_DIR, "branches.json");
@@ -6093,11 +6099,17 @@ async function logDataStoreStatus() {
       missing.push(label);
     }
   }
-  console.log(`Data directory: ${DATA_DIR}`);
+  console.log(`Data directory (live server store): ${DATA_DIR}`);
   if (missing.length) {
     console.warn(
-      `Missing data files (API endpoints will return empty arrays until created): ${missing.join(", ")}`
+      `Missing data files (API endpoints will return empty arrays until created on the server): ${missing.join(", ")}`
     );
+  }
+  try {
+    const invoiceCount = (await readInvoices()).length;
+    console.log(`invoices.json: ${invoiceCount} record(s) at ${INVOICES_FILE}`);
+  } catch (error) {
+    console.warn(`invoices.json: failed to read ${INVOICES_FILE}`, error);
   }
 }
 

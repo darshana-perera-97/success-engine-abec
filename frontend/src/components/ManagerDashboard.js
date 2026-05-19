@@ -41,11 +41,13 @@ const ManagerDashboard = ({
   onSelectStudent,
   onNotify,
   canApproveInvoicePayments = false,
+  onUpdateTasks,
   pipelineStageEscalations = [],
   onOpenStageEscalationStudent
 }) => {
   const [activeTab, setActiveTab] = useState("escalations");
   const [acceptingInvoiceId, setAcceptingInvoiceId] = useState(null);
+  const [reviewingTaskId, setReviewingTaskId] = useState(null);
   const { quarter: calendarQuarter } = getCalendarQuarter();
   const quarterLabel = `Q${calendarQuarter}`;
   const quarterPaidInvoices = useMemo(
@@ -378,12 +380,43 @@ const ManagerDashboard = ({
                           /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: task.task }),
                           /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
                             "Submitted by ",
-                            task.assigned_to.join(", ")
+                            (Array.isArray(task.assigned_to) ? task.assigned_to : []).join(", ") || "—"
                           ] })
                         ] }),
-                        /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-                          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", className: "text-xs h-7", children: "Reject" }),
-                          /* @__PURE__ */ jsx(Button, { size: "sm", className: "text-xs h-7 bg-emerald-600 hover:bg-emerald-700", children: "Approve" })
+                        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2 shrink-0", children: [
+                          onUpdateTasks && /* @__PURE__ */ jsx(Button, {
+                            size: "sm",
+                            variant: "outline",
+                            className: "text-xs h-7",
+                            disabled: reviewingTaskId === task.id,
+                            onClick: () => {
+                              setReviewingTaskId(task.id);
+                              onUpdateTasks([{ ...task, status: "Pending" }]);
+                              setReviewingTaskId(null);
+                              onNotify?.(
+                                "Task returned",
+                                `"${task.task}" was sent back for rework.`,
+                                "warning"
+                              );
+                            },
+                            children: reviewingTaskId === task.id ? "Updating…" : "Reject"
+                          }),
+                          onUpdateTasks && /* @__PURE__ */ jsx(Button, {
+                            size: "sm",
+                            className: "text-xs h-7 bg-emerald-600 hover:bg-emerald-700",
+                            disabled: reviewingTaskId === task.id,
+                            onClick: () => {
+                              setReviewingTaskId(task.id);
+                              onUpdateTasks([{ ...task, status: "Completed" }]);
+                              setReviewingTaskId(null);
+                              onNotify?.(
+                                "Task approved",
+                                `"${task.task}" was marked completed.`,
+                                "success"
+                              );
+                            },
+                            children: reviewingTaskId === task.id ? "Approving…" : "Approve"
+                          })
                         ] })
                       ] }, task.id))
                     ] }),

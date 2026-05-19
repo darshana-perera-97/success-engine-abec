@@ -2116,6 +2116,7 @@ function App({ initialView = "dashboard" }) {
         onSelectStudent: handleSelectStudent,
         onNotify: addNotification,
         canApproveInvoicePayments: currentRole === "Manager",
+        onUpdateTasks: handleUpdateTasks,
         pipelineStageEscalations: mgrPipelineEscalations,
         onOpenStageEscalationStudent: openEscalationStudent
       };
