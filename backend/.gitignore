@@ -2,3 +2,10 @@ node_modules/
 .env
 /data
 .wwebjs_cache
+
+# Runtime data — ignore bulky/sensitive dirs; JSON store files in data/ may be committed for deploys.
+/data/chats/
+/data/payments/
+/data/whatsapp-connections/
+/data/studentDocs/
+/data/assets/

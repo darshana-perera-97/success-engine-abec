@@ -6,6 +6,8 @@ import { Calendar, Banknote } from "lucide-react";
 const FLAT_COMMISSION_LKR = 150;
 const VOLUME_BONUS_RATE = 0.002;
 const TARGET_REVENUE_LKR = 2000;
+/** Set to true when commission/payout amounts should be visible again. */
+const SHOW_INCENTIVE_MONEY = false;
 
 const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
 
@@ -108,9 +110,9 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
           /* @__PURE__ */ jsx(Banknote, { size: 20, className: "text-emerald-600" }),
           "Incentive & Commission Calculator"
         ] }),
-        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: 'Automated payout calculation based on "Visa" stage completion.' })
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: SHOW_INCENTIVE_MONEY ? 'Automated payout calculation based on "Visa" stage completion.' : 'Visa stage completion tracking by counselor.' })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-6", children: [
+      SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-6", children: [
         /* @__PURE__ */ jsxs("div", { className: "text-right hidden sm:block", children: [
           /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 uppercase font-bold", children: `Realized (${realizedMonthLabel})` }),
           /* @__PURE__ */ jsx("p", { className: "text-xl font-bold text-emerald-600", children: formatRawLKR(totalMonthPayout) })
@@ -124,9 +126,9 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
     /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
       /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 text-slate-500 font-medium border-b border-gray-200", children: /* @__PURE__ */ jsxs("tr", { children: [
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Counselor" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Target Progress" }),
+        SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Target Progress" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Visas Granted" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Total Commission" }),
+        SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Total Commission" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-center", children: "Status" })
       ] }) }),
       /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: incentiveData.map((agent) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors", children: [
@@ -137,7 +139,7 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
             /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: agent.branch })
           ] })
         ] }),
-        /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 w-64", children: [
+        SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 w-64", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-xs mb-1", children: [
             /* @__PURE__ */ jsxs("span", { className: "text-slate-500 font-medium", children: [
               formatRawLKR(agent.totalPayout),
@@ -161,8 +163,8 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
           /* @__PURE__ */ jsx("span", { className: "font-bold text-slate-900", children: agent.successCount }),
           /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "students" })
         ] }) }),
-        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-bold text-emerald-600 font-mono text-base", children: formatRawLKR(agent.totalPayout) }),
-        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-center", children: agent.totalPayout > 0 ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100", children: "Ready" }) : /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200", children: "-" }) })
+        SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-bold text-emerald-600 font-mono text-base", children: formatRawLKR(agent.totalPayout) }),
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-center", children: (SHOW_INCENTIVE_MONEY ? agent.totalPayout > 0 : agent.successCount > 0) ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100", children: "Ready" }) : /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200", children: "-" }) })
       ] }, agent.id)) })
     ] }) }),
     /* @__PURE__ */ jsxs("div", { className: "p-4 bg-slate-50 border-t border-gray-200 text-xs text-slate-500 flex justify-between items-center", children: [
@@ -170,7 +172,7 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
         /* @__PURE__ */ jsx(Calendar, { size: 14 }),
         /* @__PURE__ */ jsx("span", { children: `Calculation Period: ${periodStartLabel} - ${periodEndLabel}` })
       ] }),
-      /* @__PURE__ */ jsx("span", { children: "* Volume bonus calculated on confirmed tuition budget" })
+      SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("span", { children: "* Volume bonus calculated on confirmed tuition budget" })
     ] })
   ] });
 };

@@ -13,7 +13,7 @@ import {
   Area,
 } from "recharts";
 import { formatRawLKR } from "../utils";
-import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts } from "../pipeline";
+import { branchesMatch, normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts } from "../pipeline";
 import { Users, Globe, Briefcase, MapPin, Banknote } from "lucide-react";
 const PIE_COLORS = ["#3B82F6", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#6366F1"];
 const DESTINATION_SYNONYMS = new Map([
@@ -196,7 +196,13 @@ const Dashboard = ({ students = [], invoices = [], destinationCountries = [], br
       grouped.set(key, { name: key, students: 0, converted: 0 });
     });
     students.forEach((student) => {
-      const key = String(student.branch || "Unknown").trim() || "Unknown";
+      const studentBranch = String(student.branch || student.nearestOffice || "").trim();
+      if (!studentBranch) return;
+      const registeredLocation = branchLocations.find((location) =>
+        branchesMatch(location, studentBranch)
+      );
+      if (!registeredLocation) return;
+      const key = String(registeredLocation).trim();
       const current = grouped.get(key) || { name: key, students: 0, converted: 0 };
       current.students += 1;
       if (["Application", "Interview training", "Documentation", "Visa", "Enrolled", "Uni Application", "Offer Received", "Visa Pilot"].includes(normalizePipelineStatus(student.status))) {

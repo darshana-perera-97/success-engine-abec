@@ -149,15 +149,7 @@ const AdminDashboard = ({
   const overdueTasks = tasks.filter((t) => t.status === "Overdue").length;
   const totalUnresolvedViolations = students.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
   const totalStudents = students.length;
-  const branchesCount = React.useMemo(
-    () =>
-      new Set(
-        students
-          .map((s) => String(s?.branch || "").trim())
-          .filter(Boolean)
-      ).size,
-    [students]
-  );
+  const branchesCount = branchLocations.length;
   const openTasks = tasks.filter((t) => {
     const s = String(t?.status || "");
     return s !== "Completed" && s !== "Done";

@@ -16,29 +16,31 @@ const {
 } = require("./profileConfig");
 
 const PORT = parseInt(process.env.PORT || "", 10) || 3334;
-const USERS_FILE = path.join(__dirname, "data", "users.json");
-const STUDEMTS_FILE = path.join(__dirname, "data", "studemts.json");
-const BRANCHES_FILE = path.join(__dirname, "data", "branches.json");
-const COUNTRIES_FILE = path.join(__dirname, "data", "countries.json");
-const UNIVERSITY_FILE = path.join(__dirname, "data", "university.json");
-const CHATS_FILE = path.join(__dirname, "data", "chats.json");
-const ADMIN_CHATS_FILE = path.join(__dirname, "data", "adminChats.json");
-const ACTIVITIES_FILE = path.join(__dirname, "data", "activities.json");
-const MEETING_DATA_FILE = path.join(__dirname, "data", "meetingData.json");
-const BOOKINGS_FILE = path.join(__dirname, "data", "bookings.json");
-const APPOINTMENTS_FILE = path.join(__dirname, "data", "appointments.json");
-const INVOICES_FILE = path.join(__dirname, "data", "invoices.json");
-const TASKS_FILE = path.join(__dirname, "data", "tasks.json");
-const REQ_STUDENTS_FILE = path.join(__dirname, "data", "req-students.json");
-const WHATSAPP_CONNECTIONS_DIR = path.join(__dirname, "data", "whatsapp-connections");
-const WHATSAPP_INCOMING_FILE = path.join(__dirname, "data", "whatsapp-incoming.json");
-const CHAT_FILES_DIR = path.join(__dirname, "data", "chats");
-const ASSETS_DIR = path.join(__dirname, "data", "assets");
+// Override with DATA_DIR on deploy when JSON stores live on a persistent volume (see backend/.env.example).
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const STUDEMTS_FILE = path.join(DATA_DIR, "studemts.json");
+const BRANCHES_FILE = path.join(DATA_DIR, "branches.json");
+const COUNTRIES_FILE = path.join(DATA_DIR, "countries.json");
+const UNIVERSITY_FILE = path.join(DATA_DIR, "university.json");
+const CHATS_FILE = path.join(DATA_DIR, "chats.json");
+const ADMIN_CHATS_FILE = path.join(DATA_DIR, "adminChats.json");
+const ACTIVITIES_FILE = path.join(DATA_DIR, "activities.json");
+const MEETING_DATA_FILE = path.join(DATA_DIR, "meetingData.json");
+const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
+const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
+const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
+const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
+const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
+const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
+const WHATSAPP_INCOMING_FILE = path.join(DATA_DIR, "whatsapp-incoming.json");
+const CHAT_FILES_DIR = path.join(DATA_DIR, "chats");
+const ASSETS_DIR = path.join(DATA_DIR, "assets");
 const FRONTEND_BUILD_DIR = path.join(__dirname, "..", "frontend", "build");
 const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
-const STUDENT_CV_DIR = path.join(__dirname, "data", "studentDocs", "cv");
-const STUDENT_PERMISSIONS_DIR = path.join(__dirname, "data", "studentDocs", "permissions");
-const PAYMENTS_DIR = path.join(__dirname, "data", "payments");
+const STUDENT_CV_DIR = path.join(DATA_DIR, "studentDocs", "cv");
+const STUDENT_PERMISSIONS_DIR = path.join(DATA_DIR, "studentDocs", "permissions");
+const PAYMENTS_DIR = path.join(DATA_DIR, "payments");
 // Default avatar served when a user has no custom avatar uploaded.
 // Resolved via the SPA fallback to `frontend/public/companyIcon.png` (or the
 // equivalent file in the production build output).
@@ -506,11 +508,21 @@ async function writeAppointments(appointments) {
   await fs.writeFile(APPOINTMENTS_FILE, JSON.stringify(appointments, null, 2));
 }
 
+function parseJsonArray(parsed, arrayKeys = ["data", "invoices", "items"]) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object") {
+    for (const key of arrayKeys) {
+      if (Array.isArray(parsed[key])) return parsed[key];
+    }
+  }
+  return [];
+}
+
 async function readInvoices() {
   try {
     const raw = await fs.readFile(INVOICES_FILE, "utf8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return parseJsonArray(parsed);
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;
@@ -6059,8 +6071,32 @@ server.on("error", (error) => {
   console.error("Server failed to start:", error);
 });
 
+async function logDataStoreStatus() {
+  const stores = [
+    ["invoices.json", INVOICES_FILE],
+    ["studemts.json", STUDEMTS_FILE],
+    ["tasks.json", TASKS_FILE],
+    ["branches.json", BRANCHES_FILE],
+  ];
+  const missing = [];
+  for (const [label, filePath] of stores) {
+    try {
+      await fs.access(filePath);
+    } catch {
+      missing.push(label);
+    }
+  }
+  console.log(`Data directory: ${DATA_DIR}`);
+  if (missing.length) {
+    console.warn(
+      `Missing data files (API endpoints will return empty arrays until created): ${missing.join(", ")}`
+    );
+  }
+}
+
 server.listen(PORT, async () => {
   console.log(`Backend listening at http://localhost:${PORT}`);
+  await logDataStoreStatus();
   await initializeWhatsappSessionsOnStartup();
   setInterval(() => {
     reconnectActiveWhatsappSessions().catch((error) => {

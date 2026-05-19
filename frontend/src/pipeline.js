@@ -226,7 +226,7 @@ export function parseStudentBudgetLkr(student, ratesMap = {}) {
 
 /**
  * Per-branch metrics for Regional Conversion Performance and related analytics.
- * Merges registered branches with any branch labels present on student records.
+ * Only registered branches from `/api/branches` appear; students are attributed to those offices.
  * When `branchScopedStudents` is true (manager view), every student in `students` counts
  * toward `scopeBranch` — including those matched via branch counselors, not only `branch` field.
  */
@@ -253,15 +253,9 @@ export function buildBranchConversionMetrics({
     }
   };
 
-  if (scopeKey) {
-    registerLocation(scopeBranch);
-  }
   const branchList = Array.isArray(branches) ? branches : [];
   const employeeList = Array.isArray(employees) ? employees : [];
   branchList.forEach((branch) => registerLocation(branch?.location));
-  (Array.isArray(students) ? students : []).forEach((student) =>
-    registerLocation(getStudentBranchLabel(student))
-  );
 
   const registeredKeys = new Set(
     branchList.map((branch) => normalizeBranchKey(branch?.location)).filter(Boolean)
@@ -339,10 +333,7 @@ export function buildBranchConversionMetrics({
         paidInvoiceCount
       };
     })
-    .filter((row) => {
-      const rowKey = normalizeBranchKey(row.name);
-      return row.students > 0 || row.revenue > 0 || registeredKeys.has(rowKey);
-    })
+    .filter((row) => registeredKeys.has(normalizeBranchKey(row.name)))
     .sort((a, b) => b.revenue - a.revenue || b.students - a.students || a.name.localeCompare(b.name));
 }
 

@@ -7,7 +7,13 @@ import { IncentiveCalculator } from "./IncentiveCalculator";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
 import { buildUniversityOfferLetterRows, offerStatusBadgeClass } from "../utils/universityOfferLetters";
-import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
+import {
+  normalizePipelineStatus,
+  countOpenSlaRequirementViolations,
+  isPaidInvoice,
+  invoiceAmountLkr,
+  parseStudentBudgetLkr
+} from "../pipeline";
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { AlertOctagon, TrendingUp, ArrowRight, Zap, CheckSquare, Banknote, User, FileText } from "lucide-react";
 import { Button } from "./Button";
@@ -21,17 +27,6 @@ function isDateInCalendarQuarter(dateStr, refDate = new Date()) {
   const { quarter, year } = getCalendarQuarter(refDate);
   const dateQuarter = Math.floor(parsed.getMonth() / 3) + 1;
   return parsed.getFullYear() === year && dateQuarter === quarter;
-}
-function parseStudentBudgetLkr(student) {
-  const value = Number(String(student?.budget || "").replace(/[^\d.]/g, ""));
-  return Number.isFinite(value) ? value : 0;
-}
-function invoiceAmountLkr(invoice, ratesMap = EXCHANGE_RATES) {
-  const amount = Number(invoice?.amount);
-  if (!Number.isFinite(amount)) return 0;
-  const currency = String(invoice?.currency || "LKR").trim().toUpperCase();
-  const rate = ratesMap[currency] ?? ratesMap.USD;
-  return amount * rate;
 }
 const ManagerDashboard = ({
   activities,
@@ -53,22 +48,29 @@ const ManagerDashboard = ({
   const [acceptingInvoiceId, setAcceptingInvoiceId] = useState(null);
   const { quarter: calendarQuarter } = getCalendarQuarter();
   const quarterLabel = `Q${calendarQuarter}`;
-  const quarterInvoices = useMemo(
-    () => (invoices || []).filter((inv) => isDateInCalendarQuarter(inv.issueDate || inv.createdAt)),
+  const quarterPaidInvoices = useMemo(
+    () =>
+      (invoices || []).filter(
+        (inv) => isPaidInvoice(inv) && isDateInCalendarQuarter(inv.issueDate || inv.createdAt)
+      ),
     [invoices]
   );
-  const quarterInvoicedLkr = useMemo(
-    () => quarterInvoices.reduce((sum, inv) => sum + invoiceAmountLkr(inv), 0),
-    [quarterInvoices]
+  const collectedRevenueLkr = useMemo(
+    () =>
+      quarterPaidInvoices.reduce((sum, inv) => sum + invoiceAmountLkr(inv, EXCHANGE_RATES), 0),
+    [quarterPaidInvoices]
   );
-  const pipelineTargetLkr = useMemo(
-    () => students.reduce((sum, student) => sum + parseStudentBudgetLkr(student), 0),
+  const pipelineBudgetLkr = useMemo(
+    () => students.reduce((sum, student) => sum + parseStudentBudgetLkr(student, EXCHANGE_RATES), 0),
     [students]
   );
-  const estimatedRevenueLkr = quarterInvoicedLkr > 0 ? quarterInvoicedLkr : pipelineTargetLkr;
-  const revenueVsTargetPct = pipelineTargetLkr > 0 ? Math.round((estimatedRevenueLkr - pipelineTargetLkr) / pipelineTargetLkr * 100) : estimatedRevenueLkr > 0 ? null : 0;
-  const revenueTrendLabel = pipelineTargetLkr > 0 ? `${revenueVsTargetPct >= 0 ? "+" : ""}${revenueVsTargetPct}% vs target` : quarterInvoicedLkr > 0 ? `${quarterInvoices.length} invoice${quarterInvoices.length === 1 ? "" : "s"} · no budget target` : "No invoices or budgets";
-  const revenueTrendColor = pipelineTargetLkr > 0 ? revenueVsTargetPct >= 0 ? "text-emerald-600" : "text-rose-600" : quarterInvoicedLkr > 0 ? "text-slate-500" : "text-slate-500";
+  const revenueTrendLabel =
+    collectedRevenueLkr > 0
+      ? `${quarterPaidInvoices.length} paid invoice${quarterPaidInvoices.length === 1 ? "" : "s"} in ${quarterLabel}`
+      : pipelineBudgetLkr > 0
+        ? `No paid invoices in ${quarterLabel} · ${formatRawLKR(pipelineBudgetLkr)} inquiry budgets`
+        : `No paid invoices in ${quarterLabel}`;
+  const revenueTrendColor = collectedRevenueLkr > 0 ? "text-emerald-600" : "text-slate-500";
   const overdueTasks = (tasks || []).filter((t) => t.status !== "Completed" && isTaskOverdueByDate(t)).length;
   const timeRemainingHighPriorityTasks = (tasks || []).filter(
     (t) => t.status !== "Completed" && !isTaskOverdueByDate(t) && t.priority === "High"
@@ -106,8 +108,8 @@ const ManagerDashboard = ({
       /* @__PURE__ */ jsx(
         DashboardCard,
         {
-          title: `Est. Revenue (${quarterLabel})`,
-          value: formatRawLKR(estimatedRevenueLkr),
+          title: `Collected Revenue (${quarterLabel})`,
+          value: formatRawLKR(collectedRevenueLkr),
           icon: /* @__PURE__ */ jsx(Banknote, { size: 20 }),
           trend: revenueTrendLabel,
           trendColor: revenueTrendColor
