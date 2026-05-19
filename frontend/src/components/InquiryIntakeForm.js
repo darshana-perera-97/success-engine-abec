@@ -193,14 +193,22 @@ export function InquiryIntakeForm({
             value={form.countryToVisit}
             onChange={(e) => setForm((prev) => ({ ...prev, countryToVisit: e.target.value }))}
           >
-            <option value="" disabled>
-              Select...
-            </option>
-            {(countries || []).map((country) => (
-              <option key={country} value={country}>
-                {country}
-              </option>
-            ))}
+            {(countries || []).length === 0 ? (
+              <option value="">No destinations configured</option>
+            ) : (
+              <>
+                {!form.countryToVisit ? (
+                  <option value="" disabled>
+                    Select...
+                  </option>
+                ) : null}
+                {(countries || []).map((country) => (
+                  <option key={country} value={country}>
+                    {country}
+                  </option>
+                ))}
+              </>
+            )}
           </select>
         </div>
         <div>
@@ -211,14 +219,22 @@ export function InquiryIntakeForm({
             value={form.nearestOffice}
             onChange={(e) => setForm((prev) => ({ ...prev, nearestOffice: e.target.value }))}
           >
-            <option value="" disabled>
-              Select...
-            </option>
-            {(offices || []).map((office) => (
-              <option key={office} value={office}>
-                {office}
-              </option>
-            ))}
+            {(offices || []).length === 0 ? (
+              <option value="">No offices configured</option>
+            ) : (
+              <>
+                {!form.nearestOffice ? (
+                  <option value="" disabled>
+                    Select...
+                  </option>
+                ) : null}
+                {(offices || []).map((office) => (
+                  <option key={office} value={office}>
+                    {office}
+                  </option>
+                ))}
+              </>
+            )}
           </select>
         </div>
         <div>

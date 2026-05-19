@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { getBranches, getCountries } from "../authApi";
+import { InlineLoading } from "./LoadingPlaceholder";
 import {
   emptyInquiryForm,
   InquiryIntakeForm,
@@ -36,22 +37,28 @@ const AddStudentModal = ({
 }) => {
   const [countries, setCountries] = useState([]);
   const [offices, setOffices] = useState([]);
+  const [optionsReady, setOptionsReady] = useState(false);
   const [form, setForm] = useState(() => emptyInquiryForm());
   const [formError, setFormError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [assignedCounselorId, setAssignedCounselorId] = useState("");
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
-      if (cancelled) return;
-      const countryList = countriesRes.ok ? countriesRes.data || [] : [];
-      const officeList = branchesRes.ok
-        ? (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean)
-        : [];
-      setCountries(countryList);
-      setOffices(officeList);
+      try {
+        const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
+        if (cancelled) return;
+        const countryList = countriesRes.ok ? countriesRes.data || [] : [];
+        const officeList = branchesRes.ok
+          ? (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean)
+          : [];
+        setCountries(countryList);
+        setOffices(officeList);
+      } finally {
+        if (!cancelled) setOptionsReady(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -59,11 +66,28 @@ const AddStudentModal = ({
   }, []);
 
   useEffect(() => {
-    if (!isOpen) return;
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+    if (!justOpened) return;
     setFormError("");
     setForm(emptyInquiryForm({ countries, offices }));
-    setAssignedCounselorId(resolveCounselorId(userRole, currentUser, counselorOptions));
-  }, [isOpen, countries, offices, userRole, currentUser, counselorOptions]);
+    setAssignedCounselorId("");
+  }, [isOpen, countries, offices]);
+
+  useEffect(() => {
+    if (!isOpen || !optionsReady) return;
+    setForm((prev) => {
+      const countryToVisit = prev.countryToVisit || countries[0] || "";
+      const nearestOffice = prev.nearestOffice || offices[0] || "";
+      if (countryToVisit === prev.countryToVisit && nearestOffice === prev.nearestOffice) return prev;
+      return { ...prev, countryToVisit, nearestOffice };
+    });
+  }, [isOpen, optionsReady, countries, offices]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setAssignedCounselorId((prev) => prev || resolveCounselorId(userRole, currentUser, counselorOptions));
+  }, [isOpen, userRole, currentUser?.id, currentUser?.email, counselorOptions]);
 
   if (!isOpen) return null;
 
@@ -150,18 +174,22 @@ const AddStudentModal = ({
             <X size={18} />
           </button>
         </div>
-        <InquiryIntakeForm
-          form={form}
-          setForm={setForm}
-          countries={countries}
-          offices={offices}
-          error={formError}
-          isSaving={isSaving}
-          onSubmit={handleSubmit}
-          onCancel={handleClose}
-          submitLabel="Add Student"
-          cancelLabel="Cancel"
-        />
+        {!optionsReady ? (
+          <InlineLoading label="Loading form options…" className="py-16" />
+        ) : (
+          <InquiryIntakeForm
+            form={form}
+            setForm={setForm}
+            countries={countries}
+            offices={offices}
+            error={formError}
+            isSaving={isSaving}
+            onSubmit={handleSubmit}
+            onCancel={handleClose}
+            submitLabel="Add Student"
+            cancelLabel="Cancel"
+          />
+        )}
       </div>
     </div>
   );

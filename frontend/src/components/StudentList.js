@@ -159,7 +159,7 @@ const StudentList = ({
         email: currentUser.email || ""
       }
     ];
-  }, [accountCounselors, userRole, currentUser]);
+  }, [accountCounselors, userRole, currentUser?.id, currentUser?.email, currentUser?.name]);
   const countryOptions = useMemo(() => {
     return Array.from(new Set(students.map((s) => String(s.country || "").trim()).filter(Boolean)));
   }, [students]);
