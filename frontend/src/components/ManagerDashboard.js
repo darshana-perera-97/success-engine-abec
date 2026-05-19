@@ -5,12 +5,34 @@ import { EscalationDesk } from "./EscalationDesk";
 import { StageEscalations } from "./StageEscalations";
 import { IncentiveCalculator } from "./IncentiveCalculator";
 import { LeaderboardWidget } from "./LeaderboardWidget";
-import { formatLKR } from "../utils";
+import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
 import { buildUniversityOfferLetterRows, offerStatusBadgeClass } from "../utils/universityOfferLetters";
 import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { AlertOctagon, TrendingUp, ArrowRight, Zap, CheckSquare, Banknote, User, FileText } from "lucide-react";
 import { Button } from "./Button";
+function getCalendarQuarter(date = new Date()) {
+  const month = date.getMonth();
+  return { quarter: Math.floor(month / 3) + 1, year: date.getFullYear() };
+}
+function isDateInCalendarQuarter(dateStr, refDate = new Date()) {
+  const parsed = new Date(dateStr || "");
+  if (Number.isNaN(parsed.getTime())) return false;
+  const { quarter, year } = getCalendarQuarter(refDate);
+  const dateQuarter = Math.floor(parsed.getMonth() / 3) + 1;
+  return parsed.getFullYear() === year && dateQuarter === quarter;
+}
+function parseStudentBudgetLkr(student) {
+  const value = Number(String(student?.budget || "").replace(/[^\d.]/g, ""));
+  return Number.isFinite(value) ? value : 0;
+}
+function invoiceAmountLkr(invoice, ratesMap = EXCHANGE_RATES) {
+  const amount = Number(invoice?.amount);
+  if (!Number.isFinite(amount)) return 0;
+  const currency = String(invoice?.currency || "LKR").trim().toUpperCase();
+  const rate = ratesMap[currency] ?? ratesMap.USD;
+  return amount * rate;
+}
 const ManagerDashboard = ({
   activities,
   tasks,
@@ -25,12 +47,28 @@ const ManagerDashboard = ({
   onNotify,
   canApproveInvoicePayments = false,
   pipelineStageEscalations = [],
-  pipelineRequirementViolations = [],
   onOpenStageEscalationStudent
 }) => {
   const [activeTab, setActiveTab] = useState("escalations");
   const [acceptingInvoiceId, setAcceptingInvoiceId] = useState(null);
-  const totalRevenue = students.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 0.1, 0);
+  const { quarter: calendarQuarter } = getCalendarQuarter();
+  const quarterLabel = `Q${calendarQuarter}`;
+  const quarterInvoices = useMemo(
+    () => (invoices || []).filter((inv) => isDateInCalendarQuarter(inv.issueDate || inv.createdAt)),
+    [invoices]
+  );
+  const quarterInvoicedLkr = useMemo(
+    () => quarterInvoices.reduce((sum, inv) => sum + invoiceAmountLkr(inv), 0),
+    [quarterInvoices]
+  );
+  const pipelineTargetLkr = useMemo(
+    () => students.reduce((sum, student) => sum + parseStudentBudgetLkr(student), 0),
+    [students]
+  );
+  const estimatedRevenueLkr = quarterInvoicedLkr > 0 ? quarterInvoicedLkr : pipelineTargetLkr;
+  const revenueVsTargetPct = pipelineTargetLkr > 0 ? Math.round((estimatedRevenueLkr - pipelineTargetLkr) / pipelineTargetLkr * 100) : estimatedRevenueLkr > 0 ? null : 0;
+  const revenueTrendLabel = pipelineTargetLkr > 0 ? `${revenueVsTargetPct >= 0 ? "+" : ""}${revenueVsTargetPct}% vs target` : quarterInvoicedLkr > 0 ? `${quarterInvoices.length} invoice${quarterInvoices.length === 1 ? "" : "s"} · no budget target` : "No invoices or budgets";
+  const revenueTrendColor = pipelineTargetLkr > 0 ? revenueVsTargetPct >= 0 ? "text-emerald-600" : "text-rose-600" : quarterInvoicedLkr > 0 ? "text-slate-500" : "text-slate-500";
   const overdueTasks = (tasks || []).filter((t) => t.status !== "Completed" && isTaskOverdueByDate(t)).length;
   const timeRemainingHighPriorityTasks = (tasks || []).filter(
     (t) => t.status !== "Completed" && !isTaskOverdueByDate(t) && t.priority === "High"
@@ -55,8 +93,7 @@ const ManagerDashboard = ({
   const visaTrendTier = successRate >= 75 ? "Top tier" : successRate >= 40 ? "On track" : inActivePipeline === 0 ? "" : "Building pipeline";
   const visaTrendDisplay = visaTrendTier ? `${visaTrendLabel} · ${visaTrendTier}` : visaTrendLabel;
   const offerLetterRows = useMemo(() => buildUniversityOfferLetterRows(students, employees), [students, employees]);
-  const stagePipelineDeskCount =
-    (pipelineStageEscalations?.length || 0) + (pipelineRequirementViolations?.length || 0);
+  const stagePipelineDeskCount = pipelineStageEscalations?.length || 0;
   const escalationDeskTabTotal = overdueTasks + stagePipelineDeskCount;
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4", children: [
@@ -69,11 +106,11 @@ const ManagerDashboard = ({
       /* @__PURE__ */ jsx(
         DashboardCard,
         {
-          title: "Est. Revenue (Q3)",
-          value: formatLKR(totalRevenue),
+          title: `Est. Revenue (${quarterLabel})`,
+          value: formatRawLKR(estimatedRevenueLkr),
           icon: /* @__PURE__ */ jsx(Banknote, { size: 20 }),
-          trend: "+12% vs target",
-          trendColor: "text-emerald-600"
+          trend: revenueTrendLabel,
+          trendColor: revenueTrendColor
         }
       ),
       /* @__PURE__ */ jsx(
@@ -204,7 +241,6 @@ const ManagerDashboard = ({
                     children: [
                       /* @__PURE__ */ jsx(StageEscalations, {
                         escalations: pipelineStageEscalations,
-                        requirementViolations: pipelineRequirementViolations,
                         employees,
                         variant: "manager",
                         embedded: true,

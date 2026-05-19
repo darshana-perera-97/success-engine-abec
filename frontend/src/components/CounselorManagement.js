@@ -15,7 +15,6 @@ import {
   ThumbsUp,
   Activity,
   Target,
-  AlertOctagon,
   X,
   Plus,
   Mail,
@@ -25,7 +24,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
-import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts } from "../pipeline";
 import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   XAxis,
@@ -231,6 +230,20 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     const counselor = counselors.find((c) => c.id === selectedCounselorId);
     if (!counselor) return null;
     const funnelData = buildCounselorFunnelSeries(counselor.students);
+    const pipelineStageCounts = computePipelineStageCounts(counselor.students || []);
+    const pipelineHealthPalette = ["#6366F1", "#F59E0B", "#A855F7", "#F97316", "#14B8A6", "#22C55E", "#38BDF8"];
+    const pipelineHealthRows = PIPELINE_STEPS.map((stage, idx) => ({
+      stage,
+      count: pipelineStageCounts.byStage[stage] ?? 0,
+      color: pipelineHealthPalette[idx % pipelineHealthPalette.length]
+    }));
+    if (pipelineStageCounts.other > 0) {
+      pipelineHealthRows.push({
+        stage: "Other / unmapped",
+        count: pipelineStageCounts.other,
+        color: "#94A3B8"
+      });
+    }
     const counselorCriticalTasks = counselor.tasks.filter(
       (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
     );
@@ -384,49 +397,26 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             /* @__PURE__ */ jsx(Area, { type: "monotone", dataKey: "count", stroke: "#4F46E5", strokeWidth: 2, fillOpacity: 1, fill: "url(#colorCount)" })
           ] }) }) })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col", children: [
-          /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 mb-4 flex items-center gap-2", children: [
-            /* @__PURE__ */ jsx(AlertOctagon, { size: 18, className: "text-slate-400" }),
-            "Capacity & Risk"
-          ] }),
-          /* @__PURE__ */ jsxs("div", { className: "flex-1 flex flex-col justify-center space-y-8", children: [
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-2", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-600 font-medium", children: "Active Students" }),
-                /* @__PURE__ */ jsxs("span", { className: "font-bold text-slate-900", children: [
-                  counselor.metrics.activeStudents,
-                  " / 35"
-                ] })
-              ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-gray-100 rounded-full h-3 overflow-hidden", children: /* @__PURE__ */ jsx(
-                "div",
-                {
-                  className: `h-full rounded-full transition-all duration-1000 ${counselor.metrics.capacityLoad > 90 ? "bg-rose-500" : "bg-emerald-500"}`,
-                  style: { width: `${counselor.metrics.capacityLoad}%` }
-                }
-              ) }),
-              counselor.metrics.capacityLoad > 90 && /* @__PURE__ */ jsxs("p", { className: "text-xs text-rose-600 mt-2 flex items-center gap-1 font-medium", children: [
-                /* @__PURE__ */ jsx(AlertTriangle, { size: 12 }),
-                " Overloaded: Stop assigning new leads."
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-2", children: [
-                /* @__PURE__ */ jsx("span", { className: "text-slate-600 font-medium", children: "SLA Compliance" }),
-                /* @__PURE__ */ jsxs("span", { className: "font-bold text-slate-900", children: [
-                  counselor.metrics.sla,
-                  "%"
-                ] })
-              ] }),
-              /* @__PURE__ */ jsx("div", { className: "w-full bg-gray-100 rounded-full h-3 overflow-hidden", children: /* @__PURE__ */ jsx(
-                "div",
-                {
-                  className: `h-full rounded-full transition-all duration-1000 ${counselor.metrics.sla < 90 ? "bg-amber-500" : "bg-indigo-500"}`,
-                  style: { width: `${counselor.metrics.sla}%` }
-                }
-              ) })
+        /* @__PURE__ */ jsxs("div", { className: "bg-[#0F172A] p-6 rounded-xl shadow-lg text-white flex flex-col", children: [
+          /* @__PURE__ */ jsxs("div", { className: "mb-4", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider", children: "Pipeline Health" }),
+            /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
+              "Students by stage (",
+              pipelineStageCounts.total,
+              " total)"
             ] })
-          ] })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1 flex-1", children: pipelineHealthRows.map(({ stage, count, color }) => {
+            const denom = Math.max(1, pipelineStageCounts.total);
+            const widthPct = Math.round(count / denom * 100);
+            return /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1 gap-2", children: [
+                /* @__PURE__ */ jsx("span", { className: "text-slate-300 truncate", title: stage, children: stage }),
+                /* @__PURE__ */ jsx("span", { className: "font-bold tabular-nums shrink-0", children: count })
+              ] }),
+              /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-700 rounded-full h-1.5", children: /* @__PURE__ */ jsx("div", { className: "h-1.5 rounded-full transition-[width] duration-300", style: { width: `${widthPct}%`, backgroundColor: color } }) })
+            ] }, stage);
+          }) })
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-6", children: [

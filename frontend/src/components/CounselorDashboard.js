@@ -12,7 +12,6 @@ import {
   normalizePipelineStatus,
   computePipelineEscalations,
   computePipelineStageCounts,
-  computeRequirementViolations,
   countOpenSlaRequirementViolations
 } from "../pipeline";
 const DAY_MS = 86400000;
@@ -88,7 +87,6 @@ const CounselorDashboard = ({
   }, [currentUser?.id]);
   const myStudents = students;
   const stageEscalations = useMemo(() => computePipelineEscalations(myStudents || []), [myStudents]);
-  const requirementViolationRows = useMemo(() => computeRequirementViolations(myStudents || []), [myStudents]);
   const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents, counselorIdentitySet);
   const overdueTasksCount = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
   const totalUnresolvedViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
@@ -344,21 +342,6 @@ const CounselorDashboard = ({
                     " ",
                     stageEscalations.length === 1 ? "student has" : "students have",
                     " exceeded the time limit for their current pipeline stage."
-                  ] })
-                ] })
-              ] }),
-              /* @__PURE__ */ jsx(Button, { size: "sm", variant: "danger", className: "shrink-0", onClick: () => onNavigate("stage-escalations"), children: "Review" })
-            ] }),
-            requirementViolationRows.length > 0 && /* @__PURE__ */ jsxs("div", { className: "p-3 bg-rose-50 border border-rose-200 rounded-lg flex justify-between items-center gap-3 flex-wrap", children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
-                /* @__PURE__ */ jsx("div", { className: "shrink-0", children: /* @__PURE__ */ jsx(AlertTriangle, { size: 18, className: "text-rose-600" }) }),
-                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-                  /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-rose-950", children: "SLA requirement warning" }),
-                  /* @__PURE__ */ jsxs("p", { className: "text-xs text-rose-800 mt-0.5", children: [
-                    requirementViolationRows.length,
-                    " open ",
-                    requirementViolationRows.length === 1 ? "notice" : "notices",
-                    " — students advanced without completing mandatory requirements."
                   ] })
                 ] })
               ] }),

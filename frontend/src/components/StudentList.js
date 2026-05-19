@@ -2,7 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock } from "lucide-react";
-import { getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
+import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
@@ -78,7 +78,8 @@ const StudentList = ({
   userRole,
   currentUser,
   authenticatedUser,
-  counselorIdentitySet = null
+  counselorIdentitySet = null,
+  scopeBranch = null
 }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
@@ -131,7 +132,8 @@ const StudentList = ({
         }).map((row) => ({
           id: row.id,
           name: row.username || row.email,
-          email: row.email || ""
+          email: row.email || "",
+          branch: String(row.branch || row.office || "").trim()
         }));
         setAccountCounselors(options);
       } finally {
@@ -141,7 +143,10 @@ const StudentList = ({
     loadCounselorAccounts();
   }, []);
   const counselorOptions = useMemo(() => {
-    const base = accountCounselors;
+    let base = accountCounselors;
+    if (String(userRole || "") === "Manager" && scopeBranch) {
+      base = base.filter((item) => branchesMatch(item.branch, scopeBranch));
+    }
     if (String(userRole || "") !== "Counselor" || !currentUser) {
       return base;
     }
@@ -159,7 +164,7 @@ const StudentList = ({
         email: currentUser.email || ""
       }
     ];
-  }, [accountCounselors, userRole, currentUser?.id, currentUser?.email, currentUser?.name]);
+  }, [accountCounselors, userRole, scopeBranch, currentUser?.id, currentUser?.email, currentUser?.name]);
   const countryOptions = useMemo(() => {
     return Array.from(new Set(students.map((s) => String(s.country || "").trim()).filter(Boolean)));
   }, [students]);
@@ -496,7 +501,8 @@ const StudentList = ({
         onUpdateStudent,
         userRole,
         currentUser,
-        counselorOptions
+        counselorOptions,
+        scopeBranch
       }
     ),
     assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [

@@ -32,11 +32,8 @@ import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "./apiConfig";
 import {
   buildBranchCounselorIdentitySet,
   computePipelineEscalations,
-  computeRequirementViolations,
   filterEscalationsForCounselor,
   filterEscalationsForManager,
-  filterRequirementViolationsForCounselor,
-  filterRequirementViolationsForManager,
   normalizePipelineStatus,
   reconcileStudentSlaViolationsWithDocuments,
   studentMatchesManagerBranch,
@@ -609,50 +606,18 @@ function App({ initialView = "dashboard" }) {
     () => filterEscalationsForCounselor(pipelineEscalationsAll, currentUser, countryCoordinatorScopedStudents),
     [pipelineEscalationsAll, currentUser, countryCoordinatorScopedStudents]
   );
-  const requirementViolationsAll = useMemo(
-    () => computeRequirementViolations(students),
-    [students]
-  );
-  const managerScopedRequirementViolations = useMemo(() => {
-    if (currentRole !== "Manager" && currentRole !== "Admin") return [];
-    if (!managerDataScope.active || !managerDataScope.branchLabel) return requirementViolationsAll;
-    return filterRequirementViolationsForManager(requirementViolationsAll, managerDataScope.branchLabel);
-  }, [
-    requirementViolationsAll,
-    currentRole,
-    managerDataScope.active,
-    managerDataScope.branchLabel
-  ]);
-  const teamLeadScopedRequirementViolations = useMemo(() => {
-    if (currentRole !== "Team Lead") return [];
-    const b = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
-    if (!b) return requirementViolationsAll;
-    return filterRequirementViolationsForManager(requirementViolationsAll, b);
-  }, [requirementViolationsAll, currentRole, currentUser?.branch, authenticatedUser?.branch]);
-  const counselorScopedRequirementViolations = useMemo(
-    () => filterRequirementViolationsForCounselor(requirementViolationsAll, currentUser, counselorScopedStudents),
-    [requirementViolationsAll, currentUser, counselorScopedStudents]
-  );
-  const countryCoordinatorScopedRequirementViolations = useMemo(
-    () => filterRequirementViolationsForCounselor(requirementViolationsAll, currentUser, countryCoordinatorScopedStudents),
-    [requirementViolationsAll, currentUser, countryCoordinatorScopedStudents]
-  );
   const pipelineEscalationNavBadge = useMemo(() => {
     if (currentRole === "Admin") {
       if (managerDataScope.active && managerDataScope.branchLabel) {
-        const total = managerScopedEscalations.length + managerScopedRequirementViolations.length;
-        return total > 0 ? String(total) : "";
+        return managerScopedEscalations.length > 0 ? String(managerScopedEscalations.length) : "";
       }
-      const total = pipelineEscalationsAll.length + requirementViolationsAll.length;
-      return total > 0 ? String(total) : "";
+      return pipelineEscalationsAll.length > 0 ? String(pipelineEscalationsAll.length) : "";
     }
     if (currentRole === "Manager") {
-      const total = managerScopedEscalations.length + managerScopedRequirementViolations.length;
-      return total > 0 ? String(total) : "";
+      return managerScopedEscalations.length > 0 ? String(managerScopedEscalations.length) : "";
     }
     if (currentRole === "Team Lead") {
-      const total = teamLeadScopedEscalations.length + teamLeadScopedRequirementViolations.length;
-      return total > 0 ? String(total) : "";
+      return teamLeadScopedEscalations.length > 0 ? String(teamLeadScopedEscalations.length) : "";
     }
     return "";
   }, [
@@ -660,28 +625,23 @@ function App({ initialView = "dashboard" }) {
     pipelineEscalationsAll.length,
     managerScopedEscalations.length,
     teamLeadScopedEscalations.length,
-    requirementViolationsAll.length,
-    managerScopedRequirementViolations.length,
-    teamLeadScopedRequirementViolations.length,
     managerDataScope.active,
     managerDataScope.branchLabel
   ]);
   const counselorStageNavBadge = useMemo(() => {
     if (currentRole === "Counselor") {
-      const total = counselorScopedEscalations.length + counselorScopedRequirementViolations.length;
-      return total > 0 ? String(total) : "";
+      return counselorScopedEscalations.length > 0 ? String(counselorScopedEscalations.length) : "";
     }
     if (currentRole === "Country Coordinator") {
-      const total = countryCoordinatorScopedEscalations.length + countryCoordinatorScopedRequirementViolations.length;
-      return total > 0 ? String(total) : "";
+      return countryCoordinatorScopedEscalations.length > 0
+        ? String(countryCoordinatorScopedEscalations.length)
+        : "";
     }
     return "";
   }, [
     currentRole,
     counselorScopedEscalations.length,
-    countryCoordinatorScopedEscalations.length,
-    counselorScopedRequirementViolations.length,
-    countryCoordinatorScopedRequirementViolations.length
+    countryCoordinatorScopedEscalations.length
   ]);
   const headerAvatar = currentRole === "Admin" ? toAbsoluteAssetUrl(adminAvatar) : toAbsoluteAssetUrl(currentUser?.avatar) || DEFAULT_USER_AVATAR;
 
@@ -2088,10 +2048,8 @@ function App({ initialView = "dashboard" }) {
       };
       if (currentView === "stage-escalations") {
         const coordEsc = currentRole === "Counselor" ? counselorScopedEscalations : countryCoordinatorScopedEscalations;
-        const coordReq = currentRole === "Counselor" ? counselorScopedRequirementViolations : countryCoordinatorScopedRequirementViolations;
         return /* @__PURE__ */ jsx(StageEscalations, {
           escalations: coordEsc,
-          requirementViolations: coordReq,
           employees,
           variant: "counselor",
           onOpenStudent: openEscalationStudent
@@ -2132,7 +2090,9 @@ function App({ initialView = "dashboard" }) {
         currentRole === "Manager" && managerDataScope.active
           ? { ...studentProfileProps, tasks: mgrTasks, invoices: managerScopedInvoices }
           : studentProfileProps;
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, {
+      const mgrPipelineEscalations =
+        currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
+      const managerDashboardProps = {
         activities: mgrActivities,
         tasks: mgrTasks,
         students: mgrStudents,
@@ -2144,19 +2104,20 @@ function App({ initialView = "dashboard" }) {
         onUpdateInvoice: handleUpdateInvoice,
         onSelectStudent: handleSelectStudent,
         onNotify: addNotification,
-        canApproveInvoicePayments: currentRole === "Manager"
-      });
+        canApproveInvoicePayments: currentRole === "Manager",
+        pipelineStageEscalations: mgrPipelineEscalations,
+        onOpenStageEscalationStudent: openEscalationStudent
+      };
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
       if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, students: managerDataScope.active ? mgrStudents : void 0, branchScopedStudents: managerDataScope.active });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
-        const reqBlock = currentRole === "Manager" ? managerScopedRequirementViolations : teamLeadScopedRequirementViolations;
         return /* @__PURE__ */ jsxs(Fragment, {
           children: [
             /* @__PURE__ */ jsx(StageEscalations, {
               escalations: escBlock,
-              requirementViolations: reqBlock,
               employees: mgrEmployees,
               variant: "manager",
               onOpenStudent: openEscalationStudent
@@ -2177,7 +2138,7 @@ function App({ initialView = "dashboard" }) {
           ]
         });
       }
-      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
@@ -2186,20 +2147,7 @@ function App({ initialView = "dashboard" }) {
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       }
-      return /* @__PURE__ */ jsx(ManagerDashboard, {
-        activities: mgrActivities,
-        tasks: mgrTasks,
-        students: mgrStudents,
-        employees: mgrEmployees,
-        currentUser,
-        onNavigate: handleNavigate,
-        onReassignDeskTask: handleReassignDeskTask,
-        invoices: mgrProfileProps.invoices,
-        onUpdateInvoice: handleUpdateInvoice,
-        onSelectStudent: handleSelectStudent,
-        onNotify: addNotification,
-        canApproveInvoicePayments: currentRole === "Manager"
-      });
+      return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
     }
     const adminBranchScoped = currentRole === "Admin" && managerDataScope.active;
     const adminViewStudents = adminBranchScoped ? managerScopedStudents : students;
@@ -2271,7 +2219,6 @@ function App({ initialView = "dashboard" }) {
           children: [
             /* @__PURE__ */ jsx(StageEscalations, {
               escalations: managerScopedEscalations,
-              requirementViolations: managerScopedRequirementViolations,
               employees,
               variant: "admin",
               onOpenStudent: openEscalationStudent

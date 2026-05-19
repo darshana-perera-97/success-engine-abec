@@ -1412,7 +1412,7 @@ const StudentProfile = ({
           })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm flex flex-col lg:flex-row items-stretch overflow-hidden", children: [
-          /* @__PURE__ */ jsxs("div", { className: "w-full lg:w-3/4 p-4 overflow-x-auto hide-scrollbar border-b lg:border-b-0 lg:border-r border-gray-100", children: [
+          /* @__PURE__ */ jsxs("div", { className: "w-full lg:w-3/4 p-4 overflow-x-auto overflow-y-hidden hide-scrollbar border-b lg:border-b-0 lg:border-r border-gray-100", children: [
             /* @__PURE__ */ jsx("div", { className: "flex items-center mb-3 px-1", children: /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold uppercase tracking-widest", children: [
               /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "Staging Progress" }),
               /* @__PURE__ */ jsx("span", { className: "mx-1 text-slate-300", children: "|" }),
@@ -1423,11 +1423,11 @@ const StudentProfile = ({
                 " Steps"
               ] })
               ] }) }),
-            /* @__PURE__ */ jsx("nav", { className: "flex items-center gap-2 min-w-max pb-1", children: PIPELINE_STEPS.map((step, idx) => {
+            /* @__PURE__ */ jsx("nav", { className: "flex items-center gap-2 min-w-max py-0.5", children: PIPELINE_STEPS.map((step, idx) => {
               const isCompleted = idx < currentStepIndex;
               const isCurrent = idx === currentStepIndex;
               return /* @__PURE__ */ jsxs(React.Fragment, { children: [
-                /* @__PURE__ */ jsxs("div", { className: `flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap ${isCurrent ? "bg-nexgenai-navy text-white shadow-md shadow-slate-200 scale-105" : isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-transparent"}`, children: [
+                /* @__PURE__ */ jsxs("div", { className: `flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap ${isCurrent ? "bg-nexgenai-navy text-white shadow-md shadow-slate-200 ring-2 ring-indigo-200" : isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-transparent"}`, children: [
                   isCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "text-emerald-500" }) : /* @__PURE__ */ jsx("span", { className: `w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${isCurrent ? "bg-white text-nexgenai-navy" : "bg-slate-200 text-slate-500"}`, children: idx + 1 }),
                   /* @__PURE__ */ jsx("span", { children: step })
                 ] }),
@@ -1495,12 +1495,12 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: !String(contactDialog.email || "").trim() || !String(contactDialog.phone || "").trim(), children: "Save changes" })
           ] })
         ] }) }),
-        advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
-          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50/80 flex items-center justify-between", children: [
+        advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col my-auto", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50/80 flex items-center justify-between shrink-0", children: [
             /* @__PURE__ */ jsx("h3", { className: "text-sm font-bold text-slate-900", children: "Move to next stage" }),
             /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
+          /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4 overflow-y-auto flex-1 min-h-0", children: [
             /* @__PURE__ */ jsxs("div", { className: "bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800", children: [
               /* @__PURE__ */ jsxs("p", { className: "font-semibold", children: ["Upcoming stage: ", nextStep || "N/A"] }),
               /* @__PURE__ */ jsx("p", { className: "mt-1", children: "Review pending tasks and assign who will continue counseling for remaining stages." })
@@ -1550,7 +1550,7 @@ const StudentProfile = ({
               ] })
             ] })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white", children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white shrink-0", children: [
             /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0, children: "Confirm & Continue" })
           ] })
