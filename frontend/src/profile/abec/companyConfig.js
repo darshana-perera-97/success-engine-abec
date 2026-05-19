@@ -1,5 +1,6 @@
 import companyIcon from "./assets/companyIcon.png";
 import companyFullLogo from "./assets/company-full-logo.png";
+import { resolveApiBase } from "../../resolveApiBase";
 
 // ABEC Premier company branding and API configuration.
 export const COMPANY_NAME = "ABEC Premier";
@@ -10,7 +11,7 @@ export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
 export const RESUME_BUILDER_TITLE = "Premier AI Resume Builder";
 
-export const API_BASE = "https://abec-dev.nexgenai.asia";
+export const API_BASE = resolveApiBase("https://abec-dev.nexgenai.asia");
 export const DEFAULT_USER_AVATAR = companyIcon;
 export const COMPANY_FULL_LOGO = companyFullLogo;
 

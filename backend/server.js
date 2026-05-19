@@ -3803,12 +3803,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/invoices") {
     try {
       const invoices = await readInvoices();
-      logEvent("invoice", "GET /api/invoices — invoices.json", {
+      const payload = { ok: true, data: invoices };
+      logEvent("invoice", "GET /api/invoices", {
+        host: req.headers.host || "",
         file: INVOICES_FILE,
         count: invoices.length,
-        data: invoices,
+        responseBytes: Buffer.byteLength(JSON.stringify(payload), "utf8"),
       });
-      sendJson(res, 200, { ok: true, data: invoices });
+      sendJson(res, 200, payload);
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load invoices." });
     }
