@@ -3850,6 +3850,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/api/st-invoices" || url.pathname === "/api/st-invoices/")
+  ) {
+    sendJson(res, 200, { ok: true, message: "hello" });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/tasks") {
     try {
       const tasks = await readTasks();
@@ -6099,11 +6107,6 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false, error: "Frontend build not found. Run frontend build first." });
       return;
     }
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/st-invoices") {
-    sendJson(res, 200, { ok: true, message: "hello" });
-    return;
   }
 
   sendJson(res, 404, { ok: false, error: "Not found." });
