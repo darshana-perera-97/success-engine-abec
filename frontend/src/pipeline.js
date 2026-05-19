@@ -199,6 +199,31 @@ export function isVisaGrantedStatus(status) {
   return stage === "Visa" || stage === "Enrolled" || String(status || "").trim() === "Visa Pilot";
 }
 
+/** Invoice total in LKR for analytics (amount × FX rate). */
+export function invoiceAmountLkr(invoice, ratesMap = {}) {
+  const amount = Number(invoice?.amount);
+  if (!Number.isFinite(amount)) return 0;
+  const currency = String(invoice?.currency || "LKR").trim().toUpperCase();
+  const rate = ratesMap[currency] ?? ratesMap.USD ?? 1;
+  return amount * rate;
+}
+
+const PAID_INVOICE_STATUSES = new Set(["paid"]);
+
+export function isPaidInvoice(invoice) {
+  return PAID_INVOICE_STATUSES.has(String(invoice?.status || "").trim().toLowerCase());
+}
+
+/** Annual budget from inquiry form, converted to LKR (not realized revenue). */
+export function parseStudentBudgetLkr(student, ratesMap = {}) {
+  const raw = Number(String(student?.budget || "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  const currency = String(student?.budgetCurrency || "LKR").trim().toUpperCase();
+  if (currency === "LKR") return raw;
+  const rate = ratesMap[currency] ?? ratesMap.USD ?? 1;
+  return raw * rate;
+}
+
 /**
  * Per-branch metrics for Regional Conversion Performance and related analytics.
  * Merges registered branches with any branch labels present on student records.
@@ -208,8 +233,12 @@ export function isVisaGrantedStatus(status) {
 export function buildBranchConversionMetrics({
   branches = [],
   students = [],
+  allStudents = null,
+  invoices = [],
+  exchangeRates = null,
   scopeBranch = null,
-  branchScopedStudents = false
+  branchScopedStudents = false,
+  employees = []
 } = {}) {
   const scopeKey = scopeBranch ? normalizeBranchKey(scopeBranch) : "";
   const locationByKey = new Map();
@@ -227,23 +256,39 @@ export function buildBranchConversionMetrics({
   if (scopeKey) {
     registerLocation(scopeBranch);
   }
-  (Array.isArray(branches) ? branches : []).forEach((branch) => registerLocation(branch?.location));
+  const branchList = Array.isArray(branches) ? branches : [];
+  const employeeList = Array.isArray(employees) ? employees : [];
+  branchList.forEach((branch) => registerLocation(branch?.location));
   (Array.isArray(students) ? students : []).forEach((student) =>
     registerLocation(getStudentBranchLabel(student))
   );
 
-  const branchList = Array.isArray(branches) ? branches : [];
+  const registeredKeys = new Set(
+    branchList.map((branch) => normalizeBranchKey(branch?.location)).filter(Boolean)
+  );
   const studentList = Array.isArray(students) ? students : [];
+  const studentLookupList =
+    Array.isArray(allStudents) && allStudents.length > 0 ? allStudents : studentList;
+  const invoiceList = Array.isArray(invoices) ? invoices : [];
+  const rates = exchangeRates && typeof exchangeRates === "object" ? exchangeRates : {};
+  const studentById = new Map(
+    studentLookupList
+      .map((student) => [String(student?.id || "").trim(), student])
+      .filter(([sid]) => Boolean(sid))
+  );
 
   return Array.from(locationByKey.entries())
     .map(([key, name]) => {
-      const branchStudents =
-        scopeKey && branchScopedStudents
-          ? studentList
-          : studentList.filter(
-              (student) => normalizeBranchKey(getStudentBranchLabel(student)) === key
-            );
-      const branchRecord = branchList.find((branch) => normalizeBranchKey(branch?.location) === key);
+      const branchStudents = studentList.filter(
+        (student) =>
+          resolveStudentBranchKey(
+            student,
+            locationByKey,
+            employeeList,
+            scopeKey,
+            branchScopedStudents
+          ) === key
+      );
       const studentsCount = branchStudents.length;
       const conversionsCount = branchStudents.filter((student) =>
         isBranchConversionStatus(student?.status)
@@ -251,11 +296,37 @@ export function buildBranchConversionMetrics({
       const visaGrantedCount = branchStudents.filter((student) =>
         isVisaGrantedStatus(student?.status)
       ).length;
-      const liveRevenue = branchStudents.reduce((sum, student) => {
-        const numericBudget = Number(String(student?.budget || "").replace(/[^\d.]/g, ""));
-        return Number.isFinite(numericBudget) ? sum + numericBudget : sum;
+      const revenue = invoiceList.reduce((sum, invoice) => {
+        if (!isPaidInvoice(invoice)) return sum;
+        const sid = String(invoice?.studentId || invoice?.student_id || "").trim();
+        if (!sid) return sum;
+        const student = studentById.get(sid);
+        if (!student) return sum;
+        const invoiceBranchKey = resolveStudentBranchKey(
+          student,
+          locationByKey,
+          employeeList,
+          scopeKey,
+          branchScopedStudents
+        );
+        if (invoiceBranchKey !== key) return sum;
+        return sum + invoiceAmountLkr(invoice, rates);
       }, 0);
-      const revenue = liveRevenue > 0 ? liveRevenue : Number(branchRecord?.revenue) || 0;
+      const paidInvoiceCount = invoiceList.filter((invoice) => {
+        if (!isPaidInvoice(invoice)) return false;
+        const sid = String(invoice?.studentId || invoice?.student_id || "").trim();
+        const student = studentById.get(sid);
+        if (!student) return false;
+        return (
+          resolveStudentBranchKey(
+            student,
+            locationByKey,
+            employeeList,
+            scopeKey,
+            branchScopedStudents
+          ) === key
+        );
+      }).length;
 
       return {
         name,
@@ -263,10 +334,16 @@ export function buildBranchConversionMetrics({
         revenue,
         conversions: conversionsCount,
         visaGranted: visaGrantedCount,
-        conversionRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0
+        visaSuccessRate: studentsCount ? Math.round((visaGrantedCount / studentsCount) * 100) : 0,
+        pastInquiryRate: studentsCount ? Math.round((conversionsCount / studentsCount) * 100) : 0,
+        paidInvoiceCount
       };
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((row) => {
+      const rowKey = normalizeBranchKey(row.name);
+      return row.students > 0 || row.revenue > 0 || registeredKeys.has(rowKey);
+    })
+    .sort((a, b) => b.revenue - a.revenue || b.students - a.students || a.name.localeCompare(b.name));
 }
 
 const MS_SEC = 1000;
@@ -425,6 +502,31 @@ export function branchesMatch(branchA, branchB) {
 /** Branch label on a student record (`branch` or inquiry `nearestOffice`). */
 export function getStudentBranchLabel(student) {
   return String(student?.branch || student?.nearestOffice || "").trim();
+}
+
+/** Branch key for a student (office label, counselor branch, or scoped fallback). */
+export function resolveStudentBranchKey(
+  student,
+  locationByKey,
+  employees = [],
+  scopeKey = "",
+  branchScopedStudents = false
+) {
+  if (!student) return "";
+  const label = getStudentBranchLabel(student);
+  const labelKey = normalizeBranchKey(label);
+  if (labelKey) return labelKey;
+  const employeeList = Array.isArray(employees) ? employees : [];
+  const locations =
+    locationByKey instanceof Map ? locationByKey : new Map(locationByKey || []);
+  for (const [key, name] of locations) {
+    const counselorSet = buildBranchCounselorIdentitySet(employeeList, name);
+    if (counselorSet?.size && studentMatchesCounselorIdentitySet(student, counselorSet)) {
+      return key;
+    }
+  }
+  if (scopeKey && branchScopedStudents) return scopeKey;
+  return "";
 }
 
 /** Counselor/consultor account ids and emails at a branch (normalized lowercase). */

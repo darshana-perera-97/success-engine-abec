@@ -4,13 +4,16 @@ import { useExchangeRates } from "../useExchangeRates";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
-import { createBranch, getAccounts, getBranches, getStudents } from "../authApi";
+import { createBranch, getAccounts, getBranches, getInvoices, getStudents } from "../authApi";
 import { buildBranchConversionMetrics } from "../pipeline";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
 
 const BranchAnalytics = ({
   scopeBranch = null,
   students: providedStudents = null,
+  allStudents: providedAllStudents = null,
+  invoices: providedInvoices = null,
+  employees: providedEmployees = null,
   branchScopedStudents = false
 }) => {
   const formatRevenueNumber = (value) => {
@@ -23,18 +26,43 @@ const BranchAnalytics = ({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [managerAccounts, setManagerAccounts] = useState([]);
+  const [fetchedEmployees, setFetchedEmployees] = useState([]);
   const [fetchedStudents, setFetchedStudents] = useState([]);
+  const [fetchedInvoices, setFetchedInvoices] = useState([]);
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
   const usesProvidedStudents = Array.isArray(providedStudents);
   const [pageLoads, setPageLoads] = useState({
     branches: false,
     managers: false,
-    students: usesProvidedStudents
+    students: usesProvidedStudents,
+    invoices: false
   });
-  const { updatedAt: fxUpdatedAt, live: fxLive } = useExchangeRates();
+  const { updatedAt: fxUpdatedAt, live: fxLive, rates: exchangeRates } = useExchangeRates();
   const students = usesProvidedStudents ? providedStudents : fetchedStudents;
-  const branchPageReady = pageLoads.branches && pageLoads.managers && pageLoads.students;
+  const allStudents =
+    Array.isArray(providedAllStudents) && providedAllStudents.length > 0
+      ? providedAllStudents
+      : students;
+  const invoices = useMemo(() => {
+    const fetched = Array.isArray(fetchedInvoices) ? fetchedInvoices : [];
+    const provided = Array.isArray(providedInvoices) ? providedInvoices : [];
+    if (fetched.length === 0) return provided;
+    if (provided.length === 0) return fetched;
+    const byId = new Map();
+    provided.forEach((inv) => {
+      const id = String(inv?.id || "").trim();
+      if (id) byId.set(id, inv);
+    });
+    fetched.forEach((inv) => {
+      const id = String(inv?.id || "").trim();
+      if (id) byId.set(id, inv);
+    });
+    return Array.from(byId.values());
+  }, [fetchedInvoices, providedInvoices]);
+  const employees = Array.isArray(providedEmployees) ? providedEmployees : fetchedEmployees;
+  const branchPageReady =
+    pageLoads.branches && pageLoads.managers && pageLoads.students && pageLoads.invoices;
 
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
 
@@ -63,12 +91,15 @@ const BranchAnalytics = ({
           );
         }
         setManagerAccounts(managers);
+        if (!Array.isArray(providedEmployees)) {
+          setFetchedEmployees(result.data);
+        }
       } finally {
         setPageLoads((p) => ({ ...p, managers: true }));
       }
     };
     loadManagers();
-  }, [scopeKey]);
+  }, [scopeKey, providedEmployees]);
 
   useEffect(() => {
     if (usesProvidedStudents) return;
@@ -84,15 +115,50 @@ const BranchAnalytics = ({
     loadStudents();
   }, [usesProvidedStudents]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadInvoices = async () => {
+      try {
+        const result = await getInvoices();
+        if (!result.ok || cancelled) return;
+        setFetchedInvoices(result.data || []);
+      } finally {
+        if (!cancelled) {
+          setPageLoads((p) => ({ ...p, invoices: true }));
+        }
+      }
+    };
+    loadInvoices();
+    const intervalId = setInterval(loadInvoices, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
   const branchData = useMemo(
     () =>
       buildBranchConversionMetrics({
         branches,
         students,
+        allStudents,
+        invoices,
+        exchangeRates,
+        employees,
         scopeBranch: scopeKey ? scopeBranch : null,
         branchScopedStudents: branchScopedStudents && !!scopeKey
       }),
-    [branches, students, scopeKey, scopeBranch, branchScopedStudents]
+    [
+      branches,
+      students,
+      allStudents,
+      invoices,
+      exchangeRates,
+      employees,
+      scopeKey,
+      scopeBranch,
+      branchScopedStudents
+    ]
   );
   const totalRevenue = useMemo(
     () => branchData.reduce((sum, branch) => sum + branch.revenue, 0),
@@ -161,7 +227,7 @@ const BranchAnalytics = ({
             <p className="text-sm text-slate-500 mt-1">
               {scopeBranch
                 ? `Metrics for your branch only (${scopeBranch}).`
-                : "Deep dive into regional performance metrics from live student and branch records."}
+                : "Collected revenue is paid invoices only. Visa success is students at Visa or Enrolled."}
             </p>
             <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-1">
               <Clock size={10} /> Rates updated: {fxUpdatedAt}
@@ -180,6 +246,15 @@ const BranchAnalytics = ({
           </div>
         </div>
 
+
+        {branchData.length === 0 ? (
+          <div className="bg-white border border-gray-200 rounded-xl p-10 text-center text-slate-500 text-sm">
+            {scopeBranch
+              ? `No student records yet for ${scopeBranch}. Metrics will appear when students are assigned to this branch.`
+              : "No branch metrics yet. Add branches and students to see regional performance."}
+          </div>
+        ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {cardRankedData.map((data, idx) => (
             <div
@@ -192,7 +267,7 @@ const BranchAnalytics = ({
                   <MapPin size={16} className="text-slate-400" />
                   <span className="font-semibold text-slate-700">{data.name}</span>
                 </div>
-                {idx === 0 && (
+                {idx === 0 && data.revenue > 0 && (
                   <span className="bg-indigo-50 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
                     TOP PERFORMER
                   </span>
@@ -200,12 +275,22 @@ const BranchAnalytics = ({
               </div>
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">Revenue (LKR)</p>
+                  <p className="text-xs text-slate-400 uppercase">Collected (paid)</p>
                   <p className="text-lg font-bold text-slate-900">{formatRevenueNumber(data.revenue)}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {data.paidInvoiceCount > 0
+                      ? `${data.paidInvoiceCount} paid invoice${data.paidInvoiceCount === 1 ? "" : "s"}`
+                      : "No paid invoices yet"}
+                  </p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">Conv. Rate</p>
-                  <p className="text-lg font-bold text-emerald-600">{data.conversionRate}%</p>
+                  <p className="text-xs text-slate-400 uppercase">Visa success</p>
+                  <p className="text-lg font-bold text-emerald-600">
+                    {data.students > 0 ? `${data.visaSuccessRate}%` : "—"}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {data.visaGranted} of {data.students} students
+                  </p>
                 </div>
               </div>
             </div>
@@ -216,7 +301,7 @@ const BranchAnalytics = ({
           <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm min-h-[400px]">
             <h3 className="text-sm font-bold text-slate-900 mb-6 flex items-center">
               <TrendingUp size={16} className="mr-2 text-slate-400" />
-              Regional Conversion Performance
+              Pipeline volume by branch
             </h3>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -227,8 +312,8 @@ const BranchAnalytics = ({
                     cursor={{ fill: "#F8FAFC" }}
                     contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }}
                   />
-                  <Bar dataKey="students" name="Total Inquiries" fill="#E2E8F0" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="conversions" name="Successes" fill="#0F172A" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="students" name="Students" fill="#E2E8F0" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="conversions" name="Past inquiry" fill="#0F172A" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -237,7 +322,7 @@ const BranchAnalytics = ({
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center">
               <Banknote size={16} className="mr-2 text-slate-400" />
-              Revenue Efficiency
+              Paid revenue by branch
             </h3>
             <div className="space-y-4">
               {revenueRankedData.map((data, idx) => (
@@ -300,6 +385,8 @@ const BranchAnalytics = ({
             </div>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {isAddOpen && (

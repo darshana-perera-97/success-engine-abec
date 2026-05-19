@@ -2060,7 +2060,18 @@ function App({ initialView = "dashboard" }) {
       }
       if (currentView === "branch") {
         const coordBranch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
-        return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: coordBranch || null });
+        const coordInvoices =
+          currentRole === "Country Coordinator" && countryCoordinatorScope.active
+            ? countryCoordinatorScopedInvoices
+            : invoices;
+        return /* @__PURE__ */ jsx(BranchAnalytics, {
+          scopeBranch: coordBranch || null,
+          students: coordStudents,
+          allStudents: students,
+          invoices: coordInvoices,
+          employees,
+          branchScopedStudents: !!coordBranch
+        });
       }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: currentRole === "Counselor" ? counselorIdentitySet : null });
@@ -2110,7 +2121,16 @@ function App({ initialView = "dashboard" }) {
       };
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
-      if (currentRole === "Manager" && currentView === "branch") return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, students: managerDataScope.active ? mgrStudents : void 0, branchScopedStudents: managerDataScope.active });
+      if (currentRole === "Manager" && currentView === "branch") {
+        return /* @__PURE__ */ jsx(BranchAnalytics, {
+          scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null,
+          students: mgrStudents,
+          allStudents: students,
+          invoices: mgrProfileProps.invoices,
+          employees: mgrEmployees,
+          branchScopedStudents: managerDataScope.active
+        });
+      }
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
@@ -2201,7 +2221,14 @@ function App({ initialView = "dashboard" }) {
           }
         }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Settings are available for Admin only." });
       case "branch":
-        return /* @__PURE__ */ jsx(BranchAnalytics, { scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null });
+        return /* @__PURE__ */ jsx(BranchAnalytics, {
+          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
+          students: adminViewStudents,
+          allStudents: students,
+          invoices: adminBranchScoped ? managerScopedInvoices : invoices,
+          employees: adminViewEmployees,
+          branchScopedStudents: adminBranchScoped
+        });
       case "students":
         return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "requested-students":
