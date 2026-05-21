@@ -11,7 +11,8 @@ export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
 export const RESUME_BUILDER_TITLE = "Be a Canadian AI Resume Builder";
 
-export const API_BASE = resolveApiBase("https://dev-beacanadian.nexgenai.asia");
+export const API_BASE = resolveApiBase("http://success-engine-dev.nexgenai.asia");
+// export const API_BASE = resolveApiBase("https://dev-beacanadian.nexgenai.asia");
 export const DEFAULT_USER_AVATAR = companyIcon;
 export const COMPANY_FULL_LOGO = companyFullLogo;
 
