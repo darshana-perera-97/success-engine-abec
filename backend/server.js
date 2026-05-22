@@ -2829,7 +2829,13 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 401, { ok: false, error: "Invalid email or password." });
     } catch (e) {
-      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+      const message = String(e?.message || "");
+      if (message === "Invalid JSON") {
+        sendJson(res, 400, { ok: false, error: "Invalid request body. Send JSON with email and password." });
+        return;
+      }
+      logEvent("auth", "Login handler error", { message: message || String(e) });
+      sendJson(res, 500, { ok: false, error: "Login failed due to a server error. Check backend data files." });
     }
     return;
   }

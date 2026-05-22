@@ -1,18 +1,23 @@
 /**
- * When the React app runs on localhost, call the local backend (port 3334) so
- * `backend/data/*.json` matches what you see in the terminal. Override anytime
- * with REACT_APP_API_BASE in frontend/.env
+ * Normalizes the API base URL from the active profile's companyConfig.js
+ * (selected via ACTIVE_PROFILE in profileConfig.js).
  */
-export function resolveApiBase(remoteBase) {
-  const override = process.env.REACT_APP_API_BASE;
-  if (override && String(override).trim()) {
-    return String(override).trim().replace(/\/+$/, "");
-  }
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") {
-      return "http://localhost:3334";
+function normalizeApiBaseUrl(base) {
+  let url = String(base || "").trim().replace(/\/+$/, "");
+  if (!url) return url;
+  // Hosted APIs redirect HTTP → HTTPS; browsers may drop the POST body on redirect.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+      parsed.protocol = "https:";
+      url = parsed.toString().replace(/\/+$/, "");
     }
+  } catch {
+    // Keep original string if it is not a valid absolute URL.
   }
-  return String(remoteBase || "").replace(/\/+$/, "");
+  return url;
+}
+
+export function resolveApiBase(apiBaseFromProfile) {
+  return normalizeApiBaseUrl(apiBaseFromProfile);
 }
