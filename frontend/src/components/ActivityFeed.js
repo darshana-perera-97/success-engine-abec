@@ -1,8 +1,20 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Upload, CheckCircle, XCircle, AlertTriangle, Shield, Clock } from "lucide-react";
+import { VISA_OFFICER_COUNSELOR_ROLE, VISA_OFFICER_ROLE } from "../roles";
+
 const ActivityFeed = ({ activities, limit, showRoleBadge = true, showCounselorBadge = true, metaTimestampOnly = false }) => {
   const displayActivities = limit ? activities.slice(0, limit) : activities;
-  const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
+  const genericLabels = new Set([
+    "Counselor",
+    VISA_OFFICER_ROLE,
+    VISA_OFFICER_COUNSELOR_ROLE,
+    "Country Coordinator",
+    "Manager",
+    "Team Lead",
+    "Admin",
+    "Student",
+    "System",
+  ]);
   const resolveActorName = (activity) => {
     const actorName = String(activity.actorName || "").trim();
     const userName = String(activity.user || "").trim();

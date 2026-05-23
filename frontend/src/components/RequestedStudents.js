@@ -3,6 +3,7 @@ import { ClipboardList, RefreshCw, UserPlus, X, Eye } from "lucide-react";
 import { getAccounts, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import { InlineLoading } from "./LoadingPlaceholder";
+import { isCounselorEquivalentAccountRole } from "../roles";
 
 function formatSubmittedAt(iso) {
   if (!iso) return "—";
@@ -25,8 +26,7 @@ function branchesMatch(a, b) {
 }
 
 function isCounselorAccount(row) {
-  const role = String(row?.role || "").toLowerCase();
-  return role === "counselor" || role === "consultor";
+  return isCounselorEquivalentAccountRole(row?.role);
 }
 
 const PIPELINE_PRIORITIES = [

@@ -5,7 +5,7 @@ const ds = require("./profile/ds/companyConfig");
 // Change this single value to switch backend branding between company profiles.
 // Keep in sync with frontend/src/profileConfig.js ACTIVE_PROFILE.
 // Supported values: "abec" | "beacanadian" | "ds"
-const ACTIVE_PROFILE = "beacanadian";
+const ACTIVE_PROFILE = "abec";
 
 const profiles = { abec, beacanadian, ds };
 const config = profiles[ACTIVE_PROFILE];

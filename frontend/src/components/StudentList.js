@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
+import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
@@ -128,7 +129,7 @@ const StudentList = ({
         if (!result.ok) return;
         const options = result.data.filter((row) => {
           const role = String(row.role || "").toLowerCase();
-          return role === "consultor" || role === "counselor";
+          return isCounselorEquivalentAccountRole(role);
         }).map((row) => ({
           id: row.id,
           name: row.username || row.email,
@@ -147,7 +148,7 @@ const StudentList = ({
     if (String(userRole || "") === "Manager" && scopeBranch) {
       base = base.filter((item) => branchesMatch(item.branch, scopeBranch));
     }
-    if (String(userRole || "") !== "Counselor" || !currentUser) {
+    if (!isCounselorEquivalentPortalRole(userRole) || !currentUser) {
       return base;
     }
     const exists = base.some(
@@ -185,7 +186,7 @@ const StudentList = ({
     return students.filter(
       (s) => {
         const normalizedCounselor = String(s.counselor || "").trim().toLowerCase();
-        const isCounselorRole = String(userRole || "") === "Counselor";
+        const isCounselorRole = isCounselorEquivalentPortalRole(userRole);
         const hasResolvedCounselorIdentity = Boolean(
           activeCounselorIdentity.id || activeCounselorIdentity.email || activeCounselorIdentity.username || activeCounselorIdentity.name
         );

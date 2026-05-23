@@ -532,7 +532,15 @@ export function buildBranchCounselorIdentitySet(employees = [], managerBranch) {
   };
   for (const employee of Array.isArray(employees) ? employees : []) {
     const role = String(employee?.role || "").trim().toLowerCase();
-    if (!role.includes("counsel") && role !== "consultor") continue;
+    if (
+      !role.includes("counsel") &&
+      role !== "consultor" &&
+      role !== "visa officer" &&
+      role !== "visa officer & counselor" &&
+      role !== "visa officer & counsellor"
+    ) {
+      continue;
+    }
     if (!branchesMatch(employee?.branch, branch)) continue;
     addIdentity(employee.id);
     addIdentity(employee.email);

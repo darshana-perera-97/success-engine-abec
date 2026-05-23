@@ -6,6 +6,7 @@ import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskOverdueByDate } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { findTaskDocumentForSlot } from "../taskDocumentRequests";
+import { isCounselorEquivalentPortalRole } from "../roles";
 
 function getCalendarDueSlaParts(task) {
   const completed = String(task?.status || "").trim() === "Completed";
@@ -118,7 +119,7 @@ const TaskManager = ({
     if (userRole === "Manager") {
       return tasks.filter((task) => task.priority === "High" || task.status === "Overdue" || task.status === "In Review");
     }
-    if (userRole === "Counselor") {
+    if (isCounselorEquivalentPortalRole(userRole)) {
       return filterTasksForCounselor(tasks, currentUser, monitoredStudents, counselorIdentitySet);
     }
     if (userRole === "Country Coordinator") {

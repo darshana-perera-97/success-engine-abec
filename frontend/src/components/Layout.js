@@ -1,6 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { COMPANY_LOGO_ALT, COMPANY_NAME } from "../companyConfig";
+import { isCounselorEquivalentPortalRole } from "../roles";
 import {
   Users,
   LayoutDashboard,
@@ -160,7 +161,7 @@ const Layout = ({
   const handleProfileSave = async () => {
     setIsSavingProfile(true);
     setProfileError("");
-    const isCounselor = currentRole === "Counselor";
+    const isCounselor = isCounselorEquivalentPortalRole(currentRole);
     const emailChanged = isCounselor && String(editableEmail || "").trim() !== String(userEmail || "").trim();
     const phoneChanged = isCounselor && String(editablePhone || "").trim() !== String(userPhone || "").trim();
     if (emailChanged || phoneChanged) {
@@ -194,7 +195,22 @@ const Layout = ({
     }
     handleProfileClose();
   };
+  const counselorNavItems = [
+    { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+    { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
+    { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
+    { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
+    { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
+    { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
+    { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
+    { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
+    { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
+    { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
+  ];
   const getNavItems = () => {
+    if (isCounselorEquivalentPortalRole(currentRole)) {
+      return counselorNavItems;
+    }
     switch (currentRole) {
       case "Student":
         return [
@@ -204,19 +220,6 @@ const Layout = ({
           { id: "finance", label: "My Finances", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
           { id: "messages", label: "Messages", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
           { id: "tasks", label: "My Checklist", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }) }
-        ];
-      case "Counselor":
-        return [
-          { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
-          { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
-          { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
-          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-          { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
-          { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
-          { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
-          { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
-          { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
-          { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
         ];
       case "Country Coordinator":
         return [
@@ -229,6 +232,12 @@ const Layout = ({
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
           { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
+        ];
+      case "Accountant":
+        return [
+          { id: "dashboard", label: "Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          { id: "students", label: "Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
+          { id: "invoices", label: "Review payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) }
         ];
       case "Manager":
         return [
@@ -539,7 +548,7 @@ const Layout = ({
         /* @__PURE__ */ jsxs("div", { className: "space-y-2 text-sm", children: [
           /* @__PURE__ */ jsxs("p", { className: "text-slate-700", children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-900", children: "Name: " }), userName || "-" ] }),
           /* @__PURE__ */ jsxs("p", { className: "text-slate-700", children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-900", children: "Role: " }), currentRole || "-" ] }),
-          currentRole === "Counselor" ? /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+          isCounselorEquivalentPortalRole(currentRole) ? /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Email" }),
               /* @__PURE__ */ jsx("input", { type: "email", value: editableEmail, onChange: (event) => setEditableEmail(event.target.value), className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500" })

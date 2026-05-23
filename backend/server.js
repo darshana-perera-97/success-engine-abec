@@ -28,6 +28,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 const STUDEMTS_FILE = path.join(DATA_DIR, "studemts.json");
 const BRANCHES_FILE = path.join(DATA_DIR, "branches.json");
 const COUNTRIES_FILE = path.join(DATA_DIR, "countries.json");
+const PAYMENT_ACCOUNTS_FILE = path.join(DATA_DIR, "paymentAccounts.json");
 const UNIVERSITY_FILE = path.join(DATA_DIR, "university.json");
 const CHATS_FILE = path.join(DATA_DIR, "chats.json");
 const ADMIN_CHATS_FILE = path.join(DATA_DIR, "adminChats.json");
@@ -91,9 +92,26 @@ const OPENAI_MAX_HISTORY_MESSAGES = 12;
 const OPENAI_REQUEST_TIMEOUT_MS = 45 * 1000;
 const FORGOT_PASSWORD_OTP_TTL_MS = 10 * 60 * 1000;
 const forgotPasswordOtps = new Map();
-const ALLOWED_ROLES = new Set(["Manager", "Team Lead", "Counselor", "Consultor", "Admin", "Country Coordinator"]);
+const VISA_OFFICER_ROLE = "Visa Officer";
+const VISA_OFFICER_COUNSELOR_ROLE = "Visa Officer & Counselor";
+const ALLOWED_ROLES = new Set([
+  "Manager",
+  "Team Lead",
+  "Accountant",
+  "Counselor",
+  "Consultor",
+  "Admin",
+  "Country Coordinator",
+  VISA_OFFICER_ROLE,
+  VISA_OFFICER_COUNSELOR_ROLE,
+]);
 const DEFAULT_COUNTRY_NAMES = ["UK", "USA", "Canada", "Australia", "New Zealand"];
-const COUNSELOR_ROLES = new Set(["Counselor", "Consultor"]);
+const COUNSELOR_ROLES = new Set([
+  "Counselor",
+  "Consultor",
+  VISA_OFFICER_ROLE,
+  VISA_OFFICER_COUNSELOR_ROLE,
+]);
 const whatsappSessions = new Map();
 const whatsappSessionRecoveryChains = new Map();
 const WHATSAPP_RECONNECT_INTERVAL_MS = 2 * 60 * 60 * 1000;
@@ -118,13 +136,20 @@ function normalizeRoleKey(role) {
 
 function isCounselorRole(role) {
   const normalized = normalizeRoleKey(role);
-  return normalized === "counselor" || normalized === "consultor" || normalized === "counsellor";
+  return (
+    normalized === "counselor" ||
+    normalized === "consultor" ||
+    normalized === "counsellor" ||
+    normalized === "visa officer" ||
+    normalized === "visa officer & counselor" ||
+    normalized === "visa officer & counsellor"
+  );
 }
 
 /** Manager, Admin, Team Lead, and Country Coordinator: same portal welcome as counselors but role-specific copy. */
 function isStaffWelcomeEmailRole(role) {
   const r = String(role || "").trim();
-  return r === "Manager" || r === "Admin" || r === "Team Lead" || r === "Country Coordinator";
+  return r === "Manager" || r === "Admin" || r === "Team Lead" || r === "Country Coordinator" || r === "Accountant";
 }
 
 function staffWelcomeRolePhrase(role) {
@@ -401,6 +426,43 @@ async function writeCountries(list) {
     ).values()
   ).sort((a, b) => a.localeCompare(b));
   await fs.writeFile(COUNTRIES_FILE, JSON.stringify(unique, null, 2));
+}
+
+function normalizePaymentAccount(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const label = String(raw.label || "").trim();
+  const bankName = String(raw.bankName || "").trim();
+  const accountName = String(raw.accountName || "").trim();
+  const accountNumber = String(raw.accountNumber || "").trim();
+  if (!label || !bankName || !accountName || !accountNumber) return null;
+  return {
+    id: String(raw.id || `PAY-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`),
+    label,
+    bankName,
+    accountName,
+    accountNumber,
+    branch: String(raw.branch || "").trim(),
+    currency: String(raw.currency || "LKR").trim().toUpperCase() || "LKR",
+    notes: String(raw.notes || "").trim(),
+  };
+}
+
+async function readPaymentAccounts() {
+  try {
+    const raw = await fs.readFile(PAYMENT_ACCOUNTS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizePaymentAccount).filter(Boolean);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function writePaymentAccounts(accounts) {
+  await fs.mkdir(path.dirname(PAYMENT_ACCOUNTS_FILE), { recursive: true });
+  const normalized = (accounts || []).map(normalizePaymentAccount).filter(Boolean);
+  await fs.writeFile(PAYMENT_ACCOUNTS_FILE, JSON.stringify(normalized, null, 2));
 }
 
 async function readReqStudents() {
@@ -1134,6 +1196,8 @@ function publicInvoiceRecord(req, invoice) {
     return u;
   };
   if (next.paymentProofUrl) next.paymentProofUrl = absolutize(next.paymentProofUrl);
+  if (next.attachmentFileUrl) next.attachmentFileUrl = absolutize(next.attachmentFileUrl);
+  if (next.attachmentLink) next.attachmentLink = String(next.attachmentLink || "").trim();
   if (next.generatedReceiptUrl) {
     const receipt = String(next.generatedReceiptUrl || "");
     if (receipt.startsWith("/chat-files/")) {
@@ -1641,7 +1705,33 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
   return lines.join("\n");
 }
 
-function buildInvoiceWhatsappMessage({ studentName, invoiceId, currency, amount, description, dueDate }) {
+function formatPaymentAccountForMessage(paymentAccount) {
+  if (!paymentAccount || typeof paymentAccount !== "object") return [];
+  const lines = ["Payment details:"];
+  if (paymentAccount.label) lines.push(`Account: ${paymentAccount.label}`);
+  if (paymentAccount.bankName) lines.push(`Bank: ${paymentAccount.bankName}`);
+  if (paymentAccount.accountName) lines.push(`Account name: ${paymentAccount.accountName}`);
+  if (paymentAccount.accountNumber) lines.push(`Account number: ${paymentAccount.accountNumber}`);
+  if (paymentAccount.branch) lines.push(`Branch: ${paymentAccount.branch}`);
+  if (paymentAccount.currency) lines.push(`Currency: ${paymentAccount.currency}`);
+  if (paymentAccount.notes) lines.push(`Notes: ${paymentAccount.notes}`);
+  return lines;
+}
+
+function buildInvoiceWhatsappMessage({
+  studentName,
+  invoiceId,
+  currency,
+  amount,
+  description,
+  issueDate,
+  dueDate,
+  paymentAccount,
+  attachmentLink,
+  attachmentFileUrl,
+  attachmentFileName,
+  generatedReceiptUrl,
+}) {
   const lines = [
     `${COMPANY_NAME} - Invoice Generated`,
     "",
@@ -1650,12 +1740,87 @@ function buildInvoiceWhatsappMessage({ studentName, invoiceId, currency, amount,
     "A new invoice has been generated for your application.",
     `Invoice ID: ${invoiceId || ""}`,
     `Amount: ${currency || "LKR"} ${Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    issueDate ? `Issue Date: ${issueDate}` : "",
     `Due Date: ${dueDate || ""}`,
     description ? `Description: ${description}` : "",
     "",
-    "Please complete the payment before the due date.",
-  ].filter(Boolean);
+    ...formatPaymentAccountForMessage(paymentAccount),
+    paymentAccount ? "" : null,
+    attachmentLink ? `Reference link: ${attachmentLink}` : "",
+    attachmentFileUrl
+      ? `Attached document${attachmentFileName ? ` (${attachmentFileName})` : ""}: ${attachmentFileUrl}`
+      : "",
+    generatedReceiptUrl ? `Invoice image: ${generatedReceiptUrl}` : "",
+    "",
+    "Please complete the payment before the due date. You can also view full details in your student portal under Finance.",
+  ].filter((line) => line !== null && line !== undefined && String(line).trim() !== "");
   return lines.join("\n");
+}
+
+function aggregateWhatsappDeliveryResults(results) {
+  const list = Array.isArray(results) ? results : [];
+  if (!list.length) {
+    return { attempted: false, status: "skipped", reason: "Not attempted.", sentAt: new Date().toISOString() };
+  }
+  const attempted = list.some((r) => r.attempted);
+  const sent = list.some((r) => r.status === "sent");
+  const failed = list.filter((r) => r.status === "failed");
+  const skipped = list.every((r) => r.status === "skipped");
+  return {
+    attempted,
+    status: sent ? "sent" : failed.length ? "failed" : skipped ? "skipped" : "skipped",
+    reason: failed.map((r) => r.reason).filter(Boolean).join(" ") || list[list.length - 1]?.reason || "",
+    sentAt: new Date().toISOString(),
+    parts: list,
+  };
+}
+
+async function deliverInvoicePackageToStudentWhatsapp({
+  senderId,
+  receiverId,
+  messageText,
+  receiptAttachment,
+  invoiceFileAttachment,
+}) {
+  const results = [];
+  const text = String(messageText || "").trim();
+  if (text) {
+    results.push(
+      await deliverCounselorMessageToStudentWhatsapp({
+        senderId,
+        receiverId,
+        content: text,
+        attachment: null,
+      })
+    );
+  }
+  if (receiptAttachment?.url) {
+    results.push(
+      await deliverCounselorMessageToStudentWhatsapp({
+        senderId,
+        receiverId,
+        content: "",
+        attachment: receiptAttachment,
+      })
+    );
+  }
+  const fileUrl = String(invoiceFileAttachment?.url || "");
+  const receiptUrl = String(receiptAttachment?.url || "");
+  if (
+    fileUrl &&
+    isSupportedWhatsappMediaMime(invoiceFileAttachment.mime) &&
+    fileUrl !== receiptUrl
+  ) {
+    results.push(
+      await deliverCounselorMessageToStudentWhatsapp({
+        senderId,
+        receiverId,
+        content: "",
+        attachment: invoiceFileAttachment,
+      })
+    );
+  }
+  return aggregateWhatsappDeliveryResults(results);
 }
 
 function buildInvoicePaymentDecisionWhatsappMessage({
@@ -1698,6 +1863,296 @@ function buildInvoicePaymentDecisionWhatsappMessage({
     "Please sign in to the student portal, review the feedback, and upload corrected payment evidence.",
   ].filter(Boolean);
   return lines.join("\n");
+}
+
+/** Counselor, inquiry counselor, and anyone in counselorHistory for this student. */
+function collectManagingCounselorIdsForStudent(student) {
+  const ids = new Set();
+  const add = (raw) => {
+    const v = String(raw || "").trim();
+    if (v && v.toLowerCase() !== "unassigned") ids.add(v);
+  };
+  if (!student || typeof student !== "object") return [];
+  add(student.counselor);
+  add(student.inquiryCounselorId);
+  const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
+  history.forEach(add);
+  return Array.from(ids);
+}
+
+function pickInvoiceWhatsappSenderId(student, counselorIds) {
+  const inquiry = String(student?.inquiryCounselorId || "").trim();
+  const primary = String(student?.counselor || "").trim();
+  if (inquiry && inquiry.toLowerCase() !== "unassigned") return inquiry;
+  if (primary && primary.toLowerCase() !== "unassigned") return primary;
+  return counselorIds[0] || "";
+}
+
+function buildCounselorInvoiceDecisionPortalMessage({
+  studentName,
+  invoiceId,
+  currency,
+  amount,
+  description,
+  decision,
+  actorRole,
+  rejectionReason,
+}) {
+  const amountLabel = `${currency || "LKR"} ${Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const invoiceLabel = invoiceId ? `Invoice ${invoiceId}` : "An invoice";
+  const who = actorRole ? String(actorRole).trim() : "Finance";
+  if (decision === "approved") {
+    return [
+      `${COMPANY_NAME} — Payment approved`,
+      `${invoiceLabel} for ${studentName || "a student"} was approved by ${who}.`,
+      `Amount: ${amountLabel}`,
+      description ? `Description: ${description}` : "",
+      "The student has been notified.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
+    `${COMPANY_NAME} — Payment evidence rejected`,
+    `${invoiceLabel} for ${studentName || "a student"} was rejected by ${who}.`,
+    `Amount: ${amountLabel}`,
+    description ? `Description: ${description}` : "",
+    rejectionReason ? `Reason for student: ${rejectionReason}` : "",
+    "The student has been notified to re-upload evidence.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function appendPortalChatMessage({ senderId, receiverId, content, platform = "portal" }) {
+  const from = String(senderId || "").trim();
+  const to = String(receiverId || "").trim();
+  const text = String(content || "").trim();
+  if (!from || !to || !text) return null;
+  const chats = await readChats();
+  const chat = {
+    id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
+    senderId: from,
+    receiverId: to,
+    content: text,
+    timestamp: new Date().toISOString(),
+    read: false,
+    platform: platform || "portal",
+    attachment: null,
+  };
+  await writeChats([...chats, chat]);
+  return chat;
+}
+
+async function resolvePortalMessageSenderId(actorId, fallbackCounselorId) {
+  const actor = String(actorId || "").trim();
+  if (actor) {
+    const users = await readUsers();
+    if (users.some((u) => String(u.id || "").trim() === actor)) return actor;
+  }
+  return String(fallbackCounselorId || "").trim();
+}
+
+async function deliverInvoiceDecisionWhatsappToStudent({ student, counselorIds, message }) {
+  const studentId = String(student?.id || "").trim();
+  if (!studentId || !String(message || "").trim()) {
+    return { attempted: false, status: "skipped", reason: "Missing student or message." };
+  }
+  const ordered = [...counselorIds];
+  const primary = pickInvoiceWhatsappSenderId(student, counselorIds);
+  if (primary) {
+    const idx = ordered.indexOf(primary);
+    if (idx > 0) {
+      ordered.splice(idx, 1);
+      ordered.unshift(primary);
+    } else if (idx < 0) {
+      ordered.unshift(primary);
+    }
+  }
+  const parts = [];
+  for (const senderId of ordered) {
+    const sender = await resolveCounselor(senderId);
+    if (!sender) continue;
+    const result = await deliverCounselorMessageToStudentWhatsapp({
+      senderId,
+      receiverId: studentId,
+      content: message,
+    });
+    parts.push({ senderId, ...result });
+    if (result.status === "sent") {
+      return { ...aggregateWhatsappDeliveryResults(parts), senderId };
+    }
+  }
+  if (!parts.length) {
+    return {
+      attempted: false,
+      status: "skipped",
+      reason: "No counselor WhatsApp account available for this student.",
+    };
+  }
+  return { ...aggregateWhatsappDeliveryResults(parts), senderId: parts[0]?.senderId || "" };
+}
+
+async function appendFinanceActivityForInvoiceDecision({
+  actorRole,
+  actorId,
+  student,
+  invoice,
+  decision,
+}) {
+  const studentName = String(student?.name || "").trim();
+  const invoiceId = String(invoice?.id || "").trim();
+  const amountLabel = `${invoice?.currency || "LKR"} ${Number(invoice?.amount || 0)}`;
+  const action =
+    decision === "approved" ? "approved invoice payment" : "rejected invoice payment evidence";
+  const activities = await readActivities();
+  const activity = {
+    id: `act-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+    user: String(actorRole || "System").trim() || "System",
+    role: String(actorRole || "System").trim() || "System",
+    action,
+    target: `${invoiceId} (${amountLabel}) — ${studentName || invoice.studentId || "student"}`,
+    type: decision === "approved" ? "approval" : "rejection",
+    timestamp: "Just now",
+    createdAt: new Date().toISOString(),
+    actorName: String(actorRole || "System").trim() || "System",
+    counselorName: "",
+    studentName,
+    studentId: String(student?.id || invoice?.studentId || "").trim(),
+    invoiceId,
+    actorId: String(actorId || "").trim(),
+  };
+  await writeActivities([activity, ...activities]);
+  return activity;
+}
+
+async function notifyInvoicePaymentDecision({
+  req,
+  invoice,
+  student,
+  decision,
+  actorRole,
+  actorId,
+}) {
+  const studentName = String(student?.name || "").trim();
+  const managingCounselorIds = student ? collectManagingCounselorIdsForStudent(student) : [];
+  const whatsappSenderId = student ? pickInvoiceWhatsappSenderId(student, managingCounselorIds) : "";
+  const portalSenderId = await resolvePortalMessageSenderId(actorId, whatsappSenderId);
+
+  const studentMessage = student
+    ? buildInvoicePaymentDecisionWhatsappMessage({
+        studentName,
+        invoiceId: invoice.id,
+        currency: invoice.currency,
+        amount: invoice.amount,
+        description: invoice.description,
+        decision,
+        rejectionReason: String(invoice.paymentRejectionReason || "").trim(),
+      })
+    : "";
+
+  const counselorMessage = student
+    ? buildCounselorInvoiceDecisionPortalMessage({
+        studentName,
+        invoiceId: invoice.id,
+        currency: invoice.currency,
+        amount: invoice.amount,
+        description: invoice.description,
+        decision,
+        actorRole,
+        rejectionReason: String(invoice.paymentRejectionReason || "").trim(),
+      })
+    : "";
+
+  let invoiceWhatsappNotification = null;
+  let studentPortalChat = null;
+  const counselorPortalChats = [];
+  let activity = null;
+
+  if (!student) {
+    invoiceWhatsappNotification = {
+      invoiceId: invoice.id,
+      decision,
+      whatsapp: { attempted: false, status: "skipped", reason: "Student record not found." },
+    };
+    return {
+      invoiceWhatsappNotification,
+      studentPortalChat,
+      counselorPortalChats,
+      activity,
+      managingCounselorIds,
+    };
+  }
+
+  if (studentMessage && managingCounselorIds.length) {
+    const whatsapp = await deliverInvoiceDecisionWhatsappToStudent({
+      student,
+      counselorIds: managingCounselorIds,
+      message: studentMessage,
+    });
+    invoiceWhatsappNotification = {
+      invoiceId: invoice.id,
+      decision,
+      whatsapp,
+    };
+  } else if (studentMessage) {
+    invoiceWhatsappNotification = {
+      invoiceId: invoice.id,
+      decision,
+      whatsapp: {
+        attempted: false,
+        status: "skipped",
+        reason: "Student has no assigned counselor for WhatsApp.",
+      },
+    };
+  }
+
+  if (studentMessage && portalSenderId) {
+    studentPortalChat = await appendPortalChatMessage({
+      senderId: portalSenderId,
+      receiverId: String(student.id || ""),
+      content: studentMessage,
+    });
+  }
+
+  if (counselorMessage && portalSenderId) {
+    for (const counselorId of managingCounselorIds) {
+      try {
+        const chat = await appendPortalChatMessage({
+          senderId: portalSenderId,
+          receiverId: counselorId,
+          content: counselorMessage,
+        });
+        counselorPortalChats.push({
+          counselorId,
+          ok: Boolean(chat),
+          chatId: chat?.id || null,
+        });
+      } catch (error) {
+        counselorPortalChats.push({
+          counselorId,
+          ok: false,
+          error: String(error?.message || "Failed to notify counselor."),
+        });
+      }
+    }
+  }
+
+  activity = await appendFinanceActivityForInvoiceDecision({
+    actorRole,
+    actorId,
+    student,
+    invoice,
+    decision,
+  });
+
+  return {
+    invoiceWhatsappNotification,
+    studentPortalChat: studentPortalChat ? { chatId: studentPortalChat.id } : null,
+    counselorPortalChats,
+    activity: activity ? { id: activity.id } : null,
+    managingCounselorIds,
+  };
 }
 
 function collectDocumentVerificationTransitions(previousDocs, nextDocs) {
@@ -3151,7 +3606,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       let linkedTeamLead = null;
-      if (role === "Consultor" && teamLeadId) {
+      if (isCounselorRole(role) && teamLeadId) {
         linkedTeamLead = users.find((u) => String(u.id || "") === teamLeadId && String(u.role || "") === "Team Lead");
         if (!linkedTeamLead) {
           sendJson(res, 400, { ok: false, error: "Selected Team Lead is invalid." });
@@ -3189,9 +3644,9 @@ const server = http.createServer(async (req, res) => {
         branch: role === "Admin" ? "" : branch,
         country: role === "Country Coordinator" ? country : "",
         phone,
-        teamLeadId: role === "Consultor" && linkedTeamLead ? teamLeadId : "",
-        teamLeadName: role === "Consultor" && linkedTeamLead ? teamLeadName || String(linkedTeamLead?.username || "").trim() : "",
-        teamLeadEmail: role === "Consultor" && linkedTeamLead ? teamLeadEmail || normalizeEmail(linkedTeamLead?.email) : "",
+        teamLeadId: isCounselorRole(role) && linkedTeamLead ? teamLeadId : "",
+        teamLeadName: isCounselorRole(role) && linkedTeamLead ? teamLeadName || String(linkedTeamLead?.username || "").trim() : "",
+        teamLeadEmail: isCounselorRole(role) && linkedTeamLead ? teamLeadEmail || normalizeEmail(linkedTeamLead?.email) : "",
         avatar: avatarPath,
         createdAt: new Date().toISOString(),
       };
@@ -3713,6 +4168,71 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/payment-accounts") {
+    try {
+      const accounts = await readPaymentAccounts();
+      sendJson(res, 200, { ok: true, data: accounts });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load payment accounts." });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/payment-accounts") {
+    try {
+      const body = await parseBody(req);
+      const normalized = normalizePaymentAccount({
+        id: `PAY-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        label: body.label,
+        bankName: body.bankName,
+        accountName: body.accountName,
+        accountNumber: body.accountNumber,
+        branch: body.branch,
+        currency: body.currency,
+        notes: body.notes,
+      });
+      if (!normalized) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Label, bank name, account name, and account number are required.",
+        });
+        return;
+      }
+      const existing = await readPaymentAccounts();
+      if (existing.some((a) => a.label.toLowerCase() === normalized.label.toLowerCase())) {
+        sendJson(res, 409, { ok: false, error: "An account with this label already exists." });
+        return;
+      }
+      const next = [...existing, normalized];
+      await writePaymentAccounts(next);
+      sendJson(res, 201, { ok: true, data: next });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/payment-accounts/")) {
+    try {
+      const accountId = decodeURIComponent(url.pathname.replace("/api/payment-accounts/", "").trim()).replace(/\/+$/, "");
+      if (!accountId) {
+        sendJson(res, 400, { ok: false, error: "Account ID is required." });
+        return;
+      }
+      const existing = await readPaymentAccounts();
+      const next = existing.filter((a) => String(a.id || "") !== accountId);
+      if (next.length === existing.length) {
+        sendJson(res, 404, { ok: false, error: "Payment account not found." });
+        return;
+      }
+      await writePaymentAccounts(next);
+      sendJson(res, 200, { ok: true, data: next });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to remove payment account." });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/meeting-settings") {
     try {
       const settings = await readMeetingSettings();
@@ -3842,13 +4362,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/invoices") {
     try {
       const invoices = await readInvoices();
-      const payload = { ok: true, data: invoices };
-      logEvent("invoice", "GET /api/invoices", {
-        host: req.headers.host || "",
-        file: INVOICES_FILE,
-        count: invoices.length,
-        responseBytes: Buffer.byteLength(JSON.stringify(payload), "utf8"),
-      });
+      const payload = { ok: true, data: invoices.map((inv) => publicInvoiceRecord(req, inv)) };
       sendJson(res, 200, payload);
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load invoices." });
@@ -4069,6 +4583,18 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: "Invalid invoice payload." });
         return;
       }
+      const attachmentLinkRaw = String(body.attachmentLink || "").trim();
+      const attachmentLink =
+        attachmentLinkRaw && /^https?:\/\//i.test(attachmentLinkRaw) ? attachmentLinkRaw : "";
+
+      let paymentAccount = null;
+      const paymentAccountId = String(body.paymentAccountId || "").trim();
+      if (paymentAccountId) {
+        const accounts = await readPaymentAccounts();
+        const matched = accounts.find((a) => String(a.id || "") === paymentAccountId);
+        if (matched) paymentAccount = { ...matched };
+      }
+
       const invoice = {
         id: String(body.id || `INV-${Date.now()}`),
         studentId,
@@ -4084,8 +4610,31 @@ const server = http.createServer(async (req, res) => {
         generatedReceiptUrl: body.generatedReceiptUrl ? String(body.generatedReceiptUrl) : undefined,
         paymentProofUrl: body.paymentProofUrl ? String(body.paymentProofUrl) : undefined,
         paymentProofName: body.paymentProofName ? String(body.paymentProofName) : undefined,
+        attachmentLink: attachmentLink || undefined,
+        paymentAccountId: paymentAccount?.id,
+        paymentAccount: paymentAccount || undefined,
         updatedAt: new Date().toISOString(),
       };
+
+      let invoiceFileAttachment = null;
+      if (body.invoiceAttachmentDataUrl) {
+        const storedInvoiceFile = await storeChatAttachmentDataUrl(
+          String(body.invoiceAttachmentDataUrl || ""),
+          String(body.invoiceAttachmentName || `${invoice.id}-attachment`)
+        );
+        if (storedInvoiceFile && !storedInvoiceFile.error) {
+          invoiceFileAttachment = {
+            name: storedInvoiceFile.name,
+            mime: storedInvoiceFile.mime,
+            size: storedInvoiceFile.size,
+            url: storedInvoiceFile.url,
+          };
+          invoice.attachmentFileUrl = publicChatFileUrl(req, storedInvoiceFile.url);
+          invoice.attachmentFileName = storedInvoiceFile.name;
+          invoice.attachmentFileMime = storedInvoiceFile.mime;
+        }
+      }
+
       let receiptAttachment = null;
       if (body.receiptImageDataUrl) {
         const storedReceipt = await storeChatAttachmentDataUrl(
@@ -4102,6 +4651,7 @@ const server = http.createServer(async (req, res) => {
           invoice.generatedReceiptUrl = publicChatFileUrl(req, storedReceipt.url);
         }
       }
+
       let whatsappDelivery = { attempted: false, status: "skipped", reason: "Not attempted." };
       try {
         const students = await readStudemts();
@@ -4112,25 +4662,27 @@ const server = http.createServer(async (req, res) => {
         } else if (!counselorId || counselorId === "Unassigned") {
           whatsappDelivery = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
         } else {
-          const result = await deliverCounselorMessageToStudentWhatsapp({
+          const messageText = buildInvoiceWhatsappMessage({
+            studentName: String(student.name || "").trim(),
+            invoiceId: invoice.id,
+            currency: invoice.currency,
+            amount: invoice.amount,
+            description: invoice.description,
+            issueDate: invoice.issueDate,
+            dueDate: invoice.dueDate,
+            paymentAccount,
+            attachmentLink: invoice.attachmentLink,
+            attachmentFileUrl: invoice.attachmentFileUrl,
+            attachmentFileName: invoice.attachmentFileName,
+            generatedReceiptUrl: invoice.generatedReceiptUrl,
+          });
+          whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
             senderId: counselorId,
             receiverId: studentId,
-            content: buildInvoiceWhatsappMessage({
-              studentName: String(student.name || "").trim(),
-              invoiceId: invoice.id,
-              currency: invoice.currency,
-              amount: invoice.amount,
-              description: invoice.description,
-              dueDate: invoice.dueDate,
-            }),
-            attachment: receiptAttachment,
+            messageText,
+            receiptAttachment,
+            invoiceFileAttachment,
           });
-          whatsappDelivery = {
-            attempted: Boolean(result?.attempted),
-            status: result?.status || "skipped",
-            reason: result?.reason || "",
-            sentAt: new Date().toISOString(),
-          };
         }
       } catch (error) {
         whatsappDelivery = {
@@ -4145,7 +4697,7 @@ const server = http.createServer(async (req, res) => {
       const invoices = await readInvoices();
       const nextInvoices = [invoice, ...invoices];
       await writeInvoices(nextInvoices);
-      sendJson(res, 201, { ok: true, data: invoice });
+      sendJson(res, 201, { ok: true, data: publicInvoiceRecord(req, invoice) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -4172,12 +4724,20 @@ const server = http.createServer(async (req, res) => {
       const nextStatus = String(body.status || currentInvoice.status || "");
       const isAcceptingPayment = nextStatus === "Paid" && prevStatus === "Verifying";
       const isRejectingPayment = nextStatus === "Pending" && prevStatus === "Verifying";
-      if (isAcceptingPayment && actorRole !== "Admin" && actorRole !== "Manager") {
-        sendJson(res, 403, { ok: false, error: "Only Admin or Manager can accept invoice payments." });
+      const canReviewInvoicePayment =
+        actorRole === "Admin" || actorRole === "Manager" || actorRole === "Accountant";
+      if (isAcceptingPayment && !canReviewInvoicePayment) {
+        sendJson(res, 403, {
+          ok: false,
+          error: "Only Admin, Manager, or Accountant can accept invoice payments.",
+        });
         return;
       }
-      if (isRejectingPayment && actorRole !== "Admin" && actorRole !== "Manager") {
-        sendJson(res, 403, { ok: false, error: "Only Admin or Manager can reject invoice payment evidence." });
+      if (isRejectingPayment && !canReviewInvoicePayment) {
+        sendJson(res, 403, {
+          ok: false,
+          error: "Only Admin, Manager, or Accountant can reject invoice payment evidence.",
+        });
         return;
       }
       const { actorRole: _actorRole, actorId: _actorId, ...safeBody } = body;
@@ -4199,64 +4759,27 @@ const server = http.createServer(async (req, res) => {
       updated[idx] = merged;
       await writeInvoices(updated);
 
-      let invoiceWhatsappNotification = null;
+      let invoicePaymentNotifications = null;
       if (isAcceptingPayment || isRejectingPayment) {
         const students = await readStudemts();
         const student = students.find((item) => String(item.id || "") === String(merged.studentId || ""));
-        const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
         const decision = isAcceptingPayment ? "approved" : "rejected";
-        if (!student) {
-          invoiceWhatsappNotification = {
-            invoiceId: merged.id,
-            decision,
-            whatsapp: { attempted: false, status: "skipped", reason: "Student record not found." },
-          };
-        } else if (!counselorId || counselorId === "Unassigned") {
-          invoiceWhatsappNotification = {
-            invoiceId: merged.id,
-            decision,
-            whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
-          };
-        } else {
-          const message = buildInvoicePaymentDecisionWhatsappMessage({
-            studentName: String(student.name || "").trim(),
-            invoiceId: merged.id,
-            currency: merged.currency,
-            amount: merged.amount,
-            description: merged.description,
-            decision,
-            rejectionReason: String(merged.paymentRejectionReason || "").trim(),
-          });
-          try {
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId: counselorId,
-              receiverId: String(student.id || ""),
-              content: message,
-            });
-            invoiceWhatsappNotification = {
-              invoiceId: merged.id,
-              decision,
-              whatsapp: {
-                attempted: Boolean(result?.attempted),
-                status: String(result?.status || "failed"),
-                reason: String(result?.reason || ""),
-              },
-            };
-          } catch (error) {
-            invoiceWhatsappNotification = {
-              invoiceId: merged.id,
-              decision,
-              whatsapp: {
-                attempted: true,
-                status: "failed",
-                reason: String(error?.message || "Failed to send WhatsApp message."),
-              },
-            };
-          }
-        }
+        invoicePaymentNotifications = await notifyInvoicePaymentDecision({
+          req,
+          invoice: merged,
+          student: student || null,
+          decision,
+          actorRole,
+          actorId: String(body.actorId || "").trim(),
+        });
       }
 
-      sendJson(res, 200, { ok: true, data: merged, invoiceWhatsappNotification });
+      sendJson(res, 200, {
+        ok: true,
+        data: publicInvoiceRecord(req, merged),
+        invoiceWhatsappNotification: invoicePaymentNotifications?.invoiceWhatsappNotification || null,
+        invoicePaymentNotifications,
+      });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -4303,7 +4826,7 @@ const server = http.createServer(async (req, res) => {
       const updated = [...invoices];
       updated[idx] = merged;
       await writeInvoices(updated);
-      sendJson(res, 200, { ok: true, data: merged });
+      sendJson(res, 200, { ok: true, data: publicInvoiceRecord(req, merged) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }

@@ -11,9 +11,10 @@ import {
   sanitizeInquiryExamResults,
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
+import { isCounselorEquivalentPortalRole } from "../roles";
 
 function resolveCounselorId(userRole, currentUser, counselorOptions) {
-  if (userRole !== "Counselor") return "";
+  if (!isCounselorEquivalentPortalRole(userRole)) return "";
   const currentUserId = currentUser?.id || "";
   const byId = counselorOptions.find((item) => item.id === currentUserId);
   const byEmail = counselorOptions.find(
@@ -143,7 +144,7 @@ const AddStudentModal = ({
 
   const handleFinalSubmit = async () => {
     setFormError("");
-    const validation = validateInquiryFormRequired(form);
+    const validation = validateInquiryFormRequired(form, { requireBudget: false });
     if (!validation.ok) {
       setFormError(validation.error);
       return;
@@ -169,7 +170,8 @@ const AddStudentModal = ({
       ielts: ieltsFromExamResults(form.examResults),
       gpa: "0.0",
       status: "Inquiry",
-      budget: fields.budget,
+      budget: fields.budget || "",
+      budgetCurrency: fields.budgetCurrency || "LKR",
       priority: fields.priority,
       counselor: counselorId,
       counselorName: selectedCounselor?.name || "",
@@ -214,7 +216,7 @@ const AddStudentModal = ({
   const handleStep1Continue = (e) => {
     e.preventDefault();
     setFormError("");
-    const validation = validateInquiryFormRequired(form);
+    const validation = validateInquiryFormRequired(form, { requireBudget: false });
     if (!validation.ok) {
       setFormError(validation.error);
       return;
@@ -289,6 +291,7 @@ const AddStudentModal = ({
             onCancel={handleClose}
             submitLabel={showAssignStep ? "Continue" : "Add Student"}
             cancelLabel="Cancel"
+            showBudgetField={false}
           />
         ) : (
           <form

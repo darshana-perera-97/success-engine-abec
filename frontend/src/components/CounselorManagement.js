@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo, useEffect } from "react";
 import { formatLKR } from "../utils";
 import { getAccounts, getBranches } from "../authApi";
+import { isCounselorEquivalentAccountRole } from "../roles";
 import {
   Users,
   TrendingUp,
@@ -140,7 +141,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     ) : null;
     return accounts.filter((a) => {
       const role = String(a.role || "").toLowerCase();
-      const isCounselor = role === "consultor" || role === "counselor";
+      const isCounselor = isCounselorEquivalentAccountRole(a.role);
       if (!isCounselor) return false;
       if (currentRole !== "Team Lead") return true;
       if (!loggedTeamLeadAccount) return false;

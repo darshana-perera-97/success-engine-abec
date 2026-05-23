@@ -1,12 +1,10 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Trophy, Medal, TrendingUp, Star, Crown } from "lucide-react";
 import { normalizePipelineStatus } from "../pipeline";
+import { isCounselorEquivalentAccountRole } from "../roles";
 const LeaderboardWidget = ({ students = [], employees = [], currentUserId = "", currentUserEmail = "" }) => {
   const normalize = (value) => String(value || "").trim().toLowerCase();
-  const counselors = employees.filter((employee) => {
-    const role = normalize(employee.role);
-    return role === "counselor" || role === "consultor" || role === "counsellor";
-  });
+  const counselors = employees.filter((employee) => isCounselorEquivalentAccountRole(employee.role));
   const leaderboard = counselors.map((counselor) => {
     const counselorId = normalize(counselor.id);
     const counselorEmail = normalize(counselor.email);

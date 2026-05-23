@@ -28,6 +28,7 @@ import {
 import { DocumentManager } from "./DocumentManager";
 import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
 import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
+import { BUDGET_CURRENCIES } from "./InquiryIntakeForm";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
@@ -46,6 +47,12 @@ import {
 } from "../pipeline";
 import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
+import {
+  isCounselorEquivalentAccountRole,
+  isCounselorEquivalentPortalRole,
+  VISA_OFFICER_COUNSELOR_ROLE,
+  VISA_OFFICER_ROLE,
+} from "../roles";
 function normalizeBranchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -73,8 +80,7 @@ function resolveTaskStudentKey(task) {
   return "";
 }
 function isCounselorRole(roleValue) {
-  const role = String(roleValue || "").trim().toLowerCase();
-  return role.includes("counselor") || role.includes("counsellor") || role.includes("consultor");
+  return isCounselorEquivalentAccountRole(roleValue);
 }
 function isMeaningfulGpaDisplay(value) {
   const s = String(value ?? "").trim().toLowerCase();
@@ -89,6 +95,21 @@ function isMeaningfulIeltsDisplay(value) {
   if (!s) return false;
   if (s === "pending" || s === "—" || s === "-" || s === "n/a" || s === "na" || s === "none" || s === "tbd" || s === "to be confirmed") return false;
   return true;
+}
+function hasStudentAnnualBudget(student) {
+  const raw = String(student?.budget || "").trim();
+  if (!raw) return false;
+  const n = Number(String(raw).replace(/[^\d.]/g, ""));
+  return Number.isFinite(n) && n > 0;
+}
+function formatStudentAnnualBudget(student) {
+  if (!hasStudentAnnualBudget(student)) return "Not set";
+  const raw = String(student.budget || "").trim();
+  const currency = String(student?.budgetCurrency || "LKR").trim().toUpperCase();
+  const label = BUDGET_CURRENCIES.find((c) => c.value === currency)?.label || currency;
+  const num = Number(String(raw).replace(/[^\d.]/g, ""));
+  const formatted = num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `${formatted} ${label}`;
 }
 function formatExamResultsSubtitle(student) {
   const raw = student?.examResults;
@@ -115,27 +136,43 @@ function buildLegacyMetricsSubtitleLine(student) {
   if (isMeaningfulIeltsDisplay(ielts)) segments.push(`IELTS: ${ielts}`);
   return segments.length ? segments.join("\u2022") : null;
 }
-const KeyDetails = ({ student, canEditContact = false, onEditContact }) => {
+const KeyDetails = ({ student, canEditContact = false, onEditContact, canSetBudget = false, onSetBudget }) => {
+  const budgetUnset = !hasStudentAnnualBudget(student);
   const details = [
-    { icon: MapPin, label: "Branch", value: student.branch },
-    { icon: Mail, label: "Email", value: student.email },
-    { icon: Phone, label: "Contact", value: student.phone }
+    { icon: MapPin, label: "Branch", value: student.branch || "—" },
+    { icon: Mail, label: "Email", value: student.email || "—" },
+    { icon: Phone, label: "Contact", value: student.phone || "—" },
+    {
+      icon: Banknote,
+      label: "Annual budget",
+      value: formatStudentAnnualBudget(student),
+      valueClass: budgetUnset ? "text-slate-500 italic" : "text-slate-800"
+    }
   ];
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
     /* @__PURE__ */ jsxs("div", { className: "mb-4 flex items-center justify-between gap-2", children: [
       /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Key Details" }),
-      canEditContact && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px]", onClick: onEditContact, children: [
+      canEditContact && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px] shrink-0", onClick: onEditContact, children: [
         /* @__PURE__ */ jsx(Pencil, { size: 13, strokeWidth: 1.75, className: "mr-1.5" }),
         "Edit Contact"
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
-      /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
-      /* @__PURE__ */ jsxs("div", { children: [
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: item.label }),
-        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-800", children: item.value })
-      ] })
-    ] }, item.label)) })
+    /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => {
+      const isAnnualBudget = item.label === "Annual budget";
+      return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
+        /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
+        /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: item.label }),
+          isAnnualBudget ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+            canSetBudget && budgetUnset && onSetBudget && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onSetBudget, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              "Set Annual budget"
+            ] })
+          ] }) : /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value })
+        ] })
+      ] }, item.label);
+    }) })
   ] });
 };
 const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onNavigateToTask }) => {
@@ -542,7 +579,17 @@ const MeetingNotes = ({ student, onUpdateStudent, currentUser, authenticatedUser
   ] });
 };
 const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => {
-  const genericLabels = new Set(["Counselor", "Country Coordinator", "Manager", "Team Lead", "Admin", "Student", "System"]);
+  const genericLabels = new Set([
+    "Counselor",
+    VISA_OFFICER_ROLE,
+    VISA_OFFICER_COUNSELOR_ROLE,
+    "Country Coordinator",
+    "Manager",
+    "Team Lead",
+    "Admin",
+    "Student",
+    "System",
+  ]);
   const studentActivities = activities.filter((a) => {
     if (String(a.action || "") === "added specialized note") return false;
     return a.studentId === student.id || a.studentName === student.name || a.target.includes(student.name) || a.user === student.name || student.documents?.some((d) => a.target.includes(d.name)) || a.target.includes(student.id);
@@ -575,7 +622,7 @@ const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => 
         ] }),
         /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-500 mt-1", children: [
           "Counselor: ",
-          activity.counselorName && !genericLabels.has(String(activity.counselorName || "").trim()) ? activity.counselorName : assignedCounselorName || (activity.role === "Counselor" ? activity.actorName || activity.user || "N/A" : "N/A"),
+          activity.counselorName && !genericLabels.has(String(activity.counselorName || "").trim()) ? activity.counselorName : assignedCounselorName || (isCounselorEquivalentPortalRole(activity.role) ? activity.actorName || activity.user || "N/A" : "N/A"),
           " | Student: ",
           activity.studentName || student.name
         ] })
@@ -600,6 +647,7 @@ const StudentProfile = ({
   onUpdateTasks,
   activities = [],
   invoices = [],
+  paymentAccounts = [],
   onUpdateInvoice,
   onCreateInvoice,
   onUploadStudentDocument,
@@ -618,7 +666,7 @@ const StudentProfile = ({
   onStudentMovedToRequests,
   onSelectStudent
 }) => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
   const [activeTab, setActiveTab] = useState("pipeline");
   const [advanceDialog, setAdvanceDialog] = useState({
@@ -631,6 +679,11 @@ const StudentProfile = ({
     open: false,
     email: "",
     phone: ""
+  });
+  const [budgetDialog, setBudgetDialog] = useState({
+    open: false,
+    budget: "",
+    budgetCurrency: "LKR"
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
   useEffect(() => {
@@ -702,6 +755,17 @@ const StudentProfile = ({
     }
     setActiveTab("pipeline");
   }, [searchParams, student?.id, visaPilotUnlocked]);
+  const [openInvoiceCreatePending, setOpenInvoiceCreatePending] = useState(false);
+  useEffect(() => {
+    setOpenInvoiceCreatePending(false);
+  }, [student?.id]);
+  useEffect(() => {
+    if (searchParams.get("createInvoice") !== "1") return;
+    setOpenInvoiceCreatePending(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("createInvoice");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
   const enrolledAdvanceBlockReasons = useMemo(
@@ -867,7 +931,10 @@ const StudentProfile = ({
     }
   };
   const canManagerEditContact = userRole === "Manager";
-  const showCounselorsRosterSection = ["Admin", "Manager", "Team Lead", "Counselor", "Country Coordinator"].includes(userRole);
+  const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
+  const showCounselorsRosterSection =
+    ["Admin", "Manager", "Team Lead", "Country Coordinator"].includes(userRole) ||
+    isCounselorEquivalentPortalRole(userRole);
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {
@@ -932,6 +999,40 @@ const StudentProfile = ({
   };
   const closeContactDialog = () => {
     setContactDialog((prev) => ({ ...prev, open: false }));
+  };
+  const openBudgetDialog = () => {
+    if (!canSetAnnualBudget || hasStudentAnnualBudget(localStudent)) return;
+    setBudgetDialog({
+      open: true,
+      budget: "",
+      budgetCurrency: String(localStudent.budgetCurrency || "LKR").trim().toUpperCase() || "LKR"
+    });
+  };
+  const closeBudgetDialog = () => {
+    setBudgetDialog((prev) => ({ ...prev, open: false }));
+  };
+  const handleSaveAnnualBudget = () => {
+    if (!canSetAnnualBudget || hasStudentAnnualBudget(localStudent)) return;
+    const nextBudget = String(budgetDialog.budget || "").trim();
+    const nextCurrency = String(budgetDialog.budgetCurrency || "LKR").trim().toUpperCase() || "LKR";
+    const amount = Number(nextBudget.replace(/[^\d.]/g, ""));
+    if (!nextBudget || !Number.isFinite(amount) || amount <= 0) return;
+    const updated = {
+      ...localStudent,
+      budget: nextBudget,
+      budgetCurrency: nextCurrency
+    };
+    handleUpdateStudentLocal(updated);
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "set annual budget",
+      target: `${localStudent.name} (${formatStudentAnnualBudget(updated)})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    closeBudgetDialog();
   };
   const handleSaveContactDetails = () => {
     if (!canManagerEditContact) return;
@@ -1274,7 +1375,16 @@ const StudentProfile = ({
         }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
         ] });
       case "ledger":
-        return /* @__PURE__ */ jsx(FinanceModule, { student: localStudent, invoices, userRole, onUpdateInvoice, onCreateInvoice, onNotify });
+        return /* @__PURE__ */ jsx(FinanceModule, {
+          student: localStudent,
+          invoices,
+          paymentAccounts,
+          userRole,
+          onUpdateInvoice,
+          onCreateInvoice,
+          onNotify,
+          openCreateInvoice: openInvoiceCreatePending
+        });
       case "resume":
         return /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-slate-100 bg-slate-50/50 -mx-1 px-1 py-3 sm:mx-0 sm:px-0", children: /* @__PURE__ */ jsx(AIResumeBuilder, {
           embedMode: true,
@@ -1468,7 +1578,7 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
             /* @__PURE__ */ jsx(StudentProfileTeamPanel, { student: localStudent, employees, userRole, onUpdateStudent: handleUpdateStudentLocal }),
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole, highlightTaskId, onNavigateToTask }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, { student: localStudent, employees }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
@@ -1493,6 +1603,26 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeContactDialog, children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: !String(contactDialog.email || "").trim() || !String(contactDialog.phone || "").trim(), children: "Save changes" })
+          ] })
+        ] }) }),
+        budgetDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeBudgetDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Set annual budget" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeBudgetDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "This student has no annual budget on file. Enter their estimated annual study budget to continue." }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Annual budget" }),
+              /* @__PURE__ */ jsxs("div", { className: "mt-1 flex gap-2", children: [
+                /* @__PURE__ */ jsx("input", { type: "number", min: "0", step: "any", value: budgetDialog.budget, onChange: (e) => setBudgetDialog((prev) => ({ ...prev, budget: e.target.value })), className: "min-w-0 flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "e.g. 25000" }),
+                /* @__PURE__ */ jsx("select", { value: budgetDialog.budgetCurrency, onChange: (e) => setBudgetDialog((prev) => ({ ...prev, budgetCurrency: e.target.value })), className: "w-28 shrink-0 text-sm border border-gray-200 rounded-lg px-2 py-2 focus:outline-none focus:border-indigo-500 bg-white", "aria-label": "Currency", children: BUDGET_CURRENCIES.map((c) => /* @__PURE__ */ jsx("option", { value: c.value, children: c.label }, c.value)) })
+              ] })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeBudgetDialog, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveAnnualBudget, disabled: !String(budgetDialog.budget || "").trim() || !(Number(String(budgetDialog.budget || "").replace(/[^\d.]/g, "")) > 0), children: "Save budget" })
           ] })
         ] }) }),
         advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col my-auto", onClick: (e) => e.stopPropagation(), children: [

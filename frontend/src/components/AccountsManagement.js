@@ -11,6 +11,10 @@ import {
   updateAdminAvatar
 } from "../authApi";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
+import {
+  VISA_OFFICER_COUNSELOR_ROLE,
+  VISA_OFFICER_ROLE,
+} from "../roles";
 
 function generateTempPassword() {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -33,9 +37,13 @@ function roleBadgeClass(role) {
     case "Team Lead":
       return "bg-violet-50 text-violet-800 border-violet-200";
     case "Counselor":
+    case "Visa Officer":
+    case "Visa Officer & Counselor":
       return "bg-blue-50 text-blue-800 border-blue-200";
     case "Country Coordinator":
       return "bg-cyan-50 text-cyan-900 border-cyan-200";
+    case "Accountant":
+      return "bg-teal-50 text-teal-800 border-teal-200";
     case "Student":
       return "bg-emerald-50 text-emerald-800 border-emerald-200";
     default:
@@ -221,7 +229,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               }),
               /* @__PURE__ */ jsx("p", {
                 className: "text-sm text-slate-500 mt-0.5",
-                children: "Manage platform logins. Add Admin, Manager, Counselor, or Country Coordinator accounts and reset passwords (except the primary admin login)."
+                children: "Manage platform logins. Add Admin, Manager, Accountant, counselor-type roles (Counselor, Visa Officer, Visa Officer & Counselor), or Country Coordinator accounts and reset passwords (except the primary admin login)."
               })
             ]
           }),
@@ -386,7 +394,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                 /* @__PURE__ */ jsxs("div", {
                   children: [
                     /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Add Account" }),
-                    /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Create an Admin, Manager, Counselor, or Country Coordinator account." })
+                    /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Create an Admin, Manager, counselor-type, or Country Coordinator account." })
                   ]
                 }),
                 /* @__PURE__ */ jsx("button", {
@@ -492,7 +500,10 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                       children: [
                         /* @__PURE__ */ jsx("option", { value: "Admin", children: "Admin" }),
                         /* @__PURE__ */ jsx("option", { value: "Manager", children: "Manager" }),
+                        /* @__PURE__ */ jsx("option", { value: "Accountant", children: "Accountant" }),
                         /* @__PURE__ */ jsx("option", { value: "Counselor", children: "Counselor" }),
+                        /* @__PURE__ */ jsx("option", { value: VISA_OFFICER_ROLE, children: VISA_OFFICER_ROLE }),
+                        /* @__PURE__ */ jsx("option", { value: VISA_OFFICER_COUNSELOR_ROLE, children: VISA_OFFICER_COUNSELOR_ROLE }),
                         /* @__PURE__ */ jsx("option", { value: "Country Coordinator", children: "Country Coordinator" })
                       ]
                     })

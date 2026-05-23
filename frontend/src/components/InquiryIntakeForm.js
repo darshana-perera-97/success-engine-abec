@@ -67,7 +67,7 @@ export function sanitizeInquiryExamResults(examResults) {
     .filter((row) => row.examName || row.result);
 }
 
-export function validateInquiryFormRequired(form) {
+export function validateInquiryFormRequired(form, { requireBudget = true } = {}) {
   if (
     !String(form.name || "").trim() ||
     !String(form.email || "").trim() ||
@@ -75,8 +75,8 @@ export function validateInquiryFormRequired(form) {
     !String(form.countryToVisit || "").trim() ||
     !String(form.nearestOffice || "").trim() ||
     !String(form.livingStatus || "").trim() ||
-    !String(form.budget || "").trim() ||
-    !String(form.budgetCurrency || "").trim() ||
+    (requireBudget && !String(form.budget || "").trim()) ||
+    (requireBudget && !String(form.budgetCurrency || "").trim()) ||
     !String(form.visaRejectionAnyCountry || "").trim() ||
     !String(form.currentEducationLevel || "").trim() ||
     !String(form.intendedProgram || "").trim()
@@ -88,6 +88,13 @@ export function validateInquiryFormRequired(form) {
 
 export function inquiryFormToStudentFields(form, baseStudent = {}) {
   const sanitizedExamResults = sanitizeInquiryExamResults(form.examResults);
+  const formBudget = String(form.budget || "").trim();
+  const budget = formBudget || String(baseStudent.budget || "").trim();
+  const budgetCurrency = (
+    formBudget
+      ? String(form.budgetCurrency || "LKR").trim().toUpperCase()
+      : String(baseStudent.budgetCurrency || form.budgetCurrency || "LKR").trim().toUpperCase()
+  ) || "LKR";
   return {
     ...baseStudent,
     name: String(form.name || "").trim(),
@@ -97,8 +104,8 @@ export function inquiryFormToStudentFields(form, baseStudent = {}) {
     nearestOffice: String(form.nearestOffice || "").trim(),
     city: String(form.city || "").trim(),
     livingStatus: String(form.livingStatus || "").trim(),
-    budget: String(form.budget || "").trim(),
-    budgetCurrency: String(form.budgetCurrency || "LKR").trim().toUpperCase(),
+    budget,
+    budgetCurrency,
     visaRejectionAnyCountry: String(form.visaRejectionAnyCountry || "").trim(),
     currentEducationLevel: String(form.currentEducationLevel || "").trim(),
     intendedProgram: String(form.intendedProgram || "").trim(),
@@ -123,7 +130,8 @@ export function InquiryIntakeForm({
   onSubmit,
   onCancel,
   submitLabel = "Save",
-  cancelLabel = "Cancel"
+  cancelLabel = "Cancel",
+  showBudgetField = true
 }) {
   const updateInquiryExamRow = (id, field, value) => {
     setForm((prev) => ({
@@ -264,34 +272,36 @@ export function InquiryIntakeForm({
             ))}
           </select>
         </div>
-        <div>
-          <label className="text-xs font-semibold text-slate-700 mb-1 block">Annual budget</label>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              min="0"
-              step="any"
-              required
-              className={`min-w-0 flex-1 ${fieldClass}`}
-              value={form.budget}
-              onChange={(e) => setForm((prev) => ({ ...prev, budget: e.target.value }))}
-              placeholder="e.g. 25000"
-            />
-            <select
-              required
-              className="w-28 shrink-0 px-2 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500"
-              aria-label="Currency"
-              value={form.budgetCurrency}
-              onChange={(e) => setForm((prev) => ({ ...prev, budgetCurrency: e.target.value }))}
-            >
-              {BUDGET_CURRENCIES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+        {showBudgetField ? (
+          <div>
+            <label className="text-xs font-semibold text-slate-700 mb-1 block">Annual budget</label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                required
+                className={`min-w-0 flex-1 ${fieldClass}`}
+                value={form.budget}
+                onChange={(e) => setForm((prev) => ({ ...prev, budget: e.target.value }))}
+                placeholder="e.g. 25000"
+              />
+              <select
+                required
+                className="w-28 shrink-0 px-2 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500"
+                aria-label="Currency"
+                value={form.budgetCurrency}
+                onChange={(e) => setForm((prev) => ({ ...prev, budgetCurrency: e.target.value }))}
+              >
+                {BUDGET_CURRENCIES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div>
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Any visa rejection for any country</label>
           <select

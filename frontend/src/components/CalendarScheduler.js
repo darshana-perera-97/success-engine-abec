@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { Button } from "./Button";
 import { ChevronLeft, ChevronRight, Clock, User, CheckCircle, AlertTriangle, Video } from "lucide-react";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
+import { isCounselorEquivalentPortalRole } from "../roles";
 const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking, studentsLookup = null, focusCounselorId = null }) => {
   const [currentDate, setCurrentDate] = useState(/* @__PURE__ */ new Date());
   const [selectedDate, setSelectedDate] = useState(/* @__PURE__ */ new Date());
@@ -53,7 +54,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       const first = roster[0]?.id;
       setSelectedCounselorId(first ? String(first) : "");
       return;
-    } else if (currentRole === "Counselor") {
+    } else if (isCounselorEquivalentPortalRole(currentRole)) {
       if (currentUser.id && selectedCounselorId !== currentUser.id) {
         setSelectedCounselorId(currentUser.id);
       }
@@ -185,7 +186,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     alert(`Session booked for ${newApt.date} at ${newApt.time}! Notification sent.`);
   };
   const handleAddBusyTime = async () => {
-    if (currentRole !== "Counselor") return;
+    if (!isCounselorEquivalentPortalRole(currentRole)) return;
     setBusyError("");
     if (!busyDate) {
       setBusyError("Select a date for the one-time busy block.");
@@ -216,11 +217,11 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     setBusyReasonOther("");
   };
   const counselorStudents = studentPool.filter((student) => {
-    if (currentRole !== "Counselor") return false;
+    if (!isCounselorEquivalentPortalRole(currentRole)) return false;
     return String(student?.counselor || "") === String(currentUser?.id || "");
   });
   const handleCreateMeetingForStudent = async () => {
-    if (currentRole !== "Counselor") return;
+    if (!isCounselorEquivalentPortalRole(currentRole)) return;
     setMeetingCreateError("");
     const counselorId = String(currentUser?.id || "").trim();
     const studentId = String(meetingStudentId || "").trim();
@@ -297,12 +298,12 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     setMeetingCreateModalOpen(false);
   };
   const dayBusyBlocks = selectedDate ? bookingBlocks.filter((block) => {
-    const targetCounselor = currentRole === "Counselor" ? currentUser.id : selectedCounselorId;
+    const targetCounselor = isCounselorEquivalentPortalRole(currentRole) ? currentUser.id : selectedCounselorId;
     return block.counselorId === targetCounselor && block.date === formatDate(selectedDate);
   }).sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime)) : [];
   const roleVisibleBusyBlocks = bookingBlocks.filter((block) => {
     if (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Country Coordinator") return true;
-    if (currentRole === "Counselor") return block.counselorId === currentUser.id;
+    if (isCounselorEquivalentPortalRole(currentRole)) return block.counselorId === currentUser.id;
     return block.counselorId === selectedCounselorId;
   }).sort((a, b) => {
     const aDateTime = new Date(`${a.date}T${a.startTime}`).getTime();
@@ -374,7 +375,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       const isSelected = selectedDate && formatDate(selectedDate) === dateStr;
       const myAppointmentsDay = appointments.filter((a) => {
         if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") return a.date === dateStr;
-        if (currentRole === "Counselor") return a.date === dateStr && a.counselorId === currentUser.id;
+        if (isCounselorEquivalentPortalRole(currentRole)) return a.date === dateStr && a.counselorId === currentUser.id;
         return a.date === dateStr && a.studentId === currentUser.id;
       });
       slots.push(
@@ -405,7 +406,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-y-2", children: slots })
     ] });
   };
-  const pendingReview = currentRole === "Counselor" ? appointments.filter((a) => a.counselorId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : [];
+  const pendingReview = isCounselorEquivalentPortalRole(currentRole) ? appointments.filter((a) => a.counselorId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : [];
   const studentUpcomingMeetings = currentRole === "Student" ? appointments.filter((a) => a.studentId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) > /* @__PURE__ */ new Date()).length : 0;
   const hasStudentMeetingLimit = currentRole === "Student" && studentUpcomingMeetings >= 3;
   const outcomeModalApt = outcomeModalOpen && selectedAptId ? appointments.find((a) => a.id === selectedAptId) : null;
@@ -492,7 +493,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             bookingType
           ] }) })
         ] }),
-        currentRole === "Counselor" && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+        isCounselorEquivalentPortalRole(currentRole) && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Block Busy Time" }),
           busyError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: busyError }),
           /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-4 gap-3", children: [
@@ -523,7 +524,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             }, children: "Remove" })
           ] }, block.id)) })
         ] }),
-        currentRole === "Counselor" && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+        isCounselorEquivalentPortalRole(currentRole) && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Add meeting for student" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Create a student meeting and send details via WhatsApp." }),
           /* @__PURE__ */ jsx("div", { className: "mt-3 flex justify-end", children: /* @__PURE__ */ jsx(Button, { onClick: () => {
@@ -559,7 +560,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
           /* @__PURE__ */ jsxs("div", { className: "divide-y divide-gray-100 overflow-y-auto flex-1 p-0", children: [
             appointments.filter((a) => {
               if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") return true;
-              if (currentRole === "Counselor") return a.counselorId === currentUser.id;
+              if (isCounselorEquivalentPortalRole(currentRole)) return a.counselorId === currentUser.id;
               return a.studentId === currentUser.id;
             }).sort((a, b) => {
               const dateA = /* @__PURE__ */ new Date(`${a.date}T${a.time}`);
@@ -618,18 +619,18 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                   ] })
                 ] }),
                 /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
-                  !isPast && apt.status === "Scheduled" && currentRole === "Counselor" && (String(apt.meetingLink || "").trim() ? /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
+                  !isPast && apt.status === "Scheduled" && isCounselorEquivalentPortalRole(currentRole) && (String(apt.meetingLink || "").trim() ? /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join now"
                   ] }) }) : /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", onClick: () => openMeetingLinkModal(apt), children: [
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Add Meeting Link"
                   ] })),
-                  !isPast && apt.status === "Scheduled" && currentRole !== "Counselor" && String(apt.meetingLink || "").trim() && /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
+                  !isPast && apt.status === "Scheduled" && !isCounselorEquivalentPortalRole(currentRole) && String(apt.meetingLink || "").trim() && /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join"
                   ] }) }),
-                  isPast && apt.status === "Scheduled" && (currentRole === "Counselor" || currentRole === "Country Coordinator") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
+                  isPast && apt.status === "Scheduled" && (isCounselorEquivalentPortalRole(currentRole) || currentRole === "Country Coordinator") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
                     setSelectedAptId(apt.id);
                     setOutcomeModalOpen(true);
                   }, children: "Log Outcome" })

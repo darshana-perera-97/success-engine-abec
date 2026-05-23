@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { Upload, FileText, Check, X, AlertCircle, Eye, Download, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import { areAllTaskDocumentSlotsVerified, findTaskDocumentForSlot } from "../taskDocumentRequests";
+import { isCounselorEquivalentPortalRole } from "../roles";
 
 const ALLOWED_TYPES = new Set([
   "application/pdf",
@@ -29,7 +30,7 @@ export function TaskDocumentRequestsPanel({
   const sid = String(student?.id || "").trim();
   const isStaff = userRole !== "Student";
   const counselorCanUploadTaskDocs =
-    userRole === "Counselor" || userRole === "Consultor" || userRole === "Country Coordinator";
+    isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator";
   const showTaskDocUpload = !isStaff || counselorCanUploadTaskDocs;
   const studentTasks = useMemo(() => {
     if (!sid) return [];

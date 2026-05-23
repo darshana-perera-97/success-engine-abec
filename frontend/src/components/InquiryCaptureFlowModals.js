@@ -145,7 +145,7 @@ const InquiryCaptureFlowModals = ({
       setInquiryError("Student not found.");
       return;
     }
-    const validation = validateInquiryFormRequired(inquiryForm);
+    const validation = validateInquiryFormRequired(inquiryForm, { requireBudget: false });
     if (!validation.ok) {
       setInquiryError(validation.error);
       return;
@@ -181,6 +181,52 @@ const InquiryCaptureFlowModals = ({
     onClear?.();
   };
 
+  const saveMeetingNoteFromSummary = async () => {
+    if (!summaryStudent) return { ok: false };
+    const studentId = String(summaryStudent.id || "").trim();
+    if (!studentId) return { ok: false };
+    const note = String(summaryNote || "").trim();
+    if (!note) {
+      setSummaryError("Please add meeting notes.");
+      return { ok: false };
+    }
+    const existingNotes = Array.isArray(summaryStudent.meetingNotes) ? summaryStudent.meetingNotes : [];
+    const noteEntry = {
+      id: `mn-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+      note,
+      text: note,
+      meetingDate: "",
+      createdAt: new Date().toISOString(),
+      author: String(currentUser?.name || currentUser?.username || currentUser?.email || "Staff").trim() || "Staff",
+      authorId: String(currentUser?.id || ""),
+      source: "inquiry-call-summary"
+    };
+    const merged = {
+      ...summaryStudent,
+      meetingNotes: [noteEntry, ...existingNotes]
+    };
+    await onUpdateStudent?.(merged);
+    if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
+    setSummaryOpen(false);
+    setSummaryStudent(null);
+    onClear?.();
+    const latest = resolveStudentById(studentId) || merged;
+    return { ok: true, latest };
+  };
+
+  const handleSaveAndCreateInvoice = async () => {
+    if (!summaryStudent || summaryAction !== "meeting-note") return;
+    setIsSavingSummary(true);
+    setSummaryError("");
+    try {
+      const result = await saveMeetingNoteFromSummary();
+      if (!result.ok) return;
+      onSelectStudent?.(result.latest, { profileTab: "ledger", openCreateInvoice: true });
+    } finally {
+      setIsSavingSummary(false);
+    }
+  };
+
   const handleSaveSummary = async (e) => {
     e.preventDefault();
     if (!summaryStudent) return;
@@ -190,34 +236,12 @@ const InquiryCaptureFlowModals = ({
     setSummaryError("");
     try {
       if (summaryAction === "meeting-note") {
-        const note = String(summaryNote || "").trim();
-        if (!note) {
-          setSummaryError("Please add meeting notes.");
+        const result = await saveMeetingNoteFromSummary();
+        if (!result.ok) {
           setIsSavingSummary(false);
           return;
         }
-        const existingNotes = Array.isArray(summaryStudent.meetingNotes) ? summaryStudent.meetingNotes : [];
-        const noteEntry = {
-          id: `mn-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
-          note,
-          text: note,
-          meetingDate: "",
-          createdAt: new Date().toISOString(),
-          author: String(currentUser?.name || currentUser?.username || currentUser?.email || "Staff").trim() || "Staff",
-          authorId: String(currentUser?.id || ""),
-          source: "inquiry-call-summary"
-        };
-        const merged = {
-          ...summaryStudent,
-          meetingNotes: [noteEntry, ...existingNotes]
-        };
-        await onUpdateStudent?.(merged);
-        if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
-        setSummaryOpen(false);
-        setSummaryStudent(null);
-        onClear?.();
-        const latest = resolveStudentById(studentId) || merged;
-        onSelectStudent?.(latest);
+        onSelectStudent?.(result.latest);
         return;
       }
       if (summaryAction === "request-branch") {
@@ -294,7 +318,8 @@ const InquiryCaptureFlowModals = ({
                 onSubmit: handleSaveInquiry,
                 onCancel: closeInquiryPopup,
                 submitLabel: "Save",
-                cancelLabel: "Cancel"
+                cancelLabel: "Cancel",
+                showBudgetField: false
               })
             ]
           })
@@ -423,8 +448,17 @@ const InquiryCaptureFlowModals = ({
                       children: "You will be taken to this student's profile in counselor view."
                     }),
                   /* @__PURE__ */ jsxs("div", {
-                    className: "flex justify-end gap-2 pt-2 border-t border-gray-100",
+                    className: "flex flex-wrap justify-end items-center gap-2 pt-2 border-t border-gray-100",
                     children: [
+                      summaryAction === "meeting-note" &&
+                        /* @__PURE__ */ jsx(Button, {
+                          type: "button",
+                          variant: "outline",
+                          onClick: handleSaveAndCreateInvoice,
+                          isLoading: isSavingSummary,
+                          disabled: isSavingSummary,
+                          children: "Save and create Invoice"
+                        }),
                       /* @__PURE__ */ jsx(Button, {
                         type: "button",
                         variant: "ghost",

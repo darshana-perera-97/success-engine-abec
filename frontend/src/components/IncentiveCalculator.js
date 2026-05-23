@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { formatRawLKR } from "../utils";
 import { normalizePipelineStatus } from "../pipeline";
 import { Calendar, Banknote } from "lucide-react";
+import { isCounselorEquivalentAccountRole } from "../roles";
 
 const FLAT_COMMISSION_LKR = 150;
 const VOLUME_BONUS_RATE = 0.002;
@@ -12,14 +13,7 @@ const SHOW_INCENTIVE_MONEY = false;
 const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
 
 function isCounselorEmployee(employee) {
-  const role = normalizeIdentity(employee?.role);
-  return (
-    role === "counselor" ||
-    role === "consultor" ||
-    role === "counsellor" ||
-    role.includes("counselor") ||
-    role === "team lead"
-  );
+  return isCounselorEquivalentAccountRole(employee?.role);
 }
 
 function buildCounselorIdentitySet(agent) {

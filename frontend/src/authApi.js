@@ -451,6 +451,53 @@ export async function createCountry(name) {
   }
 }
 
+export async function getPaymentAccounts() {
+  try {
+    const res = await fetch(`${API_BASE}/api/payment-accounts`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load payment accounts." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach payment accounts server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function createPaymentAccount(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/payment-accounts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to add payment account." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach payment accounts server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function deletePaymentAccount(accountId) {
+  const id = String(accountId || "").trim();
+  if (!id) return { ok: false, error: "Account ID is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/payment-accounts/${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to remove payment account." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach payment accounts server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function getMeetingSettings() {
   try {
     const res = await fetch(`${API_BASE}/api/meeting-settings`);

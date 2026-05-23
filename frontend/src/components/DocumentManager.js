@@ -5,6 +5,7 @@ import { Button } from "./Button";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { getVisibleCountryChecklistStages } from "../pipeline";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
+import { isCounselorEquivalentPortalRole } from "../roles";
 
 /** Short label for long filenames: first few stem chars + extension (full name in title/tooltip). */
 function shortDisplayFileName(name, maxStem = 8) {
@@ -18,8 +19,12 @@ function shortDisplayFileName(name, maxStem = 8) {
   return `${base.slice(0, maxStem)}…${ext}`;
 }
 
-const DELETE_REJECTED_ROLES = new Set(["Counselor", "Manager", "Admin"]);
-const OFFER_LETTER_UPLOAD_ROLES = new Set(["Counselor", "Manager", "Admin"]);
+function canStaffManageRejectedDocuments(userRole) {
+  return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
+}
+function canStaffUploadOfferLetters(userRole) {
+  return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
+}
 const OFFER_LETTER_STATUSES = ["Approved", "Conditional", "Rejected"];
 const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
 
@@ -215,7 +220,7 @@ const DocumentManager = ({
     const visibleStages = new Set(getVisibleCountryChecklistStages(student.status));
     return visibleStages.has("Uni Application") || visibleStages.has("Offer Received");
   }, [student.status]);
-  const canUploadOfferLetters = OFFER_LETTER_UPLOAD_ROLES.has(userRole) && typeof onUploadUniversityOfferLetters === "function";
+  const canUploadOfferLetters = canStaffUploadOfferLetters(userRole) && typeof onUploadUniversityOfferLetters === "function";
   const getOfferStatusBadgeClass = (status) => {
     if (status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (status === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
@@ -381,7 +386,7 @@ const DocumentManager = ({
     : 0;
   const canStaffAppendOtherDocument =
     isStaff && onUploadProfileOtherDocument && maxProfileOtherSlotUsed < PROFILE_OTHER_DOCUMENTS_MAX_SLOT;
-  const canDeleteRejectedUpload = DELETE_REJECTED_ROLES.has(userRole) && typeof onDeleteDocument === "function";
+  const canDeleteRejectedUpload = canStaffManageRejectedDocuments(userRole) && typeof onDeleteDocument === "function";
   const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
   const totalVerified = checklist.reduce((acc, cat) => acc + cat.items.filter((item) => item.uploadedFiles.some((f) => f.status === "Verified")).length, 0);
   const showOfferLettersSection = showUniversityOfferLettersBlock && showUniversityOfferLetters;

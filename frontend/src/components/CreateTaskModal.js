@@ -4,6 +4,7 @@ import { X, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "./Button";
 import { MultiSelect } from "./MultiSelect";
 import { DatePicker } from "./DatePicker";
+import { isCounselorEquivalentPortalRole } from "../roles";
 const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, userRole, students = [], employees = [] }) => {
   const [description, setDescription] = useState("");
   const [studentId, setStudentId] = useState(student?.id || "");
@@ -34,7 +35,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
     e.preventDefault();
     setSubmitError("");
     let finalAssignedTo = assignedTo;
-    if ((userRole === "Counselor" || userRole === "Country Coordinator") && currentUser) {
+    if ((isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") && currentUser) {
       finalAssignedTo = [currentUser.id];
     }
     if (!description || !studentId || !dueDate) return;
@@ -47,7 +48,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
       id: `T${Math.floor(Math.random() * 1e4)}`,
       task: description,
       student_id: studentId,
-      assigned_to: effectivePrivate ? (userRole === "Counselor" || userRole === "Country Coordinator") && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
+      assigned_to: effectivePrivate ? (isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") && currentUser ? [currentUser.id] : assignedTo : finalAssignedTo,
       priority,
       status: "Pending",
       dueDate,
@@ -83,7 +84,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
     /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 rounded-t-xl flex-shrink-0", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-[#0F172A]", children: "Create New Task" }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: userRole === "Counselor" ? "Add a task to your list." : "Assign an action item to a team member." })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: isCounselorEquivalentPortalRole(userRole) ? "Add a task to your list." : "Assign an action item to a team member." })
       ] }),
       /* @__PURE__ */ jsx("button", { onClick: onClose, className: "text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-md", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
     ] }),
