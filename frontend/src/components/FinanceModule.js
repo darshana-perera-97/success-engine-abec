@@ -7,6 +7,7 @@ import { isCounselorEquivalentAccountRole } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
 import { getPaymentAccounts, uploadInvoicePaymentProof } from "../authApi";
 import { COMPANY_NAME } from "../companyConfig";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const escapeInvoiceSvgText = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const generateInvoiceImageDataUrl = async ({ invoice, student, paymentAccount }) => {
   try {
@@ -161,8 +162,8 @@ const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCr
         setCreateError("Unsupported attachment. Use PDF, JPG, PNG, DOC, or DOCX.");
         return;
       }
-      if (newAttachmentFile.size > 10 * 1024 * 1024) {
-        setCreateError("Attachment must be under 10MB.");
+      if (newAttachmentFile.size > MAX_UPLOAD_BYTES) {
+        setCreateError(`Attachment must be under ${MAX_UPLOAD_LABEL}.`);
         return;
       }
     }
@@ -289,8 +290,8 @@ const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCr
         setIsSubmittingPayment(false);
         return;
       }
-      if (paymentProofFile.size > 10 * 1024 * 1024) {
-        setPaymentError("Proof file must be under 10MB.");
+      if (paymentProofFile.size > MAX_UPLOAD_BYTES) {
+        setPaymentError(`Proof file must be under ${MAX_UPLOAD_LABEL}.`);
         setIsSubmittingPayment(false);
         return;
       }
@@ -580,7 +581,7 @@ const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCr
             /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf,.doc,.docx", className: "hidden", onChange: (event) => setNewAttachmentFile(event.target.files?.[0] || null) }),
             /* @__PURE__ */ jsx(Upload, { className: "mx-auto text-slate-400 mb-2", size: 22 }),
             /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-600", children: newAttachmentFile ? newAttachmentFile.name : "Upload image, PDF, or document" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: "Sent with the invoice via WhatsApp when possible (max 10MB)" })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: `Sent with the invoice via WhatsApp when possible (max ${MAX_UPLOAD_LABEL})` })
           ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "md:col-span-2 flex gap-3 pt-2", children: [
@@ -737,7 +738,7 @@ const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCr
         /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf,.doc,.docx", className: "hidden", onChange: (event) => setPaymentProofFile(event.target.files?.[0] || null) }),
         /* @__PURE__ */ jsx(Upload, { className: "mx-auto text-slate-400 mb-2", size: 24 }),
         /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-600", children: paymentProofFile ? paymentProofFile.name : "Click to upload receipt" }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: "PDF, JPG, PNG, DOC, or DOCX (max 10MB)" })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 mt-1", children: `PDF, JPG, PNG, DOC, or DOCX (max ${MAX_UPLOAD_LABEL})` })
       ] }),
       paymentError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-4", children: paymentError }) : null,
       /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [

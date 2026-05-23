@@ -677,7 +677,7 @@ const AdminDashboard = ({
                   ").",
                 ] })
               : /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
-                  "Approved, conditional, and rejected letters across all branches (",
+                  "Unconditional, conditional, and rejected letters across all branches (",
                   adminOfferLetterRows.length,
                   ").",
                 ] }),

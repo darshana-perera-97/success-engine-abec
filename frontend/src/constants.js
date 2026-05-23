@@ -2,11 +2,12 @@ import { PIPELINE_STEPS } from "./pipeline.js";
 /** @deprecated Use STAGE_CONFIG in pipeline.js for SLA durations */
 const STAGE_SLA_DAYS = {
   Inquiry: 1 / 24,
+  Registration: 0,
   Application: 1,
   Documentation: 7,
   "Interview training": 3,
   Visa: 30,
-  Enrolled: 14
+  Enrolled: 0
 };
 
 const COUNTRY_CHECKLISTS = {

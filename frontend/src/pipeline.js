@@ -5,6 +5,7 @@
 
 export const PIPELINE_STEPS = [
   "Inquiry",
+  "Registration",
   "Application",
   "Interview training",
   "Documentation",
@@ -16,7 +17,8 @@ export const PIPELINE_STEPS = [
 export const LEGACY_STATUS_TO_CANONICAL = {
   "New Inquiry": "Inquiry",
   Inquiry: "Inquiry",
-  Counseling: "Application",
+  Registration: "Registration",
+  Counseling: "Registration",
   "Uni Application": "Application",
   Application: "Application",
   "Offer Received": "Interview training",
@@ -34,6 +36,10 @@ export const STAGE_CONFIG = {
     slaLabel: "1 hour",
     owners: "Counsellor",
     detail: "Leads followed up within 1 hour"
+  },
+  Registration: {
+    owners: "Counsellor",
+    detail: "Complete student registration — no stage SLA timer"
   },
   Application: {
     slaMs: 24 * 60 * 60 * 1000,
@@ -60,10 +66,8 @@ export const STAGE_CONFIG = {
     detail: "Visa lodgment and decision tracking"
   },
   Enrolled: {
-    slaMs: 14 * 24 * 60 * 60 * 1000,
-    slaLabel: "14 days",
     owners: "Visa Officer / Counsellor",
-    detail: "Confirm enrolment and handover"
+    detail: "Enrolled — no stage SLA timer"
   }
 };
 
@@ -126,14 +130,15 @@ export const COUNTRY_CHECKLIST_STAGES = ["Documentation", "Uni Application", "Of
  */
 export function getVisibleCountryChecklistStages(status) {
   const st = normalizePipelineStatus(status);
-  if (st === "Inquiry") return [];
+  if (st === "Inquiry" || st === "Registration") return [];
   if (st === "Application") return ["Documentation", "Offer Received"];
   return COUNTRY_CHECKLIST_STAGES;
 }
 
 /**
  * Checklist sections that must be satisfied before advancing past the current pipeline stage.
- * Inquiry → Application has no document gate; Application requires Documentation + Offer Received.
+ * Inquiry → Registration and Registration → Application have no document gate;
+ * Application requires Documentation + Offer Received.
  */
 export function getRequiredCountryChecklistStagesBeforeAdvance(status) {
   const st = normalizePipelineStatus(status);
@@ -179,6 +184,7 @@ export function computePipelineStageCounts(students = []) {
 
 /** Canonical stages counted as a regional conversion (past initial inquiry). */
 export const BRANCH_CONVERSION_STAGES = [
+  "Registration",
   "Application",
   "Interview training",
   "Documentation",
@@ -457,16 +463,26 @@ export function getNextStageSlaProjection(student, options = {}) {
   const stage = normalizePipelineStatus(student?.status);
   const idx = PIPELINE_STEPS.indexOf(stage);
   if (idx < 0 || idx >= PIPELINE_STEPS.length - 1) return null;
-  const nextStage = PIPELINE_STEPS[idx + 1];
-  const nextCfg = STAGE_CONFIG[nextStage];
+  let nextStage = null;
+  let nextCfg = null;
+  for (let i = idx + 1; i < PIPELINE_STEPS.length; i++) {
+    const candidate = PIPELINE_STEPS[i];
+    const cfg = STAGE_CONFIG[candidate];
+    if (cfg?.slaMs) {
+      nextStage = candidate;
+      nextCfg = cfg;
+      break;
+    }
+  }
+  if (!nextStage || !nextCfg) return null;
   const curCfg = STAGE_CONFIG[stage];
-  if (!nextCfg?.slaMs || !curCfg?.slaMs) return null;
   const enteredRaw = student?.stageEnteredAt || student?.createdAt;
   if (!enteredRaw) return null;
   const start = new Date(enteredRaw).getTime();
   if (Number.isNaN(start)) return null;
-  const currentDeadlineMs = start + curCfg.slaMs;
-  const nextStageStartMs = Math.max(now, currentDeadlineMs);
+  const nextStageStartMs = curCfg?.slaMs
+    ? Math.max(now, start + curCfg.slaMs)
+    : Math.max(now, start);
   const nextDeadlineMs = nextStageStartMs + nextCfg.slaMs;
   const remainingMs = nextDeadlineMs - now;
   const formatted = formatRemainingMsForSla(remainingMs);
@@ -673,6 +689,31 @@ export function getEffectiveSlaViolationMissingItems(violation, studentDocuments
   if (!violation) return [];
   const missingItems = Array.isArray(violation.missingItems) ? violation.missingItems.filter(Boolean) : [];
   return missingItems.filter((req) => !requirementSatisfiedByVerifiedDocument(studentDocuments, req));
+}
+
+/** True when a stored violation was recorded for the student's current pipeline stage. */
+export function slaViolationMatchesCurrentPipelineStage(violation, studentStatus) {
+  if (!violation) return false;
+  const current = normalizePipelineStatus(studentStatus);
+  const violationStage = normalizePipelineStatus(violation.stage || "");
+  return Boolean(current) && violationStage === current;
+}
+
+/**
+ * Open SLA violations that still have missing items, limited to the current pipeline stage.
+ * Past-stage violations remain on the record for reporting but are not shown on the profile notice.
+ */
+export function getOpenSlaViolationsForCurrentStage(student) {
+  const violations = Array.isArray(student?.slaViolations) ? student.slaViolations : [];
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  return violations.filter((v) => {
+    if (!slaViolationMatchesCurrentPipelineStage(v, student?.status)) return false;
+    return getEffectiveSlaViolationMissingItems(v, docs).length > 0;
+  });
+}
+
+export function hasOpenSlaViolationsForCurrentStage(student) {
+  return getOpenSlaViolationsForCurrentStage(student).length > 0;
 }
 
 /** Updates each violation's `resolved` flag from verified documents (does not shrink stored `missingItems`). */

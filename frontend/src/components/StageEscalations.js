@@ -50,7 +50,7 @@ const StageEscalations = ({
                   /* @__PURE__ */ jsx("p", {
                     className: "text-sm text-slate-500 mt-1 max-w-2xl",
                     children:
-                      "Students who have exceeded the time limit for their current pipeline stage. Inquiry (1h), Application (24h), Interview training (72h), Documentation (7d), Visa (30d), Enrolled (14d)."
+                      "Students who have exceeded the time limit for their current pipeline stage. Inquiry (1h), Registration (no SLA), Application (24h), Interview training (72h), Documentation (7d), Visa (30d), Enrolled (no SLA)."
                   })
                 ]
           }),

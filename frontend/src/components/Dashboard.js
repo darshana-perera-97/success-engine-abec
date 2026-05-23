@@ -93,7 +93,10 @@ const Dashboard = ({ students = [], invoices = [], destinationCountries = [], br
     const x = normalizePipelineStatus(student.status);
     return x === "Visa" || x === "Enrolled";
   }).length;
-  const activeApplications = students.filter((student) => normalizePipelineStatus(student.status) !== "Inquiry").length;
+  const activeApplications = students.filter((student) => {
+    const stage = normalizePipelineStatus(student.status);
+    return stage !== "Inquiry" && stage !== "Registration";
+  }).length;
   const successRate = uniAppsCount ? Math.round(visasGranted / uniAppsCount * 100) : 0;
   const invoicedTotal = useMemo(
     () => (invoices || []).reduce((sum, inv) => {

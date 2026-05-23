@@ -6,6 +6,7 @@ import { PersonContactCard } from "./PersonContactCard";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { PIPELINE_STEPS, normalizePipelineStatus, getVisibleCountryChecklistStages } from "../pipeline";
 import { buildStudentDashboardCounselorRoster, buildVisaAgentEntries } from "../studentContactHelpers";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -72,8 +73,8 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
       setUploadError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
       return;
     }
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setUploadError("File must be under 10MB.");
+    if (selectedFile.size > MAX_UPLOAD_BYTES) {
+      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
       return;
     }
     if (!onUploadDocument) {
@@ -368,7 +369,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
       /* @__PURE__ */ jsxs("div", { className: "border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-indigo-400 hover:bg-indigo-50 transition-colors cursor-pointer", onClick: () => fileInputRef.current?.click(), children: [
         /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3", children: /* @__PURE__ */ jsx(Upload, { size: 24 }) }),
         /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: selectedFile?.name || "Click to choose a file" }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC or DOCX (max. 10MB)" })
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: `PDF, JPG, PNG, DOC or DOCX (max. ${MAX_UPLOAD_LABEL})` })
       ] }),
       /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", className: "hidden", accept: ".pdf,.png,.jpg,.jpeg,.doc,.docx", onChange: (event) => {
         const file = event.target.files?.[0];

@@ -261,6 +261,8 @@ const StudentList = ({
       case "Inquiry":
       case "New Inquiry":
         return "bg-slate-100 text-slate-700 border-gray-200";
+      case "Registration":
+        return "bg-indigo-50 text-indigo-700 border-indigo-200";
       case "Application":
       case "Counseling":
       case "Uni Application":

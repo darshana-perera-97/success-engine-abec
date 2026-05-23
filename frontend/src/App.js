@@ -28,7 +28,12 @@ import { RequestedStudents } from "./components/RequestedStudents";
 import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
-import { Bell, X } from "lucide-react";
+import { Bell, Clock, X } from "lucide-react";
+import { Button } from "./components/Button";
+import {
+  findCounselorMeetingReminder,
+  formatMeetingReminderWhen
+} from "./meetingReminders";
 import { filterTasksForCounselor } from "./counselorTaskScope";
 import {
   isCounselorEquivalentPortalRole,
@@ -115,6 +120,8 @@ function App({ initialView = "dashboard" }) {
   const [isCreateTaskModalOpen, setCreateTaskModalOpen] = useState(false);
   const [taskModalStudent, setTaskModalStudent] = useState(null);
   const [counselorListResetSignal, setCounselorListResetSignal] = useState(0);
+  const [meetingReminderPopup, setMeetingReminderPopup] = useState(null);
+  const [isAcknowledgingMeetingReminder, setIsAcknowledgingMeetingReminder] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notificationHistory, setNotificationHistory] = useState([]);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
@@ -557,14 +564,19 @@ function App({ initialView = "dashboard" }) {
     return invoices.filter((inv) => countryCoordinatorStudentIds.has(String(inv.studentId || "")));
   }, [invoices, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
   const navMyTasksCount = useMemo(() => {
+    const isIncompleteTask = (task) => String(task?.status || "").trim() !== "Completed";
     if (isCounselorEquivalentPortalRole(currentRole)) {
-      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents, counselorIdentitySet).length;
+      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents, counselorIdentitySet).filter(
+        isIncompleteTask
+      ).length;
     }
     if (currentRole === "Country Coordinator") {
       const coordTasks = countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
       const monitoredStudents = countryCoordinatorScopedStudents;
       const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
-      return (coordTasks || []).filter((task) => ids.has(String(task.student_id || task.studentId || "").trim())).length;
+      return (coordTasks || []).filter(
+        (task) => ids.has(String(task.student_id || task.studentId || "").trim()) && isIncompleteTask(task)
+      ).length;
     }
     return void 0;
   }, [
@@ -823,13 +835,32 @@ function App({ initialView = "dashboard" }) {
     loadPaymentAccounts();
   }, []);
   useEffect(() => {
+    let cancelled = false;
     const loadAppointments = async () => {
       const result = await getAppointments();
-      if (!result.ok) return;
+      if (!result.ok || cancelled) return;
       setAppointments(result.data);
     };
     loadAppointments();
-  }, []);
+    const pollMs = isCounselorEquivalentPortalRole(currentRole) ? 3e4 : 0;
+    if (!pollMs) return () => {
+      cancelled = true;
+    };
+    const intervalId = setInterval(loadAppointments, pollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole]);
+  useEffect(() => {
+    if (!isCounselorEquivalentPortalRole(currentRole)) {
+      setMeetingReminderPopup(null);
+      return;
+    }
+    const apt = findCounselorMeetingReminder(appointments, currentUser?.id);
+    if (!apt) return;
+    setMeetingReminderPopup((prev) => (prev?.id === apt.id ? prev : apt));
+  }, [appointments, currentRole, currentUser?.id]);
   useEffect(() => {
     const loadBookingBlocks = async () => {
       const result = await getBookings();
@@ -1856,6 +1887,17 @@ function App({ initialView = "dashboard" }) {
       target: `${studentName} scheduled a ${newApt.type} session with ${counselorName}`,
       type: "calendar"
     });
+    const meetingLink = String(newApt.meetingLink || "").trim();
+    if (meetingLink) {
+      const wa = saved.data?.meetingLinkWhatsappDelivery;
+      if (wa?.status === "sent") {
+        addNotification("WhatsApp sent", "Meeting link sent to the student.", "success");
+      } else if (wa?.status === "failed") {
+        addNotification("WhatsApp failed", wa.reason || "Could not send meeting link to the student.", "warning");
+      } else if (wa?.status === "skipped") {
+        addNotification("WhatsApp skipped", wa.reason || "Meeting link was not sent via WhatsApp.", "warning");
+      }
+    }
     return { ok: true, data: saved.data };
   };
   const generateTasks = (student) => {
@@ -1935,7 +1977,22 @@ function App({ initialView = "dashboard" }) {
     }
     return newTasks;
   };
+  const handleAcknowledgeMeetingReminder = async () => {
+    const apt = meetingReminderPopup;
+    if (!apt?.id) return;
+    setIsAcknowledgingMeetingReminder(true);
+    const result = await updateAppointment(apt.id, {
+      ...apt,
+      counselorMeetingReminderAcknowledgedAt: new Date().toISOString()
+    });
+    setIsAcknowledgingMeetingReminder(false);
+    if (result.ok) {
+      setAppointments((prev) => prev.map((a) => a.id === apt.id ? result.data : a));
+    }
+    setMeetingReminderPopup(null);
+  };
   const handleUpdateAppointment = async (updatedApt) => {
+    const previous = appointments.find((a) => a.id === updatedApt.id);
     const saved = await updateAppointment(updatedApt.id, updatedApt);
     if (!saved.ok) {
       addNotification("Update failed", saved.error || "Failed to update appointment.", "error");
@@ -1944,6 +2001,18 @@ function App({ initialView = "dashboard" }) {
     setAppointments((prev) => prev.map((a) => a.id === saved.data.id ? saved.data : a));
     if (updatedApt.status !== "Scheduled") {
       handleAddActivity({ user: currentRole, role: currentRole, action: `marked session as ${updatedApt.status}`, target: `${updatedApt.title} (${updatedApt.studentId})`, type: "calendar" });
+    }
+    const prevLink = String(previous?.meetingLink || "").trim();
+    const nextLink = String(saved.data?.meetingLink || "").trim();
+    if (nextLink && nextLink !== prevLink) {
+      const wa = saved.data?.meetingLinkWhatsappDelivery;
+      if (wa?.status === "sent") {
+        addNotification("WhatsApp sent", "Meeting link sent to the student.", "success");
+      } else if (wa?.status === "failed") {
+        addNotification("WhatsApp failed", wa.reason || "Could not send meeting link to the student.", "warning");
+      } else if (wa?.status === "skipped") {
+        addNotification("WhatsApp skipped", wa.reason || "Meeting link was not sent via WhatsApp.", "warning");
+      }
     }
     return { ok: true, data: saved.data };
   };
@@ -2540,6 +2609,39 @@ function App({ initialView = "dashboard" }) {
         employees
       }
     ),
+    meetingReminderPopup && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[110] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-amber-200 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 mb-4", children: [
+        /* @__PURE__ */ jsx("div", { className: "w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0", children: /* @__PURE__ */ jsx(Clock, { size: 20 }) }),
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Meeting in 15 minutes" }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600 mt-1", children: "Your upcoming session is starting soon." })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "space-y-2 text-sm text-slate-700 mb-4 rounded-lg bg-slate-50 border border-slate-100 px-3 py-3", children: [
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Student: " }),
+          students.find((s) => s.id === meetingReminderPopup.studentId)?.name || meetingReminderPopup.studentId || "—"
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Session: " }),
+          meetingReminderPopup.title || meetingReminderPopup.type || "Meeting"
+        ] }),
+        /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "When: " }),
+          formatMeetingReminderWhen(meetingReminderPopup)
+        ] }),
+        meetingReminderPopup.meetingPlatform && /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Platform: " }),
+          meetingReminderPopup.meetingPlatform
+        ] }),
+        String(meetingReminderPopup.meetingLink || "").trim() && /* @__PURE__ */ jsxs("p", { className: "break-all", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Link: " }),
+          /* @__PURE__ */ jsx("a", { href: meetingReminderPopup.meetingLink, target: "_blank", rel: "noreferrer", className: "text-indigo-600 hover:underline", children: meetingReminderPopup.meetingLink })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mb-4", children: "The student receives a WhatsApp reminder 15 minutes before the meeting when their phone is on file and your WhatsApp is connected." }),
+      /* @__PURE__ */ jsx("div", { className: "flex justify-end", children: /* @__PURE__ */ jsx(Button, { onClick: handleAcknowledgeMeetingReminder, isLoading: isAcknowledgingMeetingReminder, children: "Got it" }) })
+    ] }) }),
     /* @__PURE__ */ jsx("div", { ref: toastStackRef, className: "fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none", children: notifications.map((n) => {
       const toastHasLink = Boolean(n.link && (n.link.taskId || n.link.studentId || n.link.view));
       return /* @__PURE__ */ jsxs(

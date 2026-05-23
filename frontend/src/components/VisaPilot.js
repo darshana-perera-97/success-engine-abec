@@ -1,10 +1,11 @@
-import { jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useMemo, useState } from "react";
-import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp } from "lucide-react";
+import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import { VISA_WORKFLOWS } from "../visaWorkflows";
 import { isVisaPilotUnlocked, normalizePipelineStatus } from "../pipeline";
 import { buildVisaPilotDocType } from "../studentEnrolledGate";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 /** Short label for long filenames (matches Paperless Pipeline / DocumentManager). */
 function shortDisplayFileName(name, maxStem = 8) {
   const s = String(name || "").trim();
@@ -16,7 +17,11 @@ function shortDisplayFileName(name, maxStem = 8) {
   if (base.length <= maxStem) return s;
   return `${base.slice(0, maxStem)}…${ext}`;
 }
-const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument }) => {
+function isDeletableVisaDocumentStatus(status) {
+  return status === "Rejected" || status === "Verified";
+}
+
+const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument, onDeleteDocument }) => {
   const workflow = VISA_WORKFLOWS[student.country] || VISA_WORKFLOWS.Default;
   const visaPilotUnlocked = isVisaPilotUnlocked(student.status);
   const isDocumentationStage = normalizePipelineStatus(student.status) === "Documentation";
@@ -24,8 +29,10 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0 });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const visaDocuments = useMemo(() => student.documents?.filter((doc) => String(doc.tier || "").toLowerCase() === "visapilot") || [], [student.documents]);
   const canUploadVisaDocs = userRole !== "Student" && visaPilotUnlocked;
+  const canDeleteVisaDoc = userRole !== "Student" && typeof onDeleteDocument === "function";
   const buildVisaDocType = (item) => buildVisaPilotDocType(item);
   let currentStageIndex = 0;
   for (let i = 0; i < workflow.length; i++) {
@@ -76,8 +83,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       event.target.value = "";
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setUploadError("File must be under 10MB.");
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
       event.target.value = "";
       return;
     }
@@ -152,6 +159,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
               const itemStatus = visaState[item] || "Pending";
               const itemCompleted = itemStatus === "Completed";
               const itemDocuments = getItemDocuments(item);
+              const hasVerifiedVisaDoc = itemDocuments.some((d) => d.status === "Verified");
               return /* @__PURE__ */ jsx(
                 "div",
                 {
@@ -174,7 +182,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                         " Upload"
                       ] })
                     ] }),
-                    itemDocuments.length > 0 && /* @__PURE__ */ jsx("div", { className: "space-y-2", children: itemDocuments.map((doc) => {
+                    (itemDocuments.length > 0 || !hasVerifiedVisaDoc) && /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+                    itemDocuments.length > 0 && itemDocuments.map((doc) => {
                       const docStatus = doc.status;
                       const iconBoxClass = docStatus === "Verified" ? "bg-emerald-100 text-emerald-600" : docStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-500";
                       return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
@@ -185,12 +194,36 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                             /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: doc.uploadedAt })
                           ] })
                         ] }),
-                        doc.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200 shrink-0", children: [
-                          /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                          /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200 shrink-0", children: [
+                          doc.status && /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${docStatus === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : docStatus === "Rejected" ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-amber-50 text-amber-700 border-amber-200"}`, children: docStatus }),
+                          canDeleteVisaDoc && isDeletableVisaDocumentStatus(docStatus) && /* @__PURE__ */ jsxs(
+                            "button",
+                            {
+                              type: "button",
+                              onClick: () => setDeleteDocumentModal({ isOpen: true, doc }),
+                              title: docStatus === "Verified" ? "Delete approved upload" : "Delete rejected upload",
+                              className: "inline-flex items-center gap-1 px-2 py-1.5 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700 text-xs font-medium",
+                              children: [
+                                /* @__PURE__ */ jsx(Trash2, { size: 14, className: "shrink-0" }),
+                                "Delete"
+                              ]
+                            }
+                          ),
+                          doc.url && /* @__PURE__ */ jsxs(Fragment, { children: [
+                            /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                            /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                          ] })
                         ] })
                       ] }, doc.id || `${doc.name}-${doc.uploadedAt}`);
-                    }) })
+                    }),
+                    !hasVerifiedVisaDoc && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg ${itemDocuments.length > 0 ? "bg-amber-50/80 border-amber-200" : "bg-slate-50 border-gray-200"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+                      /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${itemDocuments.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : "bg-white border-gray-200 text-slate-400"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
+                      /* @__PURE__ */ jsxs("div", { children: [
+                        /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${itemDocuments.length > 0 ? "text-amber-900" : "text-slate-500"}`, children: itemDocuments.length > 0 ? "Awaiting approved document" : "Pending upload" }),
+                        /* @__PURE__ */ jsx("p", { className: `text-xs ${itemDocuments.length > 0 ? "text-amber-800/80" : "text-slate-400"}`, children: itemDocuments.length > 0 ? "Upload a new file or approve a pending submission for this visa item." : "No file uploaded yet for this requirement." })
+                      ] })
+                    ] }) })
+                    ] })
                   ]
                 },
                 item
@@ -205,6 +238,29 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
         stage.name
       );
     }) }),
+    deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: deleteDocumentModal.doc.status === "Verified" ? "Delete approved visa document?" : "Delete rejected visa document?" }),
+        /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+          "Remove ",
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: deleteDocumentModal.doc.name }),
+          " from this student’s record. The stored file will be deleted."
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-5 flex justify-end gap-2", children: [
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setDeleteDocumentModal({ isOpen: false, doc: null }), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, {
+          variant: "danger",
+          onClick: async () => {
+            const doc = deleteDocumentModal.doc;
+            setDeleteDocumentModal({ isOpen: false, doc: null });
+            if (!doc) return;
+            await onDeleteDocument?.(doc);
+          },
+          children: "Delete"
+        })
+      ] })
+    ] }) }),
     uploadModal.isOpen && uploadModal.item && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
@@ -221,7 +277,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
             /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleUploadFileChange }),
             /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Click to browse file" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Supports PDF, JPG, PNG, DOC, DOCX (Max 10MB)" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Supports PDF, JPG, PNG, DOC, DOCX (Max ${MAX_UPLOAD_LABEL})` }),
             uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-3", children: uploadError }) : null
           ]
         }

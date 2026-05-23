@@ -1,4 +1,10 @@
-const UNIVERSITY_OFFER_STATUSES = new Set(["Approved", "Conditional", "Rejected"]);
+const UNIVERSITY_OFFER_STATUSES = new Set(["Unconditional", "Conditional", "Rejected"]);
+
+function normalizeOfferStatus(status) {
+  const s = String(status || "Conditional").trim();
+  if (s === "Approved") return "Unconditional";
+  return UNIVERSITY_OFFER_STATUSES.has(s) ? s : "Conditional";
+}
 
 function resolveStudentCounselorDisplayName(student, employees) {
   const match = (employees || []).find((e) => e && e.id === student?.counselor);
@@ -6,7 +12,7 @@ function resolveStudentCounselorDisplayName(student, employees) {
 }
 
 function offerStatusBadgeClass(status) {
-  if (status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (status === "Unconditional" || status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
   if (status === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
   return "bg-amber-50 text-amber-700 border-amber-200";
 }
@@ -21,13 +27,13 @@ function buildUniversityOfferLetterRows(students, employees) {
     const counselorLabel = resolveStudentCounselorDisplayName(student, employees);
     for (const entry of raw) {
       if (!entry || typeof entry !== "object" || !String(entry.url || "").trim()) continue;
-      const offerStatus = String(entry.offerStatus || "Conditional").trim();
+      const offerStatus = normalizeOfferStatus(entry.offerStatus);
       rows.push({
         key: `${sid}-${entry.id || entry.name || rows.length}`,
         student,
         studentName,
         counselorLabel,
-        offerStatus: UNIVERSITY_OFFER_STATUSES.has(offerStatus) ? offerStatus : "Conditional",
+        offerStatus,
         uploadedAt: String(entry.uploadedAt || "").trim(),
       });
     }

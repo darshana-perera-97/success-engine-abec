@@ -5,6 +5,7 @@ import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
@@ -229,6 +230,10 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || !activeConversationId) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      window.alert(`Attachment must be under ${MAX_UPLOAD_LABEL}.`);
+      return;
+    }
     const reader = new FileReader();
     const dataUrl = await new Promise((resolve) => {
       reader.onload = () => resolve(String(reader.result || ""));

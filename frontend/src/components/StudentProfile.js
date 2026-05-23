@@ -41,6 +41,8 @@ import {
   normalizePipelineStatus,
   getCurrentStageSlaDisplay,
   getEffectiveSlaViolationMissingItems,
+  getOpenSlaViolationsForCurrentStage,
+  hasOpenSlaViolationsForCurrentStage,
   reconcileStudentSlaViolationsWithDocuments,
   getRequiredCountryChecklistStagesBeforeAdvance,
   isVisaPilotUnlocked
@@ -609,7 +611,7 @@ const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => 
       /* @__PURE__ */ jsx("div", { className: "mt-0.5 w-5 h-5 rounded-full border-2 border-indigo-200 flex items-center justify-center bg-indigo-50", children: /* @__PURE__ */ jsx("div", { className: "w-2.5 h-2.5 rounded-full bg-indigo-400" }) }),
       /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start", children: [
-          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 truncate capitalize", children: activity.action === "rejected document" ? "Remove doc" : activity.action === "verified document" ? "Verify doc" : activity.action === "removed rejected document" ? "Delete rejected doc" : activity.action === "added specialized note" ? "Notes" : activity.action }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 truncate capitalize", children: activity.action === "rejected document" ? "Remove doc" : activity.action === "verified document" ? "Verify doc" : activity.action === "removed rejected document" ? "Delete rejected doc" : activity.action === "removed approved document" ? "Delete approved doc" : activity.action === "added specialized note" ? "Notes" : activity.action }),
           /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 whitespace-nowrap ml-2", children: activity.timestamp })
         ] }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1 truncate", children: activity.target }),
@@ -736,6 +738,10 @@ const StudentProfile = ({
     });
   }, [localStudent]);
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
+  const currentStageOpenSlaViolations = useMemo(
+    () => getOpenSlaViolationsForCurrentStage(localStudent),
+    [localStudent]
+  );
   const visaPilotUnlocked = isVisaPilotUnlocked(effectiveStatus);
   useEffect(() => {
     if (!visaPilotUnlocked && activeTab === "visa-pilot") {
@@ -808,10 +814,7 @@ const StudentProfile = ({
       return;
     }
     const studentDocs = localStudent.documents || [];
-    const hasOpenSlaGaps = (localStudent.slaViolations || []).some((v) => {
-      if (!v) return false;
-      return getEffectiveSlaViolationMissingItems(v, studentDocs).length > 0;
-    });
+    const hasOpenSlaGaps = getOpenSlaViolationsForCurrentStage(localStudent).length > 0;
     if (!hasOpenSlaGaps) {
       onNotify?.("Nothing to resolve", "This SLA notice is already cleared.", "info");
       return;
@@ -830,8 +833,7 @@ const StudentProfile = ({
     const pk = resolveProfileStudentKey(localStudent);
     const missingLabels = [];
     const seenMiss = /* @__PURE__ */ new Set();
-    for (const v of localStudent.slaViolations || []) {
-      if (!v) continue;
+    for (const v of getOpenSlaViolationsForCurrentStage(localStudent)) {
       for (const it of getEffectiveSlaViolationMissingItems(v, studentDocs)) {
         const k = String(it || "").trim();
         if (!k) continue;
@@ -957,7 +959,7 @@ const StudentProfile = ({
     const slaNext = reconcileStudentSlaViolationsWithDocuments(updated);
     const next = slaNext !== void 0 ? { ...updated, slaViolations: slaNext } : updated;
     setLocalStudent(next);
-    onUpdateStudent?.(next);
+    return onUpdateStudent?.(next);
   };
   const handleResumeSaveCV = (cvData, mergeBase) => {
     handleUpdateStudentLocal({
@@ -1309,6 +1311,32 @@ const StudentProfile = ({
     }
     return persistResult;
   };
+  const handleDeleteStudentDocument = async (doc) => {
+    if (userRole === "Student") {
+      return { ok: false, error: "Students cannot remove documents." };
+    }
+    const previousDocs = localStudent.documents || [];
+    const updatedDocs = previousDocs.filter((d) => String(d.id) !== String(doc.id));
+    const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
+    const updatedStudent =
+      slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
+    setLocalStudent(updatedStudent);
+    const persistResult = await onUpdateStudent?.(updatedStudent);
+    if (persistResult && persistResult.ok === false) {
+      setLocalStudent({ ...localStudent, documents: previousDocs });
+      return persistResult;
+    }
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: doc.status === "Verified" ? "removed approved document" : "removed rejected document",
+      target: doc.name,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    return persistResult;
+  };
   const renderContent = () => {
     switch (activeTab) {
       case "pipeline":
@@ -1321,58 +1349,14 @@ const StudentProfile = ({
             onUpdateDocument: handlePipelineDocumentUpdate,
             onUpdateTasks
           }),
-          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: async (doc) => {
-          const previousDocs = localStudent.documents || [];
-          const updatedDocs = previousDocs.filter((d) => String(d.id) !== String(doc.id));
-          const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
-          const updatedStudent =
-            slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
-          setLocalStudent(updatedStudent);
-          const persistResult = await onUpdateStudent?.(updatedStudent);
-          if (persistResult && persistResult.ok === false) {
-            setLocalStudent({ ...localStudent, documents: previousDocs });
-            return persistResult;
-          }
-          onAddActivity?.({
-            user: userRole,
-            role: userRole,
-            action: "removed rejected document",
-            target: doc.name,
-            type: "system",
-            studentName: localStudent.name,
-            studentId: localStudent.id
-          });
-          return persistResult;
-        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
         ] });
       case "show-money":
-        return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent });
+        return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal });
       case "visa-pilot":
         return /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument }),
-          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: async (doc) => {
-          const previousDocs = localStudent.documents || [];
-          const updatedDocs = previousDocs.filter((d) => String(d.id) !== String(doc.id));
-          const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
-          const updatedStudent =
-            slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
-          setLocalStudent(updatedStudent);
-          const persistResult = await onUpdateStudent?.(updatedStudent);
-          if (persistResult && persistResult.ok === false) {
-            setLocalStudent({ ...localStudent, documents: previousDocs });
-            return persistResult;
-          }
-          onAddActivity?.({
-            user: userRole,
-            role: userRole,
-            action: "removed rejected document",
-            target: doc.name,
-            type: "system",
-            studentName: localStudent.name,
-            studentId: localStudent.id
-          });
-          return persistResult;
-        }, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
+          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onDeleteDocument: handleDeleteStudentDocument }),
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
         ] });
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, {
@@ -1471,11 +1455,11 @@ const StudentProfile = ({
             children: "Start Inquiry"
           })
         ] }),
-        localStudent.slaViolations && localStudent.slaViolations.some((v) => getEffectiveSlaViolationMissingItems(v, localStudent.documents || []).length > 0) && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-4 shadow-sm animate-pulse", children: [
+        hasOpenSlaViolationsForCurrentStage(localStudent) && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-4 shadow-sm animate-pulse", children: [
           /* @__PURE__ */ jsx("div", { className: "bg-rose-100 p-2 rounded-xl text-rose-600", children: /* @__PURE__ */ jsx(ShieldAlert, { size: 24 }) }),
           /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-bold text-rose-900", children: "SLA Requirement Notice" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-1", children: slaNoticeCounselorTeam.length === 0 ? "This student was advanced through stages without completing all mandatory requirements. SLA impact applies once counselors are assigned to this record." : slaNoticeCounselorTeam.length > 1 ? "This student was advanced through stages without completing all mandatory requirements. This can impact each related counselor's SLA score until resolved." : "This student was advanced through stages without completing all mandatory requirements. This will impact the counselor's SLA score until resolved." }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-700 mt-1", children: slaNoticeCounselorTeam.length === 0 ? `Mandatory ${effectiveStatus} requirements are incomplete on this record. SLA impact applies once counselors are assigned.` : slaNoticeCounselorTeam.length > 1 ? `Mandatory ${effectiveStatus} requirements are incomplete. This can impact each related counselor's SLA score until resolved.` : `Mandatory ${effectiveStatus} requirements are incomplete. This will impact the counselor's SLA score until resolved.` }),
             slaNoticeCounselorTeam.length > 0 ? /* @__PURE__ */ jsxs("div", { className: "mt-2", children: [
               /* @__PURE__ */ jsx("p", { className: "text-[10px] font-bold uppercase tracking-wide text-rose-800/90", children: "Related counselors" }),
               /* @__PURE__ */ jsx("div", { className: "mt-1.5 flex flex-wrap gap-1.5", children: slaNoticeCounselorTeam.map((c) => /* @__PURE__ */ jsxs("span", { className: "inline-flex max-w-full items-center gap-1 rounded-lg border border-rose-100 bg-white/70 px-2 py-1 text-[11px] text-rose-900 shadow-sm", children: [
@@ -1490,8 +1474,7 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: (() => {
               const seen = new Map();
               const studentDocs = localStudent.documents || [];
-              for (const v of localStudent.slaViolations) {
-                if (!v) continue;
+              for (const v of currentStageOpenSlaViolations) {
                 const items = getEffectiveSlaViolationMissingItems(v, studentDocs);
                 if (items.length === 0) continue;
                 const key = `${v.stage || ""}::${[...items].map((s) => String(s).trim().toLowerCase()).sort().join("|")}`;
@@ -1521,36 +1504,33 @@ const StudentProfile = ({
             children: slaResolveBusy ? "Sending…" : "Resolve Now"
           })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm flex flex-col lg:flex-row items-stretch overflow-hidden", children: [
-          /* @__PURE__ */ jsxs("div", { className: "w-full lg:w-3/4 p-4 overflow-x-auto overflow-y-hidden hide-scrollbar border-b lg:border-b-0 lg:border-r border-gray-100", children: [
-            /* @__PURE__ */ jsx("div", { className: "flex items-center mb-3 px-1", children: /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold uppercase tracking-widest", children: [
-              /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "Staging Progress" }),
-              /* @__PURE__ */ jsx("span", { className: "mx-1 text-slate-300", children: "|" }),
-              /* @__PURE__ */ jsxs("span", { className: "text-indigo-600", children: [
+        /* @__PURE__ */ jsxs("div", { className: "mb-8 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-5", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600", children: [
+              /* @__PURE__ */ jsx("span", { children: "Staging Progress" }),
+              /* @__PURE__ */ jsx("span", { className: "mx-2.5 text-slate-400 font-normal", children: "|" }),
+              /* @__PURE__ */ jsxs("span", { className: "text-indigo-700", children: [
                 currentStepIndex + 1,
                 " / ",
                 PIPELINE_STEPS.length,
                 " Steps"
               ] })
-              ] }) }),
-            /* @__PURE__ */ jsx("nav", { className: "flex items-center gap-2 min-w-max py-0.5", children: PIPELINE_STEPS.map((step, idx) => {
+            ] }),
+            /* @__PURE__ */ jsx("nav", { className: "mt-3 sm:mt-4 grid grid-cols-3 sm:grid-cols-7 gap-1.5 sm:gap-2 min-w-0", "aria-label": "Pipeline stages", children: PIPELINE_STEPS.map((step, idx) => {
               const isCompleted = idx < currentStepIndex;
               const isCurrent = idx === currentStepIndex;
-              return /* @__PURE__ */ jsxs(React.Fragment, { children: [
-                /* @__PURE__ */ jsxs("div", { className: `flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap ${isCurrent ? "bg-nexgenai-navy text-white shadow-md shadow-slate-200 ring-2 ring-indigo-200" : isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-transparent"}`, children: [
-                  isCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "text-emerald-500" }) : /* @__PURE__ */ jsx("span", { className: `w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${isCurrent ? "bg-white text-nexgenai-navy" : "bg-slate-200 text-slate-500"}`, children: idx + 1 }),
-                  /* @__PURE__ */ jsx("span", { children: step })
-                ] }),
-                idx < PIPELINE_STEPS.length - 1 && /* @__PURE__ */ jsx("div", { className: `w-4 lg:w-6 h-0.5 flex-shrink-0 ${isCompleted ? "bg-emerald-200" : "bg-slate-100"}` })
+              return /* @__PURE__ */ jsxs("div", { title: step, className: `flex items-center justify-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold leading-tight transition-all min-w-0 ${isCurrent ? "bg-nexgenai-navy text-white shadow-sm ring-1 ring-indigo-200" : isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-slate-100/80"}`, children: [
+                isCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 11, className: "text-emerald-500 shrink-0" }) : /* @__PURE__ */ jsx("span", { className: `w-3.5 h-3.5 rounded-full flex shrink-0 items-center justify-center text-[8px] font-bold ${isCurrent ? "bg-white text-nexgenai-navy" : "bg-slate-200 text-slate-500"}`, children: idx + 1 }),
+                /* @__PURE__ */ jsx("span", { className: "truncate", children: step })
               ] }, step);
             }) })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "w-full lg:w-1/4 bg-slate-50/80 p-4 flex flex-col justify-center items-center text-center", children: nextStep && userRole !== "Student" ? /* @__PURE__ */ jsxs("div", { className: "w-full space-y-2", children: [
+          nextStep && userRole !== "Student" ? /* @__PURE__ */ jsxs("div", { className: "shrink-0 space-y-2", children: [
             /* @__PURE__ */ jsx("p", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-tight", children: "Next Action Required" }),
             /* @__PURE__ */ jsxs(
               Button,
               {
-                className: "w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none h-11 rounded-xl font-bold text-sm group",
+                className: "w-full lg:w-auto lg:min-w-[11rem] bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none h-11 px-6 rounded-xl font-bold text-sm group",
                 onClick: handleAdvancePipeline,
                 children: [
                   "Next Stage",
@@ -1558,11 +1538,13 @@ const StudentProfile = ({
                 ]
               }
             )
-          ] }) : /* @__PURE__ */ jsxs("div", { className: "w-full space-y-1", children: [
-            /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-1", children: /* @__PURE__ */ jsx(CheckCircle, { size: 20 }) }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs font-bold text-slate-800", children: userRole === "Student" ? "Current Stage" : "Pipeline Completed" }),
-            /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500", children: localStudent.status })
-          ] }) })
+          ] }) : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
+            /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0", children: /* @__PURE__ */ jsx(CheckCircle, { size: 20 }) }),
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("p", { className: "text-xs font-bold text-slate-800", children: userRole === "Student" ? "Current Stage" : "Pipeline Completed" }),
+              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500", children: localStudent.status })
+            ] })
+          ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex-1 grid grid-cols-12 gap-6 min-h-0", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-8 flex flex-col min-w-0", children: [

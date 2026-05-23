@@ -4,6 +4,11 @@ import { Button } from "./Button";
 import { ChevronLeft, ChevronRight, Clock, User, CheckCircle, AlertTriangle, Video } from "lucide-react";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { isCounselorEquivalentPortalRole } from "../roles";
+const MEETING_PLATFORMS = ["Zoom", "Google Meet", "Platform 1", "Platform 2"];
+const isMeetingLinkRequiredForPlatform = (platform) => {
+  const normalized = String(platform || "").trim().toLowerCase();
+  return normalized === "zoom" || normalized === "google meet";
+};
 const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment, onUpdateAppointment, currentRole, currentUser, employees = [], meetingSettings, onAddBusyBooking, onDeleteBusyBooking, studentsLookup = null, focusCounselorId = null }) => {
   const [currentDate, setCurrentDate] = useState(/* @__PURE__ */ new Date());
   const [selectedDate, setSelectedDate] = useState(/* @__PURE__ */ new Date());
@@ -21,6 +26,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingTime, setMeetingTime] = useState("");
   const [meetingType, setMeetingType] = useState("Counseling");
+  const [meetingPlatform, setMeetingPlatform] = useState("Zoom");
   const [meetingLink, setMeetingLink] = useState("");
   const [meetingCreateError, setMeetingCreateError] = useState("");
   const [isSavingMeeting, setIsSavingMeeting] = useState(false);
@@ -232,11 +238,16 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       setMeetingCreateError("Counselor account not found.");
       return;
     }
-    if (!studentId || !date || !time || !link) {
-      setMeetingCreateError("Select student, date, time, and meeting link.");
+    if (!studentId || !date || !time) {
+      setMeetingCreateError("Select student, date, and time.");
       return;
     }
-    if (!/^https?:\/\//i.test(link)) {
+    const linkRequired = isMeetingLinkRequiredForPlatform(meetingPlatform);
+    if (linkRequired && !link) {
+      setMeetingCreateError("Meeting link is required for Zoom and Google Meet.");
+      return;
+    }
+    if (link && !/^https?:\/\//i.test(link)) {
       setMeetingCreateError("Meeting link must start with http:// or https://");
       return;
     }
@@ -281,6 +292,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       duration: slotDuration,
       type: meetingType,
       status: "Scheduled",
+      meetingPlatform,
       meetingLink: link
     };
     const result = await onBookAppointment?.(payload);
@@ -293,6 +305,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     setMeetingDate("");
     setMeetingTime("");
     setMeetingType("Counseling");
+    setMeetingPlatform("Zoom");
     setMeetingLink("");
     setSelectedDate(new Date(`${date}T00:00:00`));
     setMeetingCreateModalOpen(false);
@@ -726,13 +739,48 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
         /* @__PURE__ */ jsxs("select", { value: meetingType, onChange: (e) => setMeetingType(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white", children: [
           /* @__PURE__ */ jsx("option", { value: "Counseling", children: "Counseling" }),
           /* @__PURE__ */ jsx("option", { value: "Visa Check", children: "Visa Check" }),
-          /* @__PURE__ */ jsx("option", { value: "Mock Interview", children: "Mock Interview" })
+          /* @__PURE__ */ jsx("option", { value: "Mock Interview", children: "Mock Interview" }),
+          /* @__PURE__ */ jsx("option", { value: "Pre interview", children: "Pre interview" }),
+          /* @__PURE__ */ jsx("option", { value: "Regular Interview", children: "Regular Interview" })
         ] }),
         /* @__PURE__ */ jsx("input", { type: "date", value: meetingDate, onChange: (e) => setMeetingDate(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md" }),
         /* @__PURE__ */ jsx("input", { type: "time", step: 1800, value: meetingTime, onChange: (e) => setMeetingTime(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md" }),
-        /* @__PURE__ */ jsx("input", { type: "url", value: meetingLink, onChange: (e) => setMeetingLink(e.target.value), placeholder: "https://meet.google.com/...", className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md sm:col-span-2" })
+        /* @__PURE__ */ jsxs("div", { className: "sm:col-span-2 space-y-2", children: [
+          /* @__PURE__ */ jsx("span", { className: "text-xs font-bold text-slate-500 uppercase block", children: "Platform" }),
+          /* @__PURE__ */ jsx("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2", children: MEETING_PLATFORMS.map((platform) => /* @__PURE__ */ jsxs(
+            "label",
+            {
+              className: `flex items-center gap-2 text-sm text-slate-700 border rounded-md px-3 py-2 cursor-pointer transition-colors ${meetingPlatform === platform ? "border-indigo-500 bg-indigo-50/50" : "border-gray-200 hover:border-indigo-200"}`,
+              children: [
+                /* @__PURE__ */ jsx("input", {
+                  type: "radio",
+                  name: "meeting-platform",
+                  value: platform,
+                  checked: meetingPlatform === platform,
+                  onChange: (e) => setMeetingPlatform(e.target.value),
+                  className: "text-indigo-600 focus:ring-indigo-500"
+                }),
+                platform
+              ]
+            },
+            platform
+          )) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "sm:col-span-2 space-y-1", children: [
+          /* @__PURE__ */ jsxs("label", { className: "text-xs font-bold text-slate-500 uppercase block", children: [
+            "Meeting link",
+            isMeetingLinkRequiredForPlatform(meetingPlatform) ? " (required)" : " (optional)"
+          ] }),
+          /* @__PURE__ */ jsx("input", {
+            type: "url",
+            value: meetingLink,
+            onChange: (e) => setMeetingLink(e.target.value),
+            placeholder: meetingPlatform === "Zoom" ? "https://zoom.us/j/..." : meetingPlatform === "Google Meet" ? "https://meet.google.com/..." : "https://...",
+            className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md"
+          })
+        ] })
       ] }),
-      /* @__PURE__ */ jsx("p", { className: "mt-3 text-xs text-slate-500", children: "This creates a scheduled meeting on the calendar and sends details to the student via WhatsApp." }),
+      /* @__PURE__ */ jsx("p", { className: "mt-3 text-xs text-slate-500", children: "This creates a scheduled meeting on the calendar. If you add a meeting link, it is sent to the student via WhatsApp from your connected counselor account." }),
       /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4", children: [
         /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => {
           if (isSavingMeeting) return;

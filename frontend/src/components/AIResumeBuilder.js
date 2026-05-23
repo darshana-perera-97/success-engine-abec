@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { COMPANY_AI_BRAND, COMPANY_NAME, RESUME_BUILDER_TITLE } from "../companyConfig";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 function parseNotesForProgramEducation(notes) {
   const n = String(notes || "");
   const programM = n.match(/Program:\s*([^.]+?)(?:\.|\s+Education:|$)/i);
@@ -307,8 +308,8 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     if (!onUploadStudentCv || !currentStudent?.id) {
       return { ok: false, error: "Student CV upload is not available." };
     }
-    if (file.size > 10 * 1024 * 1024) {
-      return { ok: false, error: "File must be under 10MB." };
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return { ok: false, error: `File must be under ${MAX_UPLOAD_LABEL}.` };
     }
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -582,7 +583,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
               /* @__PURE__ */ jsx("div", { className: "border-2 border-dashed border-slate-200 rounded-2xl p-10 group-hover:border-emerald-400 group-hover:bg-emerald-50/30 transition-all duration-300", children: /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
                 /* @__PURE__ */ jsx(Upload, { className: "mx-auto text-slate-400 group-hover:text-emerald-500 transition-colors", size: 32 }),
                 /* @__PURE__ */ jsx("p", { className: "text-sm font-bold text-slate-600", children: "Click to upload or drag and drop" }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400", children: "PDF, DOCX or DOC (Max. 10MB)" })
+                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400", children: `PDF, DOCX or DOC (Max. ${MAX_UPLOAD_LABEL})` })
               ] }) })
             ] }),
             uploadedFile && /* @__PURE__ */ jsxs(

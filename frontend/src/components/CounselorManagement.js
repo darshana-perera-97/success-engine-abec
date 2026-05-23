@@ -177,7 +177,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       const revenue = myStudents.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 5e-3, 0);
       const converted = myStudents.filter((s) => {
         const x = normalizePipelineStatus(s.status);
-        return x !== "Inquiry" && x !== "Application";
+        return x !== "Inquiry" && x !== "Registration" && x !== "Application";
       }).length;
       const conversionRate = activeStudents > 0 ? Math.round(converted / activeStudents * 100) : 0;
       const npsScore = Number.isFinite(linkedEmployee?.npsScore) ? linkedEmployee.npsScore : 0;

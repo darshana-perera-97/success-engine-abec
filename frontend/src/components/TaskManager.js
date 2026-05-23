@@ -7,6 +7,7 @@ import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskOverdu
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { findTaskDocumentForSlot } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 
 function getCalendarDueSlaParts(task) {
   const completed = String(task?.status || "").trim() === "Completed";
@@ -252,8 +253,8 @@ const TaskManager = ({
       setStudentTaskUploadError("Use PDF, JPG, PNG, DOC, or DOCX.");
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setStudentTaskUploadError("File must be under 10MB.");
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setStudentTaskUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
       return;
     }
     setStudentTaskUploadingKey(key);

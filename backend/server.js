@@ -52,6 +52,11 @@ const PAYMENTS_DIR = path.join(DATA_DIR, "payments");
 // Resolved via the SPA fallback to `frontend/public/companyIcon.png` (or the
 // equivalent file in the production build output).
 const DEFAULT_MALE_AVATAR_PATH = "/companyIcon.png";
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_LABEL = "5MB";
+/** Base64 data URLs in JSON need headroom above decoded file size. */
+const MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
+
 const DEFAULT_DAY_SCHEDULE = {
   isOpen: true,
   startHour: 8,
@@ -196,7 +201,14 @@ function corsHeaders() {
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let rawBytes = 0;
     req.on("data", (chunk) => {
+      rawBytes += chunk.length;
+      if (rawBytes > MAX_JSON_BODY_BYTES) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
       raw += chunk;
     });
     req.on("end", () => {
@@ -1249,7 +1261,13 @@ function publicStudentRecord(req, student) {
   return next;
 }
 
-const UNIVERSITY_OFFER_STATUSES = new Set(["Approved", "Conditional", "Rejected"]);
+const UNIVERSITY_OFFER_STATUSES = new Set(["Unconditional", "Conditional", "Rejected"]);
+
+function normalizeUniversityOfferStatusInput(status) {
+  const s = String(status || "").trim();
+  if (s === "Approved") return "Unconditional";
+  return s;
+}
 
 function normalizeUniversityOfferLetters(value) {
   if (!Array.isArray(value)) return [];
@@ -1325,7 +1343,7 @@ async function storeChatAttachmentDataUrl(dataUrl, originalName) {
   if (!base64) return null;
   const buffer = Buffer.from(base64, "base64");
   if (!buffer.length) return null;
-  if (buffer.length > 10 * 1024 * 1024) return { error: "File is too large. Max 10MB allowed." };
+  if (buffer.length > MAX_UPLOAD_BYTES) return { error: `File is too large. Max ${MAX_UPLOAD_LABEL} allowed.` };
 
   const originalBase = sanitizeFileName(path.parse(String(originalName || "attachment")).name) || "attachment";
   const fileName = `chat-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${originalBase}.${ext}`;
@@ -1364,8 +1382,8 @@ async function storeStudentCvDataUrl(dataUrl, originalName) {
   if (!ext || !base64) return null;
   const buffer = Buffer.from(base64, "base64");
   if (!buffer.length) return null;
-  if (buffer.length > 10 * 1024 * 1024) {
-    return { error: "CV file is too large. Max 10MB allowed." };
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    return { error: `CV file is too large. Max ${MAX_UPLOAD_LABEL} allowed.` };
   }
   const originalBase = sanitizeFileName(path.parse(String(originalName || "cv")).name) || "cv";
   const fileName = `cv-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${originalBase}.${ext}`;
@@ -1395,8 +1413,8 @@ async function storeStudentPermissionDataUrl(dataUrl, originalName) {
   if (!ext || !base64) return null;
   const buffer = Buffer.from(base64, "base64");
   if (!buffer.length) return null;
-  if (buffer.length > 10 * 1024 * 1024) {
-    return { error: "Document file is too large. Max 10MB allowed." };
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    return { error: `Document file is too large. Max ${MAX_UPLOAD_LABEL} allowed.` };
   }
   const originalBase = sanitizeFileName(path.parse(String(originalName || "document")).name) || "document";
   const fileName = `perm-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${originalBase}.${ext}`;
@@ -1426,8 +1444,8 @@ async function storePaymentProofDataUrl(dataUrl, originalName) {
   if (!ext || !base64) return null;
   const buffer = Buffer.from(base64, "base64");
   if (!buffer.length) return null;
-  if (buffer.length > 10 * 1024 * 1024) {
-    return { error: "Payment proof file is too large. Max 10MB allowed." };
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    return { error: `Payment proof file is too large. Max ${MAX_UPLOAD_LABEL} allowed.` };
   }
   const originalBase = sanitizeFileName(path.parse(String(originalName || "payment-proof")).name) || "payment-proof";
   const fileName = `pay-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${originalBase}.${ext}`;
@@ -1660,6 +1678,10 @@ function isApplicationStage(value) {
   return String(value || "").trim().toLowerCase() === "application";
 }
 
+function isRegistrationStage(value) {
+  return String(value || "").trim().toLowerCase() === "registration";
+}
+
 function isInquiryStage(value) {
   return String(value || "").trim().toLowerCase() === "inquiry";
 }
@@ -1688,7 +1710,8 @@ function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, 
   return lines.join("\n");
 }
 
-function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, meetingLink }) {
+function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, meetingLink, meetingPlatform }) {
+  const platform = String(meetingPlatform || "").trim();
   const lines = [
     `${COMPANY_NAME} — Meeting Details`,
     "",
@@ -1698,11 +1721,112 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
     `Title: ${title || "Session"}`,
     `Date: ${date || ""}`,
     `Time: ${time || ""}`,
+    platform ? `Platform: ${platform}` : "",
     `Meeting Link: ${meetingLink || ""}`,
     "",
     "Please join on time.",
   ].filter(Boolean);
   return lines.join("\n");
+}
+
+const MEETING_REMINDER_MIN_MS = 14 * 60 * 1000;
+const MEETING_REMINDER_MAX_MS = 16 * 60 * 1000;
+const MEETING_REMINDER_POLL_MS = 60 * 1000;
+
+function appointmentStartMs(appointment) {
+  const date = String(appointment?.date || "").trim();
+  const time = String(appointment?.time || "").trim();
+  if (!date || !time) return NaN;
+  return new Date(`${date}T${time}:00+05:30`).getTime();
+}
+
+function isWithinMeetingReminderWindow(appointment, nowMs = Date.now()) {
+  if (String(appointment?.status || "") !== "Scheduled") return false;
+  const startMs = appointmentStartMs(appointment);
+  if (!Number.isFinite(startMs)) return false;
+  const msUntil = startMs - nowMs;
+  if (msUntil < 0) return false;
+  return msUntil >= MEETING_REMINDER_MIN_MS && msUntil <= MEETING_REMINDER_MAX_MS;
+}
+
+function buildMeetingReminderWhatsappMessage({ studentName, title, date, time, meetingLink, meetingPlatform }) {
+  const platform = String(meetingPlatform || "").trim();
+  const link = String(meetingLink || "").trim();
+  const lines = [
+    `${COMPANY_NAME} — Meeting Reminder`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your meeting starts in about 15 minutes:",
+    `Title: ${title || "Session"}`,
+    `Date: ${date || ""}`,
+    `Time: ${time || ""}`,
+    platform ? `Platform: ${platform}` : "",
+    link ? `Meeting Link: ${link}` : "",
+    "",
+    "Please be ready to join on time.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+async function processMeetingReminders() {
+  const appointments = await readAppointments();
+  const now = Date.now();
+  let changed = false;
+  const nextAppointments = [];
+  for (const apt of appointments) {
+    let next = apt;
+    if (isWithinMeetingReminderWindow(apt, now) && !apt.studentMeetingReminderWhatsappDelivery?.sentAt) {
+      try {
+        const students = await readStudemts();
+        const student = students.find((item) => String(item.id || "") === String(apt.studentId || ""));
+        const result = await deliverCounselorMessageToStudentWhatsapp({
+          senderId: String(apt.counselorId || "").trim(),
+          receiverId: String(apt.studentId || "").trim(),
+          content: buildMeetingReminderWhatsappMessage({
+            studentName: student?.name || "",
+            title: apt.title || "Session",
+            date: apt.date || "",
+            time: apt.time || "",
+            meetingPlatform: apt.meetingPlatform || "",
+            meetingLink: apt.meetingLink || "",
+          }),
+        });
+        next = {
+          ...next,
+          studentMeetingReminderWhatsappDelivery: {
+            attempted: Boolean(result?.attempted),
+            status: result?.status || "skipped",
+            reason: result?.reason || "",
+            sentAt: new Date().toISOString(),
+          },
+        };
+        changed = true;
+        logEvent("appointment", "meeting reminder sent to student via whatsapp", {
+          appointmentId: apt.id,
+          counselorId: apt.counselorId,
+          studentId: apt.studentId,
+          status: next.studentMeetingReminderWhatsappDelivery.status,
+        });
+      } catch (error) {
+        next = {
+          ...next,
+          studentMeetingReminderWhatsappDelivery: {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp meeting reminder."),
+            sentAt: new Date().toISOString(),
+          },
+        };
+        changed = true;
+        console.error("Meeting reminder WhatsApp send failed:", error);
+      }
+    }
+    nextAppointments.push(next);
+  }
+  if (changed) {
+    await writeAppointments(nextAppointments);
+  }
 }
 
 function formatPaymentAccountForMessage(paymentAccount) {
@@ -2221,13 +2345,13 @@ function buildUniversityOfferWhatsappMessage({ studentName, fileName, offerStatu
   const friendlyFile = String(fileName || "University offer letter").trim();
   const countNote =
     letterCount > 1 ? ` (${letterCount} offer letters uploaded — this message refers to "${friendlyFile}".)` : "";
-  if (offerStatus === "Approved") {
+  if (offerStatus === "Unconditional" || offerStatus === "Approved") {
     const lines = [
       `${COMPANY_NAME} — University offer update`,
       "",
       `Hi ${studentName || "Student"},`,
       "",
-      "Congratulations! Your university application has been approved.",
+      "Congratulations! Your university application has received an unconditional offer.",
       `Offer letter: ${friendlyFile}${countNote}`,
       "",
       "Your counselor has shared the offer letter with you. Log in to your student portal to review all details.",
@@ -4858,6 +4982,7 @@ const server = http.createServer(async (req, res) => {
         duration,
         type,
         status,
+        meetingPlatform: String(body.meetingPlatform || "").trim(),
         meetingLink: String(body.meetingLink || ""),
         createdAt: new Date().toISOString(),
       };
@@ -4885,6 +5010,7 @@ const server = http.createServer(async (req, res) => {
               title: appointment.title || "Session",
               date: appointment.date || "",
               time: appointment.time || "",
+              meetingPlatform: appointment.meetingPlatform || "",
               meetingLink: meetingLinkOnCreate,
             }),
           });
@@ -4953,6 +5079,7 @@ const server = http.createServer(async (req, res) => {
               title: updatedAppointment.title || "Session",
               date: updatedAppointment.date || "",
               time: updatedAppointment.time || "",
+              meetingPlatform: updatedAppointment.meetingPlatform || "",
               meetingLink: nextLink,
             }),
           });
@@ -5505,10 +5632,12 @@ const server = http.createServer(async (req, res) => {
           merged?.applicationAccountDetailsSentAt
       );
 
-      const transitionedInquiryToApplication =
-        isInquiryStage(previous?.status) && isApplicationStage(merged?.status);
+      const transitionedToApplication =
+        isApplicationStage(merged?.status) &&
+        !isApplicationStage(previous?.status) &&
+        (isInquiryStage(previous?.status) || isRegistrationStage(previous?.status));
 
-      if (transitionedInquiryToApplication && !alreadySent) {
+      if (transitionedToApplication && !alreadySent) {
         const emailAddress = normalizeEmail(merged.email);
         const password = String(merged.password || "");
         const studentName = String(merged.name || "").trim();
@@ -5592,7 +5721,7 @@ const server = http.createServer(async (req, res) => {
 
         merged.applicationAccountDetailsSentAt = nowIso;
         merged.applicationAccountDetailsDelivery = delivery;
-        logEvent("student", "moved Inquiry -> Application: sent account details", {
+        logEvent("student", "moved to Application: sent account details", {
           studentId,
           email: emailAddress,
           counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
@@ -5762,8 +5891,9 @@ const server = http.createServer(async (req, res) => {
         if (!d || typeof d !== "object") continue;
         const id = String(d.id || "").trim();
         if (!id || nextDocIds.has(id)) continue;
-        if (String(d.status || "").trim() === "Rejected") {
-          await safeUnlinkStoredPermissionDoc(String(d.url || ""));
+        const storedUrl = String(d.url || "").trim();
+        if (storedUrl) {
+          await safeUnlinkStoredPermissionDoc(storedUrl);
         }
       }
 
@@ -6154,9 +6284,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const body = await parseBody(req);
-      const offerStatus = String(body.offerStatus || "").trim();
+      const offerStatus = normalizeUniversityOfferStatusInput(body.offerStatus);
       if (!UNIVERSITY_OFFER_STATUSES.has(offerStatus)) {
-        sendJson(res, 400, { ok: false, error: "Offer status must be Approved, Conditional, or Rejected." });
+        sendJson(res, 400, { ok: false, error: "Offer status must be Unconditional, Conditional, or Rejected." });
         return;
       }
       const rawFiles = Array.isArray(body.files) ? body.files : [];
@@ -6687,4 +6817,9 @@ server.listen(PORT, async () => {
       console.error("Periodic WhatsApp reconnect failed:", error);
     });
   }, WHATSAPP_RECONNECT_INTERVAL_MS);
+  setInterval(() => {
+    processMeetingReminders().catch((error) => {
+      console.error("Meeting reminder processing failed:", error);
+    });
+  }, MEETING_REMINDER_POLL_MS);
 });

@@ -6,6 +6,7 @@ import { COUNTRY_CHECKLISTS } from "../constants";
 import { getVisibleCountryChecklistStages } from "../pipeline";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 
 /** Short label for long filenames: first few stem chars + extension (full name in title/tooltip). */
 function shortDisplayFileName(name, maxStem = 8) {
@@ -19,13 +20,17 @@ function shortDisplayFileName(name, maxStem = 8) {
   return `${base.slice(0, maxStem)}…${ext}`;
 }
 
-function canStaffManageRejectedDocuments(userRole) {
-  return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
+function canStaffDeleteStudentDocuments(userRole) {
+  return String(userRole || "").trim() !== "Student";
+}
+
+function isDeletableDocumentStatus(status) {
+  return status === "Rejected" || status === "Verified";
 }
 function canStaffUploadOfferLetters(userRole) {
   return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
 }
-const OFFER_LETTER_STATUSES = ["Approved", "Conditional", "Rejected"];
+const OFFER_LETTER_STATUSES = ["Unconditional", "Conditional", "Rejected"];
 const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
 
 /** Match backend: legacy index-based rows become 1-based .slot; list is sorted by slot. */
@@ -57,7 +62,7 @@ const DocumentManager = ({
   showProfileOtherDocuments = true
 }) => {
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
-  const [deleteRejectedModal, setDeleteRejectedModal] = useState({ isOpen: false, doc: null });
+  const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
   const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null });
   const [isUploading, setIsUploading] = useState(false);
@@ -66,7 +71,7 @@ const DocumentManager = ({
   const [otherDocUploading, setOtherDocUploading] = useState(false);
   const [offerLetterModal, setOfferLetterModal] = useState({
     open: false,
-    offerStatus: "Approved",
+    offerStatus: "Unconditional",
     error: "",
     pendingFiles: []
   });
@@ -102,8 +107,8 @@ const DocumentManager = ({
       event.target.value = "";
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setUploadError("File must be under 10MB.");
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
       event.target.value = "";
       return;
     }
@@ -169,8 +174,8 @@ const DocumentManager = ({
       event.target.value = "";
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setOtherDocModal((prev) => ({ ...prev, error: "File must be under 10MB." }));
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setOtherDocModal((prev) => ({ ...prev, error: `File must be under ${MAX_UPLOAD_LABEL}.` }));
       event.target.value = "";
       return;
     }
@@ -222,7 +227,7 @@ const DocumentManager = ({
   }, [student.status]);
   const canUploadOfferLetters = canStaffUploadOfferLetters(userRole) && typeof onUploadUniversityOfferLetters === "function";
   const getOfferStatusBadgeClass = (status) => {
-    if (status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (status === "Unconditional" || status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (status === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
     return "bg-amber-50 text-amber-700 border-amber-200";
   };
@@ -244,8 +249,8 @@ const DocumentManager = ({
         event.target.value = "";
         return;
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setOfferLetterModal((prev) => ({ ...prev, error: "Each file must be under 10MB." }));
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setOfferLetterModal((prev) => ({ ...prev, error: `Each file must be under ${MAX_UPLOAD_LABEL}.` }));
         event.target.value = "";
         return;
       }
@@ -289,7 +294,7 @@ const DocumentManager = ({
     }
     const count = payloadFiles.length;
     const statusLabel = offerLetterModal.offerStatus;
-    setOfferLetterModal({ open: false, offerStatus: "Approved", error: "", pendingFiles: [] });
+    setOfferLetterModal({ open: false, offerStatus: "Unconditional", error: "", pendingFiles: [] });
     const notifs = result?.offerLetterWhatsappNotifications || [];
     const sentCount = notifs.filter((n) => n?.whatsapp?.status === "sent").length;
     const failed = notifs.filter((n) => n?.whatsapp?.status === "failed" || n?.whatsapp?.status === "skipped");
@@ -386,7 +391,8 @@ const DocumentManager = ({
     : 0;
   const canStaffAppendOtherDocument =
     isStaff && onUploadProfileOtherDocument && maxProfileOtherSlotUsed < PROFILE_OTHER_DOCUMENTS_MAX_SLOT;
-  const canDeleteRejectedUpload = canStaffManageRejectedDocuments(userRole) && typeof onDeleteDocument === "function";
+  const canDeleteDocument =
+    canStaffDeleteStudentDocuments(userRole) && typeof onDeleteDocument === "function";
   const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
   const totalVerified = checklist.reduce((acc, cat) => acc + cat.items.filter((item) => item.uploadedFiles.some((f) => f.status === "Verified")).length, 0);
   const showOfferLettersSection = showUniversityOfferLettersBlock && showUniversityOfferLetters;
@@ -410,7 +416,9 @@ const DocumentManager = ({
         category.stage,
         " Requirements"
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "space-y-3", children: category.items.map(({ docType, description, uploadedFiles }) => /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+      /* @__PURE__ */ jsx("div", { className: "space-y-3", children: category.items.map(({ docType, description, uploadedFiles }) => {
+        const hasVerifiedUpload = uploadedFiles.some((f) => f.status === "Verified");
+        return /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-700", children: docType }),
@@ -421,7 +429,7 @@ const DocumentManager = ({
             " Upload"
           ] })
         ] }),
-        uploadedFiles.length > 0 ? uploadedFiles.map((uploadedFile, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
+        uploadedFiles.length > 0 && uploadedFiles.map((uploadedFile, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
             /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${uploadedFile.status === "Verified" ? "bg-emerald-100 text-emerald-600" : uploadedFile.status === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-500"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
             /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
@@ -435,12 +443,12 @@ const DocumentManager = ({
               /* @__PURE__ */ jsx(AlertCircle, { size: 14, className: "text-rose-500 cursor-help" }),
               /* @__PURE__ */ jsx("div", { className: "absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover/tip:block animate-in fade-in zoom-in-95", children: uploadedFile.rejectionReason })
             ] }),
-            canDeleteRejectedUpload && uploadedFile.status === "Rejected" && /* @__PURE__ */ jsxs(
+            canDeleteDocument && isDeletableDocumentStatus(uploadedFile.status) && /* @__PURE__ */ jsxs(
               "button",
               {
                 type: "button",
-                onClick: () => setDeleteRejectedModal({ isOpen: true, doc: uploadedFile }),
-                title: "Delete rejected upload",
+                onClick: () => setDeleteDocumentModal({ isOpen: true, doc: uploadedFile }),
+                title: uploadedFile.status === "Verified" ? "Delete approved upload" : "Delete rejected upload",
                 className: "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700 border border-transparent hover:border-rose-200 text-sm font-medium shrink-0",
                 children: [
                   /* @__PURE__ */ jsx(Trash2, { size: 18, strokeWidth: 2.25, className: "shrink-0" }),
@@ -460,25 +468,27 @@ const DocumentManager = ({
               ] })
             ] })
           ] })
-        ] }, uploadedFile.id || `${uploadedFile.name}-${idx}`)) : /* @__PURE__ */ jsx("div", { className: "bg-slate-50 border-2 border-dashed border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:border-indigo-200 transition-colors", children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-          /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-lg flex items-center justify-center bg-white border border-gray-200 text-slate-400 shrink-0", children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
+        ] }, uploadedFile.id || `${uploadedFile.name}-${idx}`)),
+        !hasVerifiedUpload && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg flex items-center justify-between group transition-colors ${uploadedFiles.length > 0 ? "bg-amber-50/80 border-amber-200 hover:border-amber-300" : "bg-slate-50 border-gray-200 hover:border-indigo-200"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${uploadedFiles.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : "bg-white border-gray-200 text-slate-400"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-500", children: "Pending Upload" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400", children: "Awaiting submission" })
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${uploadedFiles.length > 0 ? "text-amber-900" : "text-slate-500"}`, children: uploadedFiles.length > 0 ? "Awaiting approved document" : "Pending Upload" }),
+            /* @__PURE__ */ jsx("p", { className: `text-xs ${uploadedFiles.length > 0 ? "text-amber-800/80" : "text-slate-400"}`, children: uploadedFiles.length > 0 ? "Upload a new file or approve a pending submission for this requirement." : "Awaiting submission" })
           ] })
         ] }) })
-      ] }, docType)) })
+      ] }, docType);
+      }) })
     ] }, category.stage)) }),
     showOfferLettersSection && /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Approved, Conditional, or Rejected." })
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Unconditional, Conditional, or Rejected." })
         ] }),
         canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
           size: "sm",
           variant: "secondary",
-          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Approved", error: "", pendingFiles: [] }),
+          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Unconditional", error: "", pendingFiles: [] }),
           children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
             "Upload offer letters"
@@ -487,14 +497,14 @@ const DocumentManager = ({
       ] }),
       universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
-          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
+          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Unconditional" || letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
             /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: shortDisplayFileName(letter.name) }),
             /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: letter.uploadedAt ? new Date(letter.uploadedAt).toLocaleString() : "" })
           ] })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
-          /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus || "Conditional" }),
+          /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus === "Approved" ? "Unconditional" : letter.offerStatus || "Conditional" }),
           letter.url && /* @__PURE__ */ jsxs(Fragment, { children: [
             /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
             /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
@@ -588,28 +598,31 @@ const DocumentManager = ({
                 ] }, entry.id || `profile-other-slot-${entry.slot}`)) })
           ] })
     ] }),
-    deleteRejectedModal.isOpen && deleteRejectedModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
-        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Delete rejected document?" }),
+        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: deleteDocumentModal.doc.status === "Verified" ? "Delete approved document?" : "Delete rejected document?" }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
           "Remove ",
-          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: deleteRejectedModal.doc.name }),
-          " from this student’s record. The stored file will be deleted to free space. The student can upload again when ready."
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: deleteDocumentModal.doc.name }),
+          deleteDocumentModal.doc.status === "Verified"
+            ? " from this student’s record. The stored file will be deleted. Upload a replacement if the checklist still requires this document."
+            : " from this student’s record. The stored file will be deleted to free space. The student can upload again when ready."
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 flex justify-end gap-2", children: [
-        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setDeleteRejectedModal({ isOpen: false, doc: null }), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => setDeleteDocumentModal({ isOpen: false, doc: null }), children: "Cancel" }),
         /* @__PURE__ */ jsx(Button, {
           variant: "danger",
           onClick: async () => {
-            const doc = deleteRejectedModal.doc;
-            setDeleteRejectedModal({ isOpen: false, doc: null });
+            const doc = deleteDocumentModal.doc;
+            setDeleteDocumentModal({ isOpen: false, doc: null });
             if (!doc) return;
             const persistResult = await onDeleteDocument?.(doc);
             if (persistResult && persistResult.ok === false) {
               showWhatsappNotification(`Could not delete: ${persistResult.error || "Save failed."}`);
             } else {
-              showWhatsappNotification(`Rejected upload "${doc.name}" was removed.`);
+              const label = doc.status === "Verified" ? "Approved" : "Rejected";
+              showWhatsappNotification(`${label} upload "${doc.name}" was removed.`);
             }
           },
           children: "Delete"
@@ -671,7 +684,7 @@ const DocumentManager = ({
               /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleProfileOtherFileChange }),
               /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
               /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose file to upload" }),
-              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB" })
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: `PDF, JPG, PNG, DOC, DOCX — max ${MAX_UPLOAD_LABEL}` })
             ]
           }
         ) : /* @__PURE__ */ jsxs("div", { className: "py-6 flex flex-col items-center text-center", children: [
@@ -687,7 +700,7 @@ const DocumentManager = ({
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload University Offer Letters" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Choose offer status, add your files, then click Upload Documents." })
         ] }),
-        !offerLetterUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOfferLetterModal({ open: false, offerStatus: "Approved", error: "", pendingFiles: [] }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        !offerLetterUploading && /* @__PURE__ */ jsx("button", { onClick: () => setOfferLetterModal({ open: false, offerStatus: "Unconditional", error: "", pendingFiles: [] }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
@@ -702,7 +715,7 @@ const DocumentManager = ({
             /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handleOfferLetterFilesSelected }),
             /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-3", children: /* @__PURE__ */ jsx(FileUp, { size: 20 }) }),
             /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900", children: "Choose one or more offer letters" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "PDF, JPG, PNG, DOC, DOCX — max 10MB each" })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: `PDF, JPG, PNG, DOC, DOCX — max ${MAX_UPLOAD_LABEL} each` })
           ] }),
           /* @__PURE__ */ jsx(Button, {
             type: "button",
@@ -738,7 +751,7 @@ const DocumentManager = ({
             /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleUploadFileChange }),
             /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Click to browse file" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Supports PDF, JPG, PNG, DOC, DOCX (Max 10MB)" }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Supports PDF, JPG, PNG, DOC, DOCX (Max ${MAX_UPLOAD_LABEL})` }),
             uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-3", children: uploadError }) : null
           ]
         }

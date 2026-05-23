@@ -4,6 +4,7 @@ import { Upload, FileText, Check, X, AlertCircle, Eye, Download, Hourglass } fro
 import { Button } from "./Button";
 import { areAllTaskDocumentSlotsVerified, findTaskDocumentForSlot } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 
 const ALLOWED_TYPES = new Set([
   "application/pdf",
@@ -59,8 +60,8 @@ export function TaskDocumentRequestsPanel({
       setUploadError("Use PDF, JPG, PNG, DOC, or DOCX.");
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setUploadError("File must be under 10MB.");
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
       return;
     }
     setUploadingKey(key);
