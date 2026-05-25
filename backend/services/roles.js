@@ -1,0 +1,67 @@
+const { COMPANY_NAME } = require("../config");
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeRoleKey(role) {
+  return String(role || "").trim().toLowerCase();
+}
+
+function isCounselorRole(role) {
+  const normalized = normalizeRoleKey(role);
+  return (
+    normalized === "counselor" ||
+    normalized === "consultor" ||
+    normalized === "counsellor" ||
+    normalized === "visa officer" ||
+    normalized === "visa officer & counselor" ||
+    normalized === "visa officer & counsellor"
+  );
+}
+
+/** Manager, Admin, Team Lead, and Country Coordinator: same portal welcome as counselors but role-specific copy. */
+function isStaffWelcomeEmailRole(role) {
+  const r = String(role || "").trim();
+  return r === "Manager" || r === "Admin" || r === "Team Lead" || r === "Country Coordinator" || r === "Accountant";
+}
+
+function staffWelcomeRolePhrase(role) {
+  const r = String(role || "").trim();
+  if (r === "Country Coordinator") return "country coordinator";
+  if (r === "Team Lead") return "team lead";
+  return r.toLowerCase() || "staff";
+}
+
+function staffWelcomeEmailCopy(role) {
+  const displayRole = String(role || "").trim() || "Staff";
+  const phrase = staffWelcomeRolePhrase(role);
+  return {
+    headline: `Welcome to your ${displayRole} account`,
+    pageTitle: `${displayRole} portal access`,
+    rolePhrase: phrase,
+    tagline: `${COMPANY_NAME} — ${phrase} portal access`,
+    subject: `Welcome to ${COMPANY_NAME} — your ${displayRole} account`,
+  };
+}
+
+function normalizeStoredRole(role) {
+  if (role === "Counselor" || role === "Consultor") return "Consultor";
+  return role;
+}
+
+function normalizeLoginRole(role) {
+  if (role === "Consultor") return "Counselor";
+  return role;
+}
+
+module.exports = {
+  normalizeEmail,
+  normalizeRoleKey,
+  isCounselorRole,
+  isStaffWelcomeEmailRole,
+  staffWelcomeRolePhrase,
+  staffWelcomeEmailCopy,
+  normalizeStoredRole,
+  normalizeLoginRole,
+};

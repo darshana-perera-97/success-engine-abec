@@ -172,6 +172,71 @@ const AccountantDashboard = ({
 
   const branchTitle = branchLabel ? `${branchLabel} branch` : "your branch";
 
+  if (invoicesLoading) {
+    return /* @__PURE__ */ jsxs("div", {
+      className: "space-y-8 pb-10",
+      children: [
+        /* @__PURE__ */ jsxs("div", {
+          className: "flex flex-col items-center justify-center py-24",
+          children: [
+            /* @__PURE__ */ jsx("div", {
+              className: "relative flex items-center justify-center",
+              children: /* @__PURE__ */ jsxs("div", {
+                className: "relative",
+                children: [
+                  /* @__PURE__ */ jsx("div", {
+                    className: "h-14 w-14 rounded-full border-[3px] border-slate-200"
+                  }),
+                  /* @__PURE__ */ jsx("div", {
+                    className: "absolute inset-0 h-14 w-14 rounded-full border-[3px] border-transparent border-t-indigo-500 animate-spin"
+                  })
+                ]
+              })
+            }),
+            /* @__PURE__ */ jsx("p", {
+              className: "mt-5 text-sm font-medium text-slate-600",
+              children: "Loading invoice summary\u2026"
+            }),
+            /* @__PURE__ */ jsx("p", {
+              className: "mt-1 text-xs text-slate-400",
+              children: "Fetching latest data for " + branchTitle
+            })
+          ]
+        }),
+        /* @__PURE__ */ jsxs("div", {
+          className: "space-y-6 animate-pulse",
+          children: [
+            /* @__PURE__ */ jsx("div", {
+              className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+              children: [1, 2, 3, 4].map(function (i) {
+                return /* @__PURE__ */ jsx("div", {
+                  className: "h-32 rounded-xl border border-slate-100 bg-slate-200/60"
+                }, i);
+              })
+            }),
+            /* @__PURE__ */ jsx("div", {
+              className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+              children: [5, 6, 7, 8].map(function (i) {
+                return /* @__PURE__ */ jsx("div", {
+                  className: "h-32 rounded-xl border border-slate-100 bg-slate-200/50"
+                }, i);
+              })
+            }),
+            /* @__PURE__ */ jsx("div", {
+              className: "h-36 rounded-xl border border-slate-100 bg-slate-200/50"
+            }),
+            /* @__PURE__ */ jsx("div", {
+              className: "h-64 rounded-xl border border-slate-100 bg-slate-200/40"
+            }),
+            /* @__PURE__ */ jsx("div", {
+              className: "h-64 rounded-xl border border-slate-100 bg-slate-200/40"
+            })
+          ]
+        })
+      ]
+    });
+  }
+
   const renderInvoiceTable = (rows, emptyMessage) =>
     /* @__PURE__ */ jsx("div", {
       className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",

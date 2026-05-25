@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo, useEffect } from "react";
-import { formatLKR } from "../utils";
-import { getAccounts, getBranches } from "../authApi";
+import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
+import { getAccounts, getBranches, getInvoices } from "../authApi";
 import { isCounselorEquivalentAccountRole } from "../roles";
 import {
   Users,
@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
-import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
 import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   XAxis,
@@ -55,7 +55,7 @@ function buildCounselorFunnelSeries(students) {
     return { stage: short, fullStage: stage, count };
   });
 }
-const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "", resetSignal = 0 }) => {
+const CounselorManagement = ({ students, employees, tasks, onTransferStudents, onAddActivity, onAddCounselor, currentRole, authenticatedUserEmail = "", resetSignal = 0, scopeBranch = null }) => {
   const [selectedCounselorId, setSelectedCounselorId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -66,8 +66,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const [accounts, setAccounts] = useState([]);
   const [targetCounselorId, setTargetCounselorId] = useState("");
   const [newCounselor, setNewCounselor] = useState({ name: "", email: "", branch: "", role: "Senior Counselor", phone: "", password: "" });
-  const [pageLoads, setPageLoads] = useState({ accounts: false, branches: false });
-  const counselorPageReady = pageLoads.accounts && pageLoads.branches;
+  const [invoices, setInvoices] = useState([]);
+  const [pageLoads, setPageLoads] = useState({ accounts: false, branches: false, invoices: false });
+  const counselorPageReady = pageLoads.accounts && pageLoads.branches && pageLoads.invoices;
   const teamLeadOptions = useMemo(() => accounts.filter((a) => String(a.role || "") === "Team Lead"), [accounts]);
   useEffect(() => {
     const loadAccounts = async () => {
@@ -96,6 +97,18 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       }
     };
     loadBranches();
+  }, []);
+  useEffect(() => {
+    const loadInvoices = async () => {
+      try {
+        const result = await getInvoices();
+        if (!result.ok) return;
+        setInvoices(result.data);
+      } finally {
+        setPageLoads((p) => ({ ...p, invoices: true }));
+      }
+    };
+    loadInvoices();
   }, []);
   useEffect(() => {
     setSelectedCounselorId(null);
@@ -166,15 +179,27 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       const myTasks = filterTasksForCounselorIdentities(tasks, counselorIdentities, myStudents);
       const activeStudents = myStudents.length;
       const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Enrolled").length;
+      const overdueByDate = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
       const criticalTasks = myTasks.filter(
         (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
       ).length;
+      const slaViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
+      const stageSlaBreaches = computePipelineEscalations(myStudents).length;
       const maxCapacity = 35;
       const capacityLoad = Math.round(activeStudents / maxCapacity * 100);
       const successRate = activeStudents > 0 ? Math.round(visaGranted / activeStudents * 100) : 0;
-      const sla = Math.max(0, 100 - overdueTasks * 5);
-      const revenue = myStudents.reduce((acc, s) => acc + parseFloat(s.budget || "0") * 5e-3, 0);
+      const sla = Math.max(0, 100 - overdueByDate * 5 - slaViolations * 2 - stageSlaBreaches * 3);
+      const myStudentIds = new Set(myStudents.map((s) => String(s.id || "").trim()).filter(Boolean));
+      const currentYear = new Date().getFullYear();
+      const revenue = invoices.reduce((acc, inv) => {
+        if (!isPaidInvoice(inv)) return acc;
+        const sid = String(inv.studentId || inv.student_id || "").trim();
+        if (!sid || !myStudentIds.has(sid)) return acc;
+        const invoiceYear = new Date(inv.issueDate || inv.createdAt || inv.updatedAt).getFullYear();
+        if (invoiceYear !== currentYear) return acc;
+        return acc + invoiceAmountLkr(inv, EXCHANGE_RATES);
+      }, 0);
       const converted = myStudents.filter((s) => {
         const x = normalizePipelineStatus(s.status);
         return x !== "Inquiry" && x !== "Registration" && x !== "Application";
@@ -199,10 +224,13 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           activeStudents,
           visaGranted,
           overdueTasks,
+          overdueByDate,
           criticalTasks,
           capacityLoad,
           successRate,
           sla,
+          slaViolations,
+          stageSlaBreaches,
           revenue,
           conversionRate,
           npsScore,
@@ -212,7 +240,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         tasks: myTasks
       };
     });
-  }, [accounts, students, employees, tasks, currentRole, authenticatedUserEmail]);
+  }, [accounts, students, employees, tasks, invoices, currentRole, authenticatedUserEmail]);
   const filteredCounselors = counselors.filter(
     (c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.branch.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -333,7 +361,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           MetricCard,
           {
             title: "Revenue YTD",
-            value: formatLKR(counselor.metrics.revenue),
+            value: formatRawLKR(counselor.metrics.revenue),
             icon: /* @__PURE__ */ jsx(DollarSign, { size: 18 }),
             subtext: "Realized Commissions",
             highlight: true
@@ -623,7 +651,13 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     ] }) }),
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4", children: [
       /* @__PURE__ */ jsx(MetricCard, { title: "Active Counselors", value: counselors.length.toString(), icon: /* @__PURE__ */ jsx(Briefcase, { size: 18 }) }),
-      /* @__PURE__ */ jsx(MetricCard, { title: "Avg SLA Score", value: counselors.length > 0 ? `${Math.round(counselors.reduce((acc, c) => acc + c.metrics.sla, 0) / counselors.length)}%` : "0%", icon: /* @__PURE__ */ jsx(CheckCircle, { size: 18 }), color: "text-emerald-600" }),
+      /* @__PURE__ */ jsx(MetricCard, {
+        title: "Avg SLA Score",
+        value: counselors.length > 0 ? `${Math.round(counselors.reduce((acc, c) => acc + c.metrics.sla, 0) / counselors.length)}%` : "0%",
+        icon: /* @__PURE__ */ jsx(CheckCircle, { size: 18 }),
+        color: counselors.length > 0 && Math.round(counselors.reduce((acc, c) => acc + c.metrics.sla, 0) / counselors.length) >= 90 ? "text-emerald-600" : counselors.length > 0 && Math.round(counselors.reduce((acc, c) => acc + c.metrics.sla, 0) / counselors.length) >= 70 ? "text-amber-600" : "text-rose-600",
+        subtext: counselors.length > 0 ? `${counselors.reduce((acc, c) => acc + c.metrics.slaViolations, 0)} violations · ${counselors.reduce((acc, c) => acc + c.metrics.stageSlaBreaches, 0)} stage breaches` : "No data"
+      }),
       /* @__PURE__ */ jsx(MetricCard, { title: "Total Students", value: counselors.reduce((acc, c) => acc + c.metrics.activeStudents, 0).toString(), icon: /* @__PURE__ */ jsx(Users, { size: 18 }) }),
       /* @__PURE__ */ jsxs("div", { className: "bg-gradient-to-br from-[#D32722] via-[#BF342F] to-[#883560] p-5 rounded-xl text-white shadow-lg relative overflow-hidden flex items-center gap-4", children: [
         /* @__PURE__ */ jsx("div", { className: "w-16 h-16 bg-white rounded-full flex-shrink-0 overflow-hidden shadow-sm border-2 border-white/20 flex items-center justify-center text-slate-700 font-bold text-lg", children: topPerformer ? topPerformer.avatar ? /* @__PURE__ */ jsx("img", { src: topPerformer.avatar, alt: topPerformer.name || "", className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : (topPerformer.name || "C").charAt(0).toUpperCase() : "N/A" }),
@@ -676,9 +710,16 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             }
           ) })
         ] }) }),
-        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden lg:table-cell", children: /* @__PURE__ */ jsxs("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${c.metrics.sla >= 90 ? "bg-emerald-50 text-emerald-700 border-emerald-100" : c.metrics.sla >= 70 ? "bg-amber-50 text-amber-700 border-amber-100" : "bg-rose-50 text-rose-700 border-rose-100"}`, children: [
-          c.metrics.sla,
-          "%"
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden lg:table-cell", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1", children: [
+          /* @__PURE__ */ jsxs("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border w-fit ${c.metrics.sla >= 90 ? "bg-emerald-50 text-emerald-700 border-emerald-100" : c.metrics.sla >= 70 ? "bg-amber-50 text-amber-700 border-amber-100" : "bg-rose-50 text-rose-700 border-rose-100"}`, children: [
+            c.metrics.sla,
+            "%"
+          ] }),
+          (c.metrics.overdueByDate > 0 || c.metrics.slaViolations > 0 || c.metrics.stageSlaBreaches > 0) && /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-x-2 text-[10px] text-slate-500 leading-tight", children: [
+            c.metrics.overdueByDate > 0 && /* @__PURE__ */ jsxs("span", { className: "text-rose-500", title: "Tasks overdue by due date", children: [c.metrics.overdueByDate, " overdue"] }),
+            c.metrics.slaViolations > 0 && /* @__PURE__ */ jsxs("span", { className: "text-amber-600", title: "Open SLA requirement violations", children: [c.metrics.slaViolations, " violations"] }),
+            c.metrics.stageSlaBreaches > 0 && /* @__PURE__ */ jsxs("span", { className: "text-orange-500", title: "Students past stage SLA deadline", children: [c.metrics.stageSlaBreaches, " breaches"] })
+          ] })
         ] }) }),
         /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 hidden sm:table-cell font-mono font-medium text-slate-700", children: [
           c.metrics.successRate,
@@ -687,12 +728,12 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden md:table-cell text-right", children: /* @__PURE__ */ jsxs("span", { className: `inline-flex items-center justify-end min-w-[2rem] font-semibold tabular-nums ${c.metrics.criticalTasks > 0 ? "text-rose-600" : "text-slate-400"}`, title: "High priority, overdue status, or past due date", children: [
           c.metrics.criticalTasks
         ] }) }),
-        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2", children: [
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: (!scopeBranch || String(c.branch || "").trim().toLowerCase() === scopeBranch.trim().toLowerCase()) ? /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2", children: [
           /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => setSelectedCounselorId(c.id), children: [
             "View ",
             /* @__PURE__ */ jsx(ArrowRight, { size: 14, className: "ml-1" })
           ] })
-        ] }) })
+        ] }) : null })
       ] }, c.id)) })
     ] }) })
   ] });

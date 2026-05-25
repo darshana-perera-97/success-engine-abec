@@ -811,12 +811,62 @@ export async function uploadInvoicePaymentProof(invoiceId, dataUrl, fileName) {
   }
 }
 
-export async function getStudents() {
+export async function getStudents(params = {}) {
   try {
-    const res = await fetch(`${API_BASE}/api/students`);
+    const query = new URLSearchParams();
+    if (params.role) query.set("role", params.role);
+    if (params.userId) query.set("userId", params.userId);
+    if (params.branch) query.set("branch", params.branch);
+    if (params.country) query.set("country", params.country);
+    const qs = query.toString();
+    const res = await fetch(`${API_BASE}/api/students${qs ? `?${qs}` : ""}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load students." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function searchStudents(params = {}) {
+  try {
+    const query = new URLSearchParams();
+    if (params.role) query.set("role", params.role);
+    if (params.userId) query.set("userId", params.userId);
+    if (params.branch) query.set("branch", params.branch);
+    if (params.userCountry) query.set("userCountry", params.userCountry);
+    if (params.q) query.set("q", params.q);
+    if (params.counselor) query.set("counselor", params.counselor);
+    if (params.country) query.set("country", params.country);
+    if (params.status) query.set("status", params.status);
+    if (params.sortBy) query.set("sortBy", params.sortBy);
+    if (params.sortDirection) query.set("sortDirection", params.sortDirection);
+    const qs = query.toString();
+    const res = await fetch(`${API_BASE}/api/students/search${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to search students." };
+    }
+    return { ok: true, data: data.data, total: data.total || 0, countries: data.countries || [] };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function getPipelineCounts(params = {}) {
+  try {
+    const query = new URLSearchParams();
+    if (params.role) query.set("role", params.role);
+    if (params.userId) query.set("userId", params.userId);
+    if (params.branch) query.set("branch", params.branch);
+    if (params.country) query.set("country", params.country);
+    const qs = query.toString();
+    const res = await fetch(`${API_BASE}/api/students/pipeline-counts${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load pipeline counts." };
     }
     return { ok: true, data: data.data };
   } catch {
@@ -1159,6 +1209,54 @@ export async function clearAdminAiChats(email) {
       ok: false,
       error: "Cannot reach server. Is the backend running on port 3334?"
     };
+  }
+}
+
+export async function getBranchFinanceSummary(branch = "") {
+  try {
+    const params = new URLSearchParams();
+    if (branch) params.set("branch", branch);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/branch-analytics/finance-summary${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load branch finance summary." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function getBranchRevenueBreakdown(branch = "") {
+  try {
+    const params = new URLSearchParams();
+    if (branch) params.set("branch", branch);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/branch-analytics/revenue-breakdown${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load revenue breakdown." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function getBranchManagers(branch = "") {
+  try {
+    const params = new URLSearchParams();
+    if (branch) params.set("branch", branch);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/branch-analytics/managers${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load branch managers." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server. Is the backend running on port 3334?" };
   }
 }
 

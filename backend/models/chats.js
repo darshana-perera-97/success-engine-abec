@@ -1,0 +1,47 @@
+const fs = require("fs/promises");
+const crypto = require("crypto");
+const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
+const { CHATS_FILE } = require("../config");
+
+async function readChats() {
+  try {
+    const raw = await fs.readFile(CHATS_FILE, "utf8");
+    const parsed = safeJsonParse(raw, CHATS_FILE);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function writeChats(chats) {
+  return withFileLock(CHATS_FILE, () =>
+    atomicWriteFile(CHATS_FILE, JSON.stringify(chats, null, 2))
+  );
+}
+
+async function appendPortalChatMessage({ senderId, receiverId, content, platform = "portal" }) {
+  const from = String(senderId || "").trim();
+  const to = String(receiverId || "").trim();
+  const text = String(content || "").trim();
+  if (!from || !to || !text) return null;
+  const chats = await readChats();
+  const chat = {
+    id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
+    senderId: from,
+    receiverId: to,
+    content: text,
+    timestamp: new Date().toISOString(),
+    read: false,
+    platform: platform || "portal",
+    attachment: null,
+  };
+  await writeChats([...chats, chat]);
+  return chat;
+}
+
+module.exports = {
+  readChats,
+  writeChats,
+  appendPortalChatMessage,
+};

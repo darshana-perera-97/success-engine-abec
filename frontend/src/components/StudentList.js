@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getAccounts } from "../authApi";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getAccounts, searchStudents } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
@@ -8,6 +8,8 @@ import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
+
+const SEARCH_DEBOUNCE_MS = 400;
 
 const STUDENT_LIST_SORT_KEY = "successEngine.studentList.sort";
 
@@ -166,71 +168,72 @@ const StudentList = ({
       }
     ];
   }, [accountCounselors, userRole, scopeBranch, currentUser?.id, currentUser?.email, currentUser?.name]);
-  const countryOptions = useMemo(() => {
-    return Array.from(new Set(students.map((s) => String(s.country || "").trim()).filter(Boolean)));
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchLoading, setSearchLoading] = useState(true);
+  const [countryOptions, setCountryOptions] = useState([]);
+  const [debouncedFilter, setDebouncedFilter] = useState("");
+  const debounceRef = useRef(null);
+  const fetchIdRef = useRef(0);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedFilter(filterText), SEARCH_DEBOUNCE_MS);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [filterText]);
+
+  const searchParams = useMemo(() => {
+    const params = {};
+    if (isCounselorEquivalentPortalRole(userRole)) {
+      params.role = "Counselor";
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+    } else if (userRole === "Manager" || userRole === "Accountant") {
+      params.role = userRole;
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+      if (scopeBranch) params.branch = scopeBranch;
+    } else if (userRole === "Country Coordinator") {
+      params.role = userRole;
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+      const country = String(authenticatedUser?.country || currentUser?.country || "").trim();
+      if (country) params.userCountry = country;
+    }
+    if (debouncedFilter) params.q = debouncedFilter;
+    if (counselorFilter && counselorFilter !== "All") params.counselor = counselorFilter;
+    if (countryFilter && countryFilter !== "All") params.country = countryFilter;
+    params.sortBy = sortBy;
+    params.sortDirection = sortDirection;
+    return params;
+  }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilter, sortBy, sortDirection]);
+
+  const fetchStudents = useCallback(async (params) => {
+    const id = ++fetchIdRef.current;
+    setSearchLoading(true);
+    const result = await searchStudents(params);
+    if (id !== fetchIdRef.current) return;
+    setSearchLoading(false);
+    if (result.ok) {
+      setSearchResults(result.data);
+      setSearchTotal(result.total || result.data.length);
+      if (result.countries) setCountryOptions(result.countries);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStudents(searchParams);
+  }, [searchParams, fetchStudents]);
+
+  useEffect(() => {
+    if (!students.length) return;
+    const countries = Array.from(new Set(students.map((s) => String(s.country || "").trim()).filter(Boolean)));
+    if (countries.length > 0) setCountryOptions((prev) => prev.length > 0 ? prev : countries);
   }, [students]);
-  const activeCounselorIdentity = useMemo(() => {
-    const normalize = (value) => String(value || "").trim().toLowerCase();
-    return {
-      id: normalize(authenticatedUser?.id || currentUser?.id),
-      email: normalize(authenticatedUser?.email || currentUser?.email),
-      username: normalize(authenticatedUser?.username),
-      name: normalize(currentUser?.name)
-    };
-  }, [currentUser, authenticatedUser]);
+
+  const sortedFilteredStudents = searchResults;
+
   const isUnassignedCounselor = (value) => {
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized === "" || normalized === "unassigned" || normalized === "none" || normalized === "null";
   };
-  const filteredStudents = useMemo(() => {
-    return students.filter(
-      (s) => {
-        const normalizedCounselor = String(s.counselor || "").trim().toLowerCase();
-        const isCounselorRole = isCounselorEquivalentPortalRole(userRole);
-        const hasResolvedCounselorIdentity = Boolean(
-          activeCounselorIdentity.id || activeCounselorIdentity.email || activeCounselorIdentity.username || activeCounselorIdentity.name
-        );
-        const isOwnedByLoggedCounselor = normalizedCounselor === activeCounselorIdentity.id || normalizedCounselor === activeCounselorIdentity.email || normalizedCounselor === activeCounselorIdentity.username || normalizedCounselor === activeCounselorIdentity.name;
-        const matchesScopedCounselor =
-          counselorIdentitySet &&
-          counselorIdentitySet.size > 0 &&
-          studentMatchesCounselorIdentitySet(s, counselorIdentitySet);
-        const isVisibleToCounselor =
-          !isCounselorRole ||
-          !hasResolvedCounselorIdentity ||
-          matchesScopedCounselor ||
-          (!counselorIdentitySet && isOwnedByLoggedCounselor);
-        if (!isVisibleToCounselor) return false;
-        const matchesCounselor = counselorFilter === "All" ? true : counselorFilter === "Unassigned" ? isUnassignedCounselor(s.counselor) : String(s.counselor || "") === counselorFilter;
-        const matchesCountry = countryFilter === "All" || s.country === countryFilter;
-        const q = filterText.toLowerCase();
-        const matchesSearch = s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.country.toLowerCase().includes(q);
-        return matchesCounselor && matchesCountry && matchesSearch;
-      }
-    );
-  }, [students, filterText, counselorFilter, countryFilter, userRole, activeCounselorIdentity, counselorIdentitySet]);
-  const sortedFilteredStudents = useMemo(() => {
-    const list = [...filteredStudents];
-    const dir = sortDirection === "asc" ? 1 : -1;
-    list.sort((a, b) => {
-      if (sortBy === "name") {
-        return dir * String(a.name || "").localeCompare(String(b.name || ""), void 0, { sensitivity: "base" });
-      }
-      if (sortBy === "time") {
-        const ta = studentTimeMs(a);
-        const tb = studentTimeMs(b);
-        if (ta === null && tb === null) return 0;
-        if (ta === null) return 1;
-        if (tb === null) return -1;
-        return dir * (ta - tb);
-      }
-      const sa = pipelineStageOrder(a.status);
-      const sb = pipelineStageOrder(b.status);
-      if (sa !== sb) return dir * (sa - sb);
-      return dir * String(a.status || "").localeCompare(String(b.status || ""), void 0, { sensitivity: "base" });
-    });
-    return list;
-  }, [filteredStudents, sortBy, sortDirection]);
   const handleAddStudent = async (newStudent) => {
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);
@@ -442,7 +445,7 @@ const StudentList = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Counselor" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 text-right", children: "Next Stage" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: counselorMetaReady ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
           "tr",
           {
             onClick: () => onSelectStudent(student),
@@ -484,9 +487,9 @@ const StudentList = ({
       /* @__PURE__ */ jsxs("div", { className: "px-6 py-3 border-t border-gray-200 bg-gray-50 text-xs text-slate-500 flex justify-between items-center", children: [
         /* @__PURE__ */ jsxs("span", { children: [
           "Showing ",
-          counselorMetaReady ? sortedFilteredStudents.length : "—",
+          (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.length : "—",
           " of ",
-          counselorMetaReady ? students.length : "—",
+          (counselorMetaReady && !searchLoading) ? searchTotal : "—",
           " students"
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [

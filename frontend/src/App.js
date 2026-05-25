@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -451,18 +451,7 @@ function App({ initialView = "dashboard" }) {
   }, [currentRole]);
   const counselorScopedStudents = (() => {
     if (!isCounselorEquivalentPortalRole(currentRole)) return students;
-    if (counselorIdentitySet.size === 0) return [];
-    return students.filter((student) => {
-      const counselorId = normalizeIdentity(student.counselor);
-      const inquiryCounselorId = normalizeIdentity(student.inquiryCounselorId);
-      const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
-      const historyMatch = history.some((id) => counselorIdentitySet.has(normalizeIdentity(id)));
-      return (
-        counselorIdentitySet.has(counselorId) ||
-        counselorIdentitySet.has(inquiryCounselorId) ||
-        historyMatch
-      );
-    });
+    return students;
   })();
   const managerDataScope = useMemo(() => {
     // Branch scoping applies to managers and accountants. Admins always see all branches.
@@ -477,11 +466,8 @@ function App({ initialView = "dashboard" }) {
     return buildBranchCounselorIdentitySet(employees, managerDataScope.branchLabel);
   }, [employees, managerDataScope.active, managerDataScope.branchLabel]);
   const managerScopedStudents = useMemo(() => {
-    if ((currentRole !== "Manager" && currentRole !== "Accountant" && currentRole !== "Admin") || !managerDataScope.active) return students;
-    return students.filter((s) =>
-      studentMatchesManagerBranch(s, managerDataScope.branchLabel, branchCounselorIdentitySet)
-    );
-  }, [students, currentRole, managerDataScope.active, managerDataScope.branchLabel, branchCounselorIdentitySet]);
+    return students;
+  }, [students]);
   const managerScopedStudentIds = useMemo(
     () =>
       new Set(
@@ -540,11 +526,8 @@ function App({ initialView = "dashboard" }) {
     return { active: !!raw, countryKey: raw.toLowerCase(), countryLabel: raw };
   }, [currentRole, authenticatedUser?.country, currentUser?.country]);
   const countryCoordinatorScopedStudents = useMemo(() => {
-    if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return students;
-    return students.filter(
-      (s) => String(s.country || "").trim().toLowerCase() === countryCoordinatorScope.countryKey
-    );
-  }, [students, currentRole, countryCoordinatorScope.active, countryCoordinatorScope.countryKey]);
+    return students;
+  }, [students]);
   const countryCoordinatorStudentIds = useMemo(
     () => new Set(countryCoordinatorScopedStudents.map((s) => s.id)),
     [countryCoordinatorScopedStudents]
@@ -778,9 +761,28 @@ function App({ initialView = "dashboard" }) {
     assignmentNotifySeededRef.current = false;
     previousStudentCounselorMapRef.current = new Map();
   }, [currentRole, authenticatedUser?.id, authenticatedUser?.email]);
+  const studentScopeParams = useMemo(() => {
+    const params = {};
+    const role = currentRole;
+    if (isCounselorEquivalentPortalRole(role)) {
+      params.role = "Counselor";
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+    } else if (role === "Manager" || role === "Accountant") {
+      params.role = role;
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+      const branch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
+      if (branch) params.branch = branch;
+    } else if (role === "Country Coordinator") {
+      params.role = role;
+      params.userId = authenticatedUser?.id || currentUser?.id || "";
+      const country = String(authenticatedUser?.country || currentUser?.country || "").trim();
+      if (country) params.country = country;
+    }
+    return params;
+  }, [currentRole, authenticatedUser?.id, authenticatedUser?.branch, authenticatedUser?.country, currentUser?.id, currentUser?.branch, currentUser?.country]);
   useEffect(() => {
     const loadStudents = async () => {
-      const result = await getStudents();
+      const result = await getStudents(studentScopeParams);
       if (!result.ok) return;
       setStudents(() => {
         const nextStudents = Array.isArray(result.data) ? result.data : [];
@@ -790,7 +792,7 @@ function App({ initialView = "dashboard" }) {
     loadStudents();
     const intervalId = setInterval(loadStudents, 5e3);
     return () => clearInterval(intervalId);
-  }, []);
+  }, [studentScopeParams]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.pathname !== VIEW_TO_PATH["student-detail"]) return;
@@ -2308,12 +2310,7 @@ function App({ initialView = "dashboard" }) {
             ? countryCoordinatorScopedInvoices
             : invoices;
         return /* @__PURE__ */ jsx(BranchAnalytics, {
-          scopeBranch: coordBranch || null,
-          students: coordStudents,
-          allStudents: students,
-          invoices: coordInvoices,
-          employees,
-          branchScopedStudents: !!coordBranch
+          scopeBranch: coordBranch || null
         });
       }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
@@ -2414,15 +2411,10 @@ function App({ initialView = "dashboard" }) {
         onOpenStageEscalationStudent: openEscalationStudent
       };
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
-      if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal });
+      if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentRole === "Manager" && currentView === "branch") {
         return /* @__PURE__ */ jsx(BranchAnalytics, {
-          scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null,
-          students: mgrStudents,
-          allStudents: students,
-          invoices: currentRole === "Manager" && managerDataScope.active ? managerScopedInvoices : invoices,
-          employees: mgrEmployees,
-          branchScopedStudents: managerDataScope.active
+          scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null
         });
       }
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
@@ -2526,12 +2518,7 @@ function App({ initialView = "dashboard" }) {
         }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Settings are available for Admin only." });
       case "branch":
         return /* @__PURE__ */ jsx(BranchAnalytics, {
-          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
-          students: adminViewStudents,
-          allStudents: students,
-          invoices: adminBranchScoped ? managerScopedInvoices : invoices,
-          employees: adminViewEmployees,
-          branchScopedStudents: adminBranchScoped
+          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null
         });
       case "students":
         return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });

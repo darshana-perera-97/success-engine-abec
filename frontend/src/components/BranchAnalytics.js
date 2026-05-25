@@ -1,169 +1,69 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { formatRawLKR } from "../utils";
-import { useExchangeRates } from "../useExchangeRates";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
-import { createBranch, getAccounts, getBranches, getInvoices, getStudents } from "../authApi";
-import { buildBranchConversionMetrics } from "../pipeline";
-import { QuietPageSkeleton } from "./LoadingPlaceholder";
+import { createBranch, getBranchFinanceSummary, getBranchManagers } from "../authApi";
 
 const BranchAnalytics = ({
   scopeBranch = null,
-  students: providedStudents = null,
-  allStudents: providedAllStudents = null,
-  invoices: providedInvoices = null,
-  employees: providedEmployees = null,
-  branchScopedStudents = false
 }) => {
   const formatRevenueNumber = (value) => {
     const formatted = formatRawLKR(value);
     return formatted.replace(/^LKR\s*/, "");
   };
-  const [branches, setBranches] = useState([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [location, setLocation] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [managerAccounts, setManagerAccounts] = useState([]);
-  const [fetchedEmployees, setFetchedEmployees] = useState([]);
-  const [fetchedStudents, setFetchedStudents] = useState([]);
-  const [fetchedInvoices, setFetchedInvoices] = useState([]);
+  const [branchData, setBranchData] = useState([]);
+  const [totalRevenue, setTotalRevenue] = useState(0);
+  const [fxUpdatedAt, setFxUpdatedAt] = useState("");
+  const [fxLive, setFxLive] = useState(false);
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
-  const usesProvidedStudents = Array.isArray(providedStudents);
-  const [pageLoads, setPageLoads] = useState({
-    branches: false,
-    managers: false,
-    students: usesProvidedStudents,
-    invoices: false
-  });
-  const { updatedAt: fxUpdatedAt, live: fxLive, rates: exchangeRates } = useExchangeRates();
-  const students = usesProvidedStudents ? providedStudents : fetchedStudents;
-  const allStudents =
-    Array.isArray(providedAllStudents) && providedAllStudents.length > 0
-      ? providedAllStudents
-      : students;
-  const invoices = useMemo(() => {
-    const fetched = Array.isArray(fetchedInvoices) ? fetchedInvoices : [];
-    const provided = Array.isArray(providedInvoices) ? providedInvoices : [];
-    if (fetched.length === 0) return provided;
-    if (provided.length === 0) return fetched;
-    const byId = new Map();
-    provided.forEach((inv) => {
-      const id = String(inv?.id || "").trim();
-      if (id) byId.set(id, inv);
-    });
-    fetched.forEach((inv) => {
-      const id = String(inv?.id || "").trim();
-      if (id) byId.set(id, inv);
-    });
-    return Array.from(byId.values());
-  }, [fetchedInvoices, providedInvoices]);
-  const employees = Array.isArray(providedEmployees) ? providedEmployees : fetchedEmployees;
-  const branchPageReady =
-    pageLoads.branches && pageLoads.managers && pageLoads.students && pageLoads.invoices;
+  const [pageLoads, setPageLoads] = useState({ finance: false, managers: false });
 
+  const branchPageReady = pageLoads.finance && pageLoads.managers;
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
 
   useEffect(() => {
-    const loadBranches = async () => {
+    let cancelled = false;
+    const loadFinanceSummary = async () => {
       try {
-        const result = await getBranches();
-        if (!result.ok) return;
-        setBranches(result.data);
-      } finally {
-        setPageLoads((p) => ({ ...p, branches: true }));
-      }
-    };
-    loadBranches();
-  }, []);
-
-  useEffect(() => {
-    const loadManagers = async () => {
-      try {
-        const result = await getAccounts();
-        if (!result.ok) return;
-        let managers = result.data.filter((acc) => acc.role === "Manager" && acc.branch);
-        if (scopeKey) {
-          managers = managers.filter(
-            (acc) => String(acc.branch || "").trim().toLowerCase() === scopeKey
-          );
-        }
-        setManagerAccounts(managers);
-        if (!Array.isArray(providedEmployees)) {
-          setFetchedEmployees(result.data);
+        const result = await getBranchFinanceSummary(scopeKey ? scopeBranch : "");
+        if (!result.ok || cancelled) return;
+        setBranchData(result.data.branches || []);
+        setTotalRevenue(result.data.totalRevenue || 0);
+        if (result.data.exchangeRates) {
+          setFxUpdatedAt(result.data.exchangeRates.updatedAt || "");
+          setFxLive(result.data.exchangeRates.live !== false);
         }
       } finally {
-        setPageLoads((p) => ({ ...p, managers: true }));
+        if (!cancelled) setPageLoads((p) => ({ ...p, finance: true }));
       }
     };
-    loadManagers();
-  }, [scopeKey, providedEmployees]);
-
-  useEffect(() => {
-    if (usesProvidedStudents) return;
-    const loadStudents = async () => {
-      try {
-        const result = await getStudents();
-        if (!result.ok) return;
-        setFetchedStudents(result.data);
-      } finally {
-        setPageLoads((p) => ({ ...p, students: true }));
-      }
-    };
-    loadStudents();
-  }, [usesProvidedStudents]);
+    loadFinanceSummary();
+    const intervalId = setInterval(loadFinanceSummary, 10000);
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [scopeBranch, scopeKey]);
 
   useEffect(() => {
     let cancelled = false;
-    const loadInvoices = async () => {
+    const loadManagers = async () => {
       try {
-        const result = await getInvoices();
+        const result = await getBranchManagers(scopeKey ? scopeBranch : "");
         if (!result.ok || cancelled) return;
-        setFetchedInvoices(result.data || []);
+        setManagerAccounts(result.data);
       } finally {
-        if (!cancelled) {
-          setPageLoads((p) => ({ ...p, invoices: true }));
-        }
+        if (!cancelled) setPageLoads((p) => ({ ...p, managers: true }));
       }
     };
-    loadInvoices();
-    const intervalId = setInterval(loadInvoices, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, []);
+    loadManagers();
+    return () => { cancelled = true; };
+  }, [scopeBranch, scopeKey]);
 
-  const branchData = useMemo(
-    () =>
-      buildBranchConversionMetrics({
-        branches,
-        students,
-        allStudents,
-        invoices,
-        exchangeRates,
-        employees,
-        scopeBranch: scopeKey ? scopeBranch : null,
-        branchScopedStudents: branchScopedStudents && !!scopeKey
-      }),
-    [
-      branches,
-      students,
-      allStudents,
-      invoices,
-      exchangeRates,
-      employees,
-      scopeKey,
-      scopeBranch,
-      branchScopedStudents
-    ]
-  );
-  const totalRevenue = useMemo(
-    () => branchData.reduce((sum, branch) => sum + branch.revenue, 0),
-    [branchData]
-  );
   const revenueRankedData = useMemo(
     () =>
       [...branchData].sort((a, b) => b.revenue - a.revenue).map((branch) => ({
@@ -215,7 +115,76 @@ const BranchAnalytics = ({
   };
 
   if (!branchPageReady) {
-    return <QuietPageSkeleton />;
+    return (
+      <div className="space-y-6 pb-10" aria-busy="true" aria-label="Loading branch analytics">
+        <div className="flex flex-col items-center justify-center py-16">
+          <div className="relative mb-6">
+            <div className="w-14 h-14 rounded-full border-4 border-slate-200" />
+            <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-transparent border-t-indigo-600 animate-spin" />
+            <MapPin size={20} className="absolute inset-0 m-auto text-indigo-600 animate-pulse" />
+          </div>
+          <p className="text-sm font-medium text-slate-700 mb-1">Loading Branch Analytics</p>
+          <p className="text-xs text-slate-400">Fetching branch data and metrics…</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm overflow-hidden animate-pulse"
+            >
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-4 h-4 rounded bg-slate-200" />
+                <div className="h-4 w-24 rounded bg-slate-200" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="h-3 w-16 rounded bg-slate-100" />
+                  <div className="h-6 w-20 rounded bg-slate-200" />
+                </div>
+                <div className="space-y-2">
+                  <div className="h-3 w-16 rounded bg-slate-100" />
+                  <div className="h-6 w-14 rounded bg-slate-200" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-pulse">
+            <div className="h-4 w-48 rounded bg-slate-200 mb-6" />
+            <div className="flex items-end gap-6 h-[260px] px-4 pb-4">
+              {[65, 45, 80, 55, 70, 40].map((h, i) => (
+                <div key={i} className="flex-1 flex flex-col justify-end gap-1">
+                  <div className="rounded-t bg-slate-200" style={{ height: `${h}%` }} />
+                  <div className="h-3 w-full rounded bg-slate-100" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-pulse">
+            <div className="h-4 w-40 rounded bg-slate-200 mb-6" />
+            <div className="space-y-5">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="space-y-2">
+                  <div className="flex justify-between">
+                    <div className="h-3 w-20 rounded bg-slate-200" />
+                    <div className="h-3 w-16 rounded bg-slate-200" />
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-slate-100">
+                    <div
+                      className="h-1.5 rounded-full bg-slate-200"
+                      style={{ width: `${70 - i * 15}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -413,9 +382,13 @@ const BranchAnalytics = ({
                   setError(result.error);
                   return;
                 }
-                setBranches((prev) => [...prev, result.data]);
                 setLocation("");
                 setIsAddOpen(false);
+                const refreshed = await getBranchFinanceSummary(scopeKey ? scopeBranch : "");
+                if (refreshed.ok) {
+                  setBranchData(refreshed.data.branches || []);
+                  setTotalRevenue(refreshed.data.totalRevenue || 0);
+                }
               }}
             >
               {error ? <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-md px-3 py-2">{error}</p> : null}
