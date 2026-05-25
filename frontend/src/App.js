@@ -874,7 +874,7 @@ function App({ initialView = "dashboard" }) {
     let cancelled = false;
     const pollInvoices = async () => {
       const result = await getInvoices();
-      if (!cancelled) setInvoicesLoading(false);
+      setInvoicesLoading(false);
       if (!result.ok || cancelled) return;
       const next = result.data || [];
       if (
