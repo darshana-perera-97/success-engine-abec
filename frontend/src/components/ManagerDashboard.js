@@ -37,6 +37,7 @@ const ManagerDashboard = ({
   onNavigate,
   onReassignDeskTask,
   invoices = [],
+  invoicesLoading = false,
   onUpdateInvoice,
   onSelectStudent,
   onNotify,
@@ -50,29 +51,45 @@ const ManagerDashboard = ({
   const [reviewingTaskId, setReviewingTaskId] = useState(null);
   const { quarter: calendarQuarter } = getCalendarQuarter();
   const quarterLabel = `Q${calendarQuarter}`;
+  const allPaidInvoices = useMemo(
+    () => (invoices || []).filter((inv) => isPaidInvoice(inv)),
+    [invoices]
+  );
   const quarterPaidInvoices = useMemo(
     () =>
-      (invoices || []).filter(
-        (inv) => isPaidInvoice(inv) && isDateInCalendarQuarter(inv.issueDate || inv.createdAt)
+      allPaidInvoices.filter(
+        (inv) => isDateInCalendarQuarter(inv.issueDate || inv.createdAt)
       ),
-    [invoices]
+    [allPaidInvoices]
   );
   const collectedRevenueLkr = useMemo(
     () =>
       quarterPaidInvoices.reduce((sum, inv) => sum + invoiceAmountLkr(inv, EXCHANGE_RATES), 0),
     [quarterPaidInvoices]
   );
+  const allTimeRevenueLkr = useMemo(
+    () =>
+      allPaidInvoices.reduce((sum, inv) => sum + invoiceAmountLkr(inv, EXCHANGE_RATES), 0),
+    [allPaidInvoices]
+  );
   const pipelineBudgetLkr = useMemo(
     () => students.reduce((sum, student) => sum + parseStudentBudgetLkr(student, EXCHANGE_RATES), 0),
     [students]
   );
-  const revenueTrendLabel =
-    collectedRevenueLkr > 0
+  const revenueDisplayLkr = collectedRevenueLkr > 0 ? collectedRevenueLkr : allTimeRevenueLkr;
+  const revenueCardTitle = collectedRevenueLkr > 0 || allTimeRevenueLkr === 0
+    ? `Collected Revenue (${quarterLabel})`
+    : "Collected Revenue (All-time)";
+  const revenueTrendLabel = invoicesLoading
+    ? "Loading invoices…"
+    : collectedRevenueLkr > 0
       ? `${quarterPaidInvoices.length} paid invoice${quarterPaidInvoices.length === 1 ? "" : "s"} in ${quarterLabel}`
-      : pipelineBudgetLkr > 0
-        ? `No paid invoices in ${quarterLabel} · ${formatRawLKR(pipelineBudgetLkr)} inquiry budgets`
-        : `No paid invoices in ${quarterLabel}`;
-  const revenueTrendColor = collectedRevenueLkr > 0 ? "text-emerald-600" : "text-slate-500";
+      : allTimeRevenueLkr > 0
+        ? `${allPaidInvoices.length} paid invoice${allPaidInvoices.length === 1 ? "" : "s"} all-time · ${formatRawLKR(pipelineBudgetLkr)} pipeline`
+        : pipelineBudgetLkr > 0
+          ? `No paid invoices yet · ${formatRawLKR(pipelineBudgetLkr)} inquiry budgets`
+          : "No paid invoices yet";
+  const revenueTrendColor = revenueDisplayLkr > 0 ? "text-emerald-600" : "text-slate-500";
   const overdueTasks = (tasks || []).filter((t) => t.status !== "Completed" && isTaskOverdueByDate(t)).length;
   const timeRemainingHighPriorityTasks = (tasks || []).filter(
     (t) => t.status !== "Completed" && !isTaskOverdueByDate(t) && t.priority === "High"
@@ -110,8 +127,8 @@ const ManagerDashboard = ({
       /* @__PURE__ */ jsx(
         DashboardCard,
         {
-          title: `Collected Revenue (${quarterLabel})`,
-          value: formatRawLKR(collectedRevenueLkr),
+          title: revenueCardTitle,
+          value: invoicesLoading ? "…" : formatRawLKR(revenueDisplayLkr),
           icon: /* @__PURE__ */ jsx(Banknote, { size: 20 }),
           trend: revenueTrendLabel,
           trendColor: revenueTrendColor
@@ -409,11 +426,6 @@ const ManagerDashboard = ({
                               setReviewingTaskId(task.id);
                               onUpdateTasks([{ ...task, status: "Completed" }]);
                               setReviewingTaskId(null);
-                              onNotify?.(
-                                "Task approved",
-                                `"${task.task}" was marked completed.`,
-                                "success"
-                              );
                             },
                             children: reviewingTaskId === task.id ? "Approving…" : "Approve"
                           })

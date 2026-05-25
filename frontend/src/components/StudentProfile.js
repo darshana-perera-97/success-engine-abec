@@ -33,7 +33,7 @@ import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
 import { VisaPilot } from "./VisaPilot";
-import { StudentProfileTeamPanel } from "./StudentProfileTeamPanel";
+
 import { StudentProfileCounselorsRoster } from "./StudentProfileCounselorsRoster";
 import { AIResumeBuilder } from "./AIResumeBuilder";
 import {
@@ -1556,7 +1556,7 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 overflow-y-auto", children: renderContent() })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
-            /* @__PURE__ */ jsx(StudentProfileTeamPanel, { student: localStudent, employees, userRole, onUpdateStudent: handleUpdateStudentLocal }),
+
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole, highlightTaskId, onNavigateToTask }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),

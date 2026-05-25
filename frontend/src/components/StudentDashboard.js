@@ -1,11 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useRef, useState } from "react";
-import { CheckCircle, Upload, AlertTriangle, Calendar, Info, Plane, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
+import { CheckCircle, Upload, AlertTriangle, Calendar, Info, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
 import { PersonContactCard } from "./PersonContactCard";
 import { COUNTRY_CHECKLISTS } from "../constants";
 import { PIPELINE_STEPS, normalizePipelineStatus, getVisibleCountryChecklistStages } from "../pipeline";
-import { buildStudentDashboardCounselorRoster, buildVisaAgentEntries } from "../studentContactHelpers";
+import { buildStudentDashboardCounselorRoster } from "../studentContactHelpers";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
@@ -22,7 +22,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
-  const visaAgentTeam = buildVisaAgentEntries(student, employees);
+
   const canonical = normalizePipelineStatus(student.status);
   const rawIndex = PIPELINE_STEPS.indexOf(canonical);
   const visualIndex = rawIndex < 0 ? 0 : rawIndex;
@@ -320,25 +320,6 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("messages"), children: "Message" }),
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("calendar"), children: "Book Call" })
           ] })
-        ] }),
-        visaAgentTeam.length > 0 && /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mb-4", children: [
-            /* @__PURE__ */ jsx(Plane, { size: 16, className: "text-indigo-600", strokeWidth: 2 }),
-            /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Visa agents" })
-          ] }),
-          /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-64 overflow-y-auto pr-1", children: visaAgentTeam.map((v) => /* @__PURE__ */ jsx(
-            PersonContactCard,
-            {
-              name: v.name,
-              role: v.role,
-              badges: [],
-              email: v.email,
-              phone: v.phone,
-              avatar: v.avatar,
-              avatarClassName: "h-12 w-12 text-base"
-            },
-            v.id
-          )) })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "bg-indigo-900 rounded-xl p-6 text-white relative overflow-hidden", children: [
           /* @__PURE__ */ jsxs("div", { className: "relative z-10", children: [

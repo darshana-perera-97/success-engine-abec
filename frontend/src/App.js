@@ -645,6 +645,8 @@ function App({ initialView = "dashboard" }) {
     for (const task of scopedTasks) {
       const id = String(task?.id || "").trim();
       if (!id) continue;
+      const taskStatus = String(task.status || "").trim();
+      if (taskStatus === "Completed") continue;
       const now = taskDirectlyAssignsIdentities(task);
       const was = prev.get(id) ?? false;
       if (now && !was && !createdBySelf(task)) {
@@ -1892,14 +1894,15 @@ function App({ initialView = "dashboard" }) {
       type: "calendar"
     });
     const meetingLink = String(newApt.meetingLink || "").trim();
-    if (meetingLink) {
+    const meetingPlatform = String(newApt.meetingPlatform || "").trim();
+    if (meetingLink || meetingPlatform) {
       const wa = saved.data?.meetingLinkWhatsappDelivery;
       if (wa?.status === "sent") {
-        addNotification("WhatsApp sent", "Meeting link sent to the student.", "success");
+        addNotification("WhatsApp sent", "Meeting details sent to the student.", "success");
       } else if (wa?.status === "failed") {
-        addNotification("WhatsApp failed", wa.reason || "Could not send meeting link to the student.", "warning");
+        addNotification("WhatsApp failed", wa.reason || "Could not send meeting details to the student.", "warning");
       } else if (wa?.status === "skipped") {
-        addNotification("WhatsApp skipped", wa.reason || "Meeting link was not sent via WhatsApp.", "warning");
+        addNotification("WhatsApp skipped", wa.reason || "Meeting details were not sent via WhatsApp.", "warning");
       }
     }
     return { ok: true, data: saved.data };
@@ -2598,7 +2601,13 @@ function App({ initialView = "dashboard" }) {
         userEmail: authenticatedUser?.email || currentUser?.email || "",
         userPhone: currentUser?.phone || authenticatedUser?.phone || "",
         userBranch: currentUser?.branch || authenticatedUser?.branch || "",
-        notifications: notificationHistory,
+        notifications: notificationHistory.filter((n) => {
+          const dk = String(n.dedupeKey || "");
+          if (!dk.startsWith("task-assign:")) return true;
+          const taskId = dk.slice("task-assign:".length);
+          const task = tasks.find((t) => String(t?.id || "").trim() === taskId);
+          return !task || String(task.status || "").trim() !== "Completed";
+        }),
         onClearNotifications: () => {
           setNotificationHistory((prev) => {
             persistDismissedNotificationKeys(prev.map((n) => n.dedupeKey).filter(Boolean));
@@ -2677,7 +2686,13 @@ function App({ initialView = "dashboard" }) {
       /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mb-4", children: "The student receives a WhatsApp reminder 15 minutes before the meeting when their phone is on file and your WhatsApp is connected." }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end", children: /* @__PURE__ */ jsx(Button, { onClick: handleAcknowledgeMeetingReminder, isLoading: isAcknowledgingMeetingReminder, children: "Got it" }) })
     ] }) }),
-    /* @__PURE__ */ jsx("div", { ref: toastStackRef, className: "fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none", children: notifications.map((n) => {
+    /* @__PURE__ */ jsx("div", { ref: toastStackRef, className: "fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none", children: notifications.filter((n) => {
+      const dk = String(n.dedupeKey || "");
+      if (!dk.startsWith("task-assign:")) return true;
+      const taskId = dk.slice("task-assign:".length);
+      const task = tasks.find((t) => String(t?.id || "").trim() === taskId);
+      return !task || String(task.status || "").trim() !== "Completed";
+    }).map((n) => {
       const toastHasLink = Boolean(n.link && (n.link.taskId || n.link.studentId || n.link.view));
       return /* @__PURE__ */ jsxs(
         "div",

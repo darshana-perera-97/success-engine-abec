@@ -1737,6 +1737,7 @@ function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, 
 
 function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, meetingLink, meetingPlatform }) {
   const platform = String(meetingPlatform || "").trim();
+  const link = String(meetingLink || "").trim();
   const lines = [
     `${COMPANY_NAME} — Meeting Details`,
     "",
@@ -1747,7 +1748,7 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
     `Date: ${date || ""}`,
     `Time: ${time || ""}`,
     platform ? `Platform: ${platform}` : "",
-    `Meeting Link: ${meetingLink || ""}`,
+    link ? `Meeting Link: ${link}` : "",
     "",
     "Please join on time.",
   ].filter(Boolean);
@@ -5042,7 +5043,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const meetingLinkOnCreate = String(appointment.meetingLink || "").trim();
-      if (meetingLinkOnCreate) {
+      const meetingPlatformOnCreate = String(appointment.meetingPlatform || "").trim();
+      if (meetingLinkOnCreate || meetingPlatformOnCreate) {
         try {
           const students = await readStudemts();
           const student = students.find((item) => String(item.id || "") === String(appointment.studentId || ""));
@@ -5054,7 +5056,7 @@ const server = http.createServer(async (req, res) => {
               title: appointment.title || "Session",
               date: appointment.date || "",
               time: appointment.time || "",
-              meetingPlatform: appointment.meetingPlatform || "",
+              meetingPlatform: meetingPlatformOnCreate,
               meetingLink: meetingLinkOnCreate,
             }),
           });
@@ -5064,7 +5066,7 @@ const server = http.createServer(async (req, res) => {
             reason: result?.reason || "",
             sentAt: new Date().toISOString(),
           };
-          logEvent("appointment", "meeting link sent to student via whatsapp", {
+          logEvent("appointment", "meeting details sent to student via whatsapp", {
             appointmentId: appointment.id,
             counselorId: appointment.counselorId,
             studentId: appointment.studentId,
@@ -5074,10 +5076,10 @@ const server = http.createServer(async (req, res) => {
           appointment.meetingLinkWhatsappDelivery = {
             attempted: true,
             status: "failed",
-            reason: String(error?.message || "Failed to send WhatsApp meeting link."),
+            reason: String(error?.message || "Failed to send WhatsApp meeting details."),
             sentAt: new Date().toISOString(),
           };
-          console.error("Meeting link WhatsApp send failed (create):", error);
+          console.error("Meeting details WhatsApp send failed (create):", error);
         }
       }
       await writeAppointments([...appointments, appointment]);
