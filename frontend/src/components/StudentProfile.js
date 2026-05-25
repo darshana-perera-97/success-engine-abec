@@ -789,11 +789,7 @@ const StudentProfile = ({
   const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || localStudent.counselor || "").trim();
   const currentCounselorId = String(localStudent.counselor || "").trim() || actingCounselorId;
   const availableBranchCounselors = employees.filter((employee) => {
-    if (!isCounselorRole(employee?.role || employee?.position)) return false;
-    const studentBranch = localStudent.branch || localStudent.nearestOffice || "";
-    if (!studentBranch) return true;
-    const employeeBranch = employee?.branch || employee?.location || employee?.office || "";
-    return branchesMatch(employeeBranch, studentBranch);
+    return isCounselorRole(employee?.role || employee?.position);
   });
   const reassignableBranchCounselors = availableBranchCounselors.filter(
     (employee) => String(employee?.id || "").trim() !== String(currentCounselorId || "").trim()
@@ -1654,7 +1650,7 @@ const StudentProfile = ({
               ] }),
               /* @__PURE__ */ jsxs("label", { className: "flex items-center gap-2 text-xs text-slate-700", children: [
                 /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-mode", checked: advanceDialog.counselorMode === "another", onChange: () => setAdvanceDialog((prev) => ({ ...prev, counselorMode: "another", counselorId: "" })) }),
-                "Assign another counselor from current branch"
+                "Assign another counselor"
               ] }),
               advanceDialog.counselorMode === "another" && /* @__PURE__ */ jsx("select", { value: advanceDialog.counselorId, onChange: (e) => setAdvanceDialog((prev) => ({ ...prev, counselorId: e.target.value })), className: "mt-1 w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", children: [
                 /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),

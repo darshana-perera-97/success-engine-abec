@@ -528,7 +528,7 @@ const TaskManager = ({
                 task.status === "In Review" && /* @__PURE__ */ jsx(Hourglass, { size: 12, className: "mr-1" }),
                 task.status || "Pending"
               ]
-            }) : task.documentType ? /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => handleStudentUpload(task), children: [
+            }) : task.documentType ? /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => handleStudentUpload(task), children: [
               /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-1" }),
               " Upload"
             ] }) : null : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [

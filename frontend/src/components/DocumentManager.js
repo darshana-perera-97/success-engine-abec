@@ -424,7 +424,7 @@ const DocumentManager = ({
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-700", children: docType }),
             /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: description })
           ] }),
-          /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => setUploadModal({ isOpen: true, docType }), children: [
+          /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, docType }), children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
             " Upload"
           ] })
@@ -444,14 +444,15 @@ const DocumentManager = ({
               /* @__PURE__ */ jsx("div", { className: "absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover/tip:block animate-in fade-in zoom-in-95", children: uploadedFile.rejectionReason })
             ] }),
             canDeleteDocument && isDeletableDocumentStatus(uploadedFile.status) && /* @__PURE__ */ jsxs(
-              "button",
+              Button,
               {
-                type: "button",
+                size: "sm",
+                variant: "secondary",
                 onClick: () => setDeleteDocumentModal({ isOpen: true, doc: uploadedFile }),
                 title: uploadedFile.status === "Verified" ? "Delete approved upload" : "Delete rejected upload",
-                className: "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-700 border border-transparent hover:border-rose-200 text-sm font-medium shrink-0",
+                className: "hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 shrink-0",
                 children: [
-                  /* @__PURE__ */ jsx(Trash2, { size: 18, strokeWidth: 2.25, className: "shrink-0" }),
+                  /* @__PURE__ */ jsx(Trash2, { size: 14, className: "mr-2 shrink-0" }),
                   "Delete"
                 ]
               }
@@ -487,7 +488,7 @@ const DocumentManager = ({
         ] }),
         canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
           size: "sm",
-          variant: "secondary",
+          className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
           onClick: () => setOfferLetterModal({ open: true, offerStatus: "Unconditional", error: "", pendingFiles: [] }),
           children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
@@ -521,7 +522,7 @@ const DocumentManager = ({
         /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 justify-end", children: [
           canStaffAppendOtherDocument && /* @__PURE__ */ jsxs(Button, {
             size: "sm",
-            variant: "secondary",
+            className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
             onClick: () => setOtherDocModal({ open: true, slot: null, label: "", error: "", append: true }),
             children: [
               /* @__PURE__ */ jsx(Plus, { size: 14, className: "mr-2" }),
@@ -539,7 +540,7 @@ const DocumentManager = ({
                 /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", slotNum] }),
                 /* @__PURE__ */ jsx(Button, {
                   size: "sm",
-                  variant: "secondary",
+                  className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
                   disabled: !onUploadProfileOtherDocument,
                   onClick: () => setOtherDocModal({
                     open: true,
@@ -572,7 +573,7 @@ const DocumentManager = ({
                     /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", entry.slot] }),
                     /* @__PURE__ */ jsx(Button, {
                       size: "sm",
-                      variant: "secondary",
+                      className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
                       disabled: !onUploadProfileOtherDocument,
                       onClick: () => setOtherDocModal({
                         open: true,
@@ -719,7 +720,7 @@ const DocumentManager = ({
           ] }),
           /* @__PURE__ */ jsx(Button, {
             type: "button",
-            className: "w-full",
+            className: "w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
             size: "sm",
             disabled: !offerLetterModal.pendingFiles?.length,
             onClick: handleOfferLetterUploadDocuments,

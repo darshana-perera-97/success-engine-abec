@@ -177,7 +177,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           ]
                         }
                       ),
-                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
+                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
                         /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
                         " Upload"
                       ] })
