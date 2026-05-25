@@ -667,12 +667,12 @@ export async function getInvoices() {
   }
 }
 
-export async function getStudentInvoices(studentId) {
+export async function getStudentInvoices() {
   try {
-    const res = await fetch(`${API_BASE}/api/st-invoices?studentId=${encodeURIComponent(studentId)}`);
+    const res = await fetch(`${API_BASE}/api/st-invoices`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
-      return { ok: false, error: data.error || "Failed to load student invoices." };
+      return { ok: false, error: data.error || "Failed to load invoices." };
     }
     return { ok: true, data: data.data };
   } catch {

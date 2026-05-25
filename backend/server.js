@@ -4544,22 +4544,11 @@ const server = http.createServer(async (req, res) => {
     (url.pathname === "/api/st-invoices" || url.pathname === "/api/st-invoices/")
   ) {
     try {
-      const studentId = String(url.searchParams.get("studentId") || "").trim();
-      if (!studentId) {
-        sendJson(res, 400, { ok: false, error: "studentId query parameter is required." });
-        return;
-      }
-      const allInvoices = await readInvoices();
-      const studentInvoices = allInvoices.filter(
-        (inv) => String(inv.studentId || "").trim() === studentId
-      );
-      const payload = {
-        ok: true,
-        data: studentInvoices.map((inv) => publicInvoiceRecord(req, inv)),
-      };
+      const invoices = await readInvoices();
+      const payload = { ok: true, data: invoices.map((inv) => publicInvoiceRecord(req, inv)) };
       sendJson(res, 200, payload);
     } catch {
-      sendJson(res, 500, { ok: false, error: "Failed to load student invoices." });
+      sendJson(res, 500, { ok: false, error: "Failed to load invoices." });
     }
     return;
   }
