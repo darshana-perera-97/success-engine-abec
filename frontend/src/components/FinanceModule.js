@@ -91,7 +91,7 @@ const INVOICE_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ]);
 
-const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice }) => {
+const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice }) => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAmount, setNewAmount] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -600,7 +600,7 @@ const FinanceModule = ({ student, invoices, userRole, paymentAccounts = [], onCr
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Status" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-right", children: "Action" })
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors cursor-pointer", onClick: () => handleOpenDetails(inv), children: [
+      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors cursor-pointer", onClick: () => handleOpenDetails(inv), children: [
         /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 font-medium text-slate-700", children: [
           inv.description,
           !isStudentView && inv.createdByName ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-500 mt-0.5", children: [

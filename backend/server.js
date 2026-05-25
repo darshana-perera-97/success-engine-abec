@@ -23,6 +23,35 @@ function resolveDataDir() {
   if (!fromEnv) return path.join(__dirname, "data");
   return path.isAbsolute(fromEnv) ? path.resolve(fromEnv) : path.resolve(__dirname, fromEnv);
 }
+
+// --- Atomic write + per-file mutex to prevent JSON corruption ---
+const fileMutexes = new Map();
+
+function withFileLock(filePath, operation) {
+  if (!fileMutexes.has(filePath)) {
+    fileMutexes.set(filePath, Promise.resolve());
+  }
+  const prev = fileMutexes.get(filePath);
+  const next = prev.then(() => operation(), () => operation());
+  fileMutexes.set(filePath, next.catch(() => {}));
+  return next;
+}
+
+async function atomicWriteFile(filePath, data) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tempFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempFile, data, "utf8");
+  await fs.rename(tempFile, filePath);
+}
+
+function safeJsonParse(raw, filePath) {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(`[WARN] ${path.basename(filePath)} contains invalid JSON – treating as empty.`, error.message);
+    return null;
+  }
+}
 const DATA_DIR = resolveDataDir();
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const STUDEMTS_FILE = path.join(DATA_DIR, "studemts.json");
@@ -357,7 +386,7 @@ async function tryReadFrontendAssetFromBuildOutputs(assetPathname) {
 async function readUsers() {
   try {
     const raw = await fs.readFile(USERS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, USERS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -366,14 +395,15 @@ async function readUsers() {
 }
 
 async function writeUsers(users) {
-  await fs.mkdir(path.dirname(USERS_FILE), { recursive: true });
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  return withFileLock(USERS_FILE, () =>
+    atomicWriteFile(USERS_FILE, JSON.stringify(users, null, 2))
+  );
 }
 
 async function readStudemts() {
   try {
     const raw = await fs.readFile(STUDEMTS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, STUDEMTS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -382,14 +412,15 @@ async function readStudemts() {
 }
 
 async function writeStudemts(studemts) {
-  await fs.mkdir(path.dirname(STUDEMTS_FILE), { recursive: true });
-  await fs.writeFile(STUDEMTS_FILE, JSON.stringify(studemts, null, 2));
+  return withFileLock(STUDEMTS_FILE, () =>
+    atomicWriteFile(STUDEMTS_FILE, JSON.stringify(studemts, null, 2))
+  );
 }
 
 async function readBranches() {
   try {
     const raw = await fs.readFile(BRANCHES_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, BRANCHES_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -398,14 +429,15 @@ async function readBranches() {
 }
 
 async function writeBranches(branches) {
-  await fs.mkdir(path.dirname(BRANCHES_FILE), { recursive: true });
-  await fs.writeFile(BRANCHES_FILE, JSON.stringify(branches, null, 2));
+  return withFileLock(BRANCHES_FILE, () =>
+    atomicWriteFile(BRANCHES_FILE, JSON.stringify(branches, null, 2))
+  );
 }
 
 async function readCountries() {
   try {
     const raw = await fs.readFile(COUNTRIES_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, COUNTRIES_FILE);
     if (!Array.isArray(parsed)) {
       await writeCountries([...DEFAULT_COUNTRY_NAMES]);
       return [...DEFAULT_COUNTRY_NAMES];
@@ -428,7 +460,6 @@ async function readCountries() {
 }
 
 async function writeCountries(list) {
-  await fs.mkdir(path.dirname(COUNTRIES_FILE), { recursive: true });
   const unique = Array.from(
     new Map(
       (list || [])
@@ -437,7 +468,9 @@ async function writeCountries(list) {
         .map((n) => [n.toLowerCase(), n])
     ).values()
   ).sort((a, b) => a.localeCompare(b));
-  await fs.writeFile(COUNTRIES_FILE, JSON.stringify(unique, null, 2));
+  return withFileLock(COUNTRIES_FILE, () =>
+    atomicWriteFile(COUNTRIES_FILE, JSON.stringify(unique, null, 2))
+  );
 }
 
 function normalizePaymentAccount(raw) {
@@ -462,7 +495,7 @@ function normalizePaymentAccount(raw) {
 async function readPaymentAccounts() {
   try {
     const raw = await fs.readFile(PAYMENT_ACCOUNTS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, PAYMENT_ACCOUNTS_FILE);
     if (!Array.isArray(parsed)) return [];
     return parsed.map(normalizePaymentAccount).filter(Boolean);
   } catch (error) {
@@ -472,15 +505,16 @@ async function readPaymentAccounts() {
 }
 
 async function writePaymentAccounts(accounts) {
-  await fs.mkdir(path.dirname(PAYMENT_ACCOUNTS_FILE), { recursive: true });
   const normalized = (accounts || []).map(normalizePaymentAccount).filter(Boolean);
-  await fs.writeFile(PAYMENT_ACCOUNTS_FILE, JSON.stringify(normalized, null, 2));
+  return withFileLock(PAYMENT_ACCOUNTS_FILE, () =>
+    atomicWriteFile(PAYMENT_ACCOUNTS_FILE, JSON.stringify(normalized, null, 2))
+  );
 }
 
 async function readReqStudents() {
   try {
     const raw = await fs.readFile(REQ_STUDENTS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, REQ_STUDENTS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -489,29 +523,31 @@ async function readReqStudents() {
 }
 
 async function appendReqStudent(entry) {
-  const list = await readReqStudents();
-  list.push(entry);
-  await fs.mkdir(path.dirname(REQ_STUDENTS_FILE), { recursive: true });
-  await fs.writeFile(REQ_STUDENTS_FILE, JSON.stringify(list, null, 2));
+  return withFileLock(REQ_STUDENTS_FILE, async () => {
+    const list = await readReqStudents();
+    list.push(entry);
+    await atomicWriteFile(REQ_STUDENTS_FILE, JSON.stringify(list, null, 2));
+  });
 }
 
 async function removeReqStudentById(requestId) {
   const id = String(requestId || "").trim();
   if (!id) return { ok: false, error: "Request id is required." };
-  const list = await readReqStudents();
-  const next = list.filter((entry) => String(entry.id || "") !== id);
-  if (next.length === list.length) {
-    return { ok: false, error: "Request not found." };
-  }
-  await fs.mkdir(path.dirname(REQ_STUDENTS_FILE), { recursive: true });
-  await fs.writeFile(REQ_STUDENTS_FILE, JSON.stringify(next, null, 2));
-  return { ok: true };
+  return withFileLock(REQ_STUDENTS_FILE, async () => {
+    const list = await readReqStudents();
+    const next = list.filter((entry) => String(entry.id || "") !== id);
+    if (next.length === list.length) {
+      return { ok: false, error: "Request not found." };
+    }
+    await atomicWriteFile(REQ_STUDENTS_FILE, JSON.stringify(next, null, 2));
+    return { ok: true };
+  });
 }
 
 async function readUniversityPrograms() {
   try {
     const raw = await fs.readFile(UNIVERSITY_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, UNIVERSITY_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -520,14 +556,15 @@ async function readUniversityPrograms() {
 }
 
 async function writeUniversityPrograms(programs) {
-  await fs.mkdir(path.dirname(UNIVERSITY_FILE), { recursive: true });
-  await fs.writeFile(UNIVERSITY_FILE, JSON.stringify(programs, null, 2));
+  return withFileLock(UNIVERSITY_FILE, () =>
+    atomicWriteFile(UNIVERSITY_FILE, JSON.stringify(programs, null, 2))
+  );
 }
 
 async function readChats() {
   try {
     const raw = await fs.readFile(CHATS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, CHATS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -536,14 +573,15 @@ async function readChats() {
 }
 
 async function writeChats(chats) {
-  await fs.mkdir(path.dirname(CHATS_FILE), { recursive: true });
-  await fs.writeFile(CHATS_FILE, JSON.stringify(chats, null, 2));
+  return withFileLock(CHATS_FILE, () =>
+    atomicWriteFile(CHATS_FILE, JSON.stringify(chats, null, 2))
+  );
 }
 
 async function readActivities() {
   try {
     const raw = await fs.readFile(ACTIVITIES_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, ACTIVITIES_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -552,14 +590,15 @@ async function readActivities() {
 }
 
 async function writeActivities(activities) {
-  await fs.mkdir(path.dirname(ACTIVITIES_FILE), { recursive: true });
-  await fs.writeFile(ACTIVITIES_FILE, JSON.stringify(activities, null, 2));
+  return withFileLock(ACTIVITIES_FILE, () =>
+    atomicWriteFile(ACTIVITIES_FILE, JSON.stringify(activities, null, 2))
+  );
 }
 
 async function readBookings() {
   try {
     const raw = await fs.readFile(BOOKINGS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, BOOKINGS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -568,14 +607,15 @@ async function readBookings() {
 }
 
 async function writeBookings(bookings) {
-  await fs.mkdir(path.dirname(BOOKINGS_FILE), { recursive: true });
-  await fs.writeFile(BOOKINGS_FILE, JSON.stringify(bookings, null, 2));
+  return withFileLock(BOOKINGS_FILE, () =>
+    atomicWriteFile(BOOKINGS_FILE, JSON.stringify(bookings, null, 2))
+  );
 }
 
 async function readAppointments() {
   try {
     const raw = await fs.readFile(APPOINTMENTS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, APPOINTMENTS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -584,8 +624,9 @@ async function readAppointments() {
 }
 
 async function writeAppointments(appointments) {
-  await fs.mkdir(path.dirname(APPOINTMENTS_FILE), { recursive: true });
-  await fs.writeFile(APPOINTMENTS_FILE, JSON.stringify(appointments, null, 2));
+  return withFileLock(APPOINTMENTS_FILE, () =>
+    atomicWriteFile(APPOINTMENTS_FILE, JSON.stringify(appointments, null, 2))
+  );
 }
 
 function parseJsonArray(parsed, arrayKeys = ["data", "invoices", "items"]) {
@@ -601,7 +642,7 @@ function parseJsonArray(parsed, arrayKeys = ["data", "invoices", "items"]) {
 async function readInvoices() {
   try {
     const raw = await fs.readFile(INVOICES_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, INVOICES_FILE);
     return parseJsonArray(parsed);
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -610,8 +651,9 @@ async function readInvoices() {
 }
 
 async function writeInvoices(invoices) {
-  await fs.mkdir(path.dirname(INVOICES_FILE), { recursive: true });
-  await fs.writeFile(INVOICES_FILE, JSON.stringify(invoices, null, 2));
+  return withFileLock(INVOICES_FILE, () =>
+    atomicWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  );
 }
 
 const { pathToFileURL } = require("url");
@@ -642,39 +684,22 @@ async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent)
 async function readTasks() {
   try {
     const raw = await fs.readFile(TASKS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, TASKS_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
-    if (error instanceof SyntaxError) {
-      try {
-        const raw = await fs.readFile(TASKS_FILE, "utf8");
-        const start = raw.indexOf("[");
-        const end = raw.lastIndexOf("]");
-        if (start !== -1 && end !== -1 && end > start) {
-          const salvaged = JSON.parse(raw.slice(start, end + 1));
-          return Array.isArray(salvaged) ? salvaged : [];
-        }
-      } catch {
-        // Fall through to throw original parse error.
-      }
-    }
     throw error;
   }
 }
 
-let tasksMutationQueue = Promise.resolve();
-
 function withTasksMutationLock(operation) {
-  const run = tasksMutationQueue.then(() => operation(), () => operation());
-  tasksMutationQueue = run.catch(() => {});
-  return run;
+  return withFileLock(TASKS_FILE, operation);
 }
 
 async function readWhatsappIncoming() {
   try {
     const raw = await fs.readFile(WHATSAPP_INCOMING_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, WHATSAPP_INCOMING_FILE);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
@@ -683,18 +708,15 @@ async function readWhatsappIncoming() {
 }
 
 async function appendWhatsappIncoming(entry) {
-  const list = await readWhatsappIncoming();
-  list.push(entry);
-  await fs.mkdir(path.dirname(WHATSAPP_INCOMING_FILE), { recursive: true });
-  await fs.writeFile(WHATSAPP_INCOMING_FILE, JSON.stringify(list, null, 2));
+  return withFileLock(WHATSAPP_INCOMING_FILE, async () => {
+    const list = await readWhatsappIncoming();
+    list.push(entry);
+    await atomicWriteFile(WHATSAPP_INCOMING_FILE, JSON.stringify(list, null, 2));
+  });
 }
 
 async function writeTasks(tasks) {
-  await fs.mkdir(path.dirname(TASKS_FILE), { recursive: true });
-  const payload = `${JSON.stringify(tasks, null, 2)}\n`;
-  const tempFile = `${TASKS_FILE}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(tempFile, payload, "utf8");
-  await fs.rename(tempFile, TASKS_FILE);
+  return atomicWriteFile(TASKS_FILE, JSON.stringify(tasks, null, 2));
 }
 
 async function readSafe(reader, fallback) {
@@ -1027,7 +1049,7 @@ const ADMIN_AI_CHAT_MAX_CONTENT = 32000;
 async function readAdminChatsStore() {
   try {
     const raw = await fs.readFile(ADMIN_CHATS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, ADMIN_CHATS_FILE);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch (error) {
     if (error && error.code === "ENOENT") return {};
@@ -1036,8 +1058,9 @@ async function readAdminChatsStore() {
 }
 
 async function writeAdminChatsStore(store) {
-  await fs.mkdir(path.dirname(ADMIN_CHATS_FILE), { recursive: true });
-  await fs.writeFile(ADMIN_CHATS_FILE, JSON.stringify(store, null, 2));
+  return withFileLock(ADMIN_CHATS_FILE, () =>
+    atomicWriteFile(ADMIN_CHATS_FILE, JSON.stringify(store, null, 2))
+  );
 }
 
 async function isAuthorizedAdminChatEmail(emailRaw) {
@@ -1098,7 +1121,8 @@ function normalizeMeetingSettings(input) {
 async function readMeetingSettings() {
   try {
     const raw = await fs.readFile(MEETING_DATA_FILE, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = safeJsonParse(raw, MEETING_DATA_FILE);
+    if (!parsed) return { ...DEFAULT_MEETING_SETTINGS };
     return normalizeMeetingSettings(parsed);
   } catch (error) {
     if (error && error.code === "ENOENT") return { ...DEFAULT_MEETING_SETTINGS };
@@ -1107,8 +1131,9 @@ async function readMeetingSettings() {
 }
 
 async function writeMeetingSettings(settings) {
-  await fs.mkdir(path.dirname(MEETING_DATA_FILE), { recursive: true });
-  await fs.writeFile(MEETING_DATA_FILE, JSON.stringify(normalizeMeetingSettings(settings), null, 2));
+  return withFileLock(MEETING_DATA_FILE, () =>
+    atomicWriteFile(MEETING_DATA_FILE, JSON.stringify(normalizeMeetingSettings(settings), null, 2))
+  );
 }
 
 function sanitizeAccount(user) {

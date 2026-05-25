@@ -18,7 +18,7 @@ function studentHasInvoices(invoices, studentId) {
   return (invoices || []).some((inv) => String(inv.studentId || "").trim() === sid);
 }
 
-const StaffFinanceHub = ({ students = [], invoices = [], onOpenStudentLedger }) => {
+const StaffFinanceHub = ({ students = [], invoices = [], invoicesLoading = false, onOpenStudentLedger }) => {
   const rows = (students || [])
     .filter((s) => studentHasInvoices(invoices, s.id) && countOpenInvoicesForStudent(invoices, s.id) > 0)
     .slice()
@@ -31,7 +31,7 @@ const StaffFinanceHub = ({ students = [], invoices = [], onOpenStudentLedger }) 
       ] }),
       /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 max-w-2xl", children: "Students with open invoices (pending, overdue, or awaiting verification). Select a row to open their ledger and payment status." })
     ] }),
-    rows.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "No students with open invoices in your current scope." }) : /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden", children: /* @__PURE__ */ jsxs("div", { className: "overflow-x-auto", children: [
+    invoicesLoading ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "Loading…" }) : rows.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "No students with open invoices in your current scope." }) : /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden", children: /* @__PURE__ */ jsxs("div", { className: "overflow-x-auto", children: [
       /* @__PURE__ */ jsxs("table", { className: "min-w-full text-sm", children: [
         /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-slate-200 text-left text-xs font-bold uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Student" }),

@@ -123,6 +123,7 @@ function EvidencePreview({ url, name }) {
 /** Accountant reviews uploaded payment evidence and approves or rejects. */
 const AccountantInvoices = ({
   invoices = [],
+  invoicesLoading = false,
   students = [],
   paymentAccounts = [],
   onUpdateInvoice,
@@ -319,7 +320,15 @@ const AccountantInvoices = ({
             }),
             /* @__PURE__ */ jsx("tbody", {
               className: "divide-y divide-slate-100",
-              children: filteredRows.length === 0
+              children: invoicesLoading
+                ? /* @__PURE__ */ jsx("tr", {
+                    children: /* @__PURE__ */ jsx("td", {
+                      colSpan: TABLE_COLUMNS.length,
+                      className: "px-4 py-12 text-center text-sm text-slate-500",
+                      children: "Loading…"
+                    })
+                  })
+                : filteredRows.length === 0
                 ? /* @__PURE__ */ jsx("tr", {
                     children: /* @__PURE__ */ jsx("td", {
                       colSpan: TABLE_COLUMNS.length,

@@ -89,6 +89,7 @@ const AccountantDashboard = ({
   branchLabel = "",
   students = [],
   invoices = [],
+  invoicesLoading = false,
   onNavigate,
   onSelectStudent
 }) => {
@@ -190,7 +191,15 @@ const AccountantDashboard = ({
           }),
           /* @__PURE__ */ jsx("tbody", {
             className: "divide-y divide-slate-100",
-            children: rows.length === 0
+            children: invoicesLoading
+              ? /* @__PURE__ */ jsx("tr", {
+                  children: /* @__PURE__ */ jsx("td", {
+                    colSpan: 6,
+                    className: "px-4 py-10 text-center text-sm text-slate-500",
+                    children: "Loading…"
+                  })
+                })
+              : rows.length === 0
               ? /* @__PURE__ */ jsx("tr", {
                   children: /* @__PURE__ */ jsx("td", {
                     colSpan: 6,

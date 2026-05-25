@@ -94,6 +94,7 @@ function App({ initialView = "dashboard" }) {
   const [activities, setActivities] = useState([]);
   const [messages, setMessages] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
@@ -873,6 +874,7 @@ function App({ initialView = "dashboard" }) {
     let cancelled = false;
     const pollInvoices = async () => {
       const result = await getInvoices();
+      if (!cancelled) setInvoicesLoading(false);
       if (!result.ok || cancelled) return;
       const next = result.data || [];
       if (
@@ -2222,6 +2224,7 @@ function App({ initialView = "dashboard" }) {
       onSendStaffMessage: handleSendMessage,
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
       invoices,
+      invoicesLoading,
       paymentAccounts,
       onCreateInvoice: handleCreateInvoice,
       onUpdateInvoice: handleUpdateInvoice,
@@ -2253,7 +2256,7 @@ function App({ initialView = "dashboard" }) {
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees, onUploadStudentDocument: handleUploadStudentDocument });
-      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
+      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, invoicesLoading, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
       return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
     }
     const openEscalationStudent = (studentId) => {
@@ -2319,6 +2322,7 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: coordStudents,
           invoices: coordProfileProps.invoices,
+          invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       }
@@ -2347,6 +2351,7 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "invoices") {
         return /* @__PURE__ */ jsx(AccountantInvoices, {
           invoices: acctInvoices,
+          invoicesLoading,
           students: acctStudents,
           paymentAccounts,
           onUpdateInvoice: handleUpdateInvoice,
@@ -2362,6 +2367,7 @@ function App({ initialView = "dashboard" }) {
         branchLabel: managerDataScope.active ? managerDataScope.branchLabel : "",
         students: acctStudents,
         invoices: acctInvoices,
+        invoicesLoading,
         onNavigate: handleNavigate,
         onSelectStudent: handleSelectStudent
       });
@@ -2386,6 +2392,7 @@ function App({ initialView = "dashboard" }) {
         onNavigate: handleNavigate,
         onReassignDeskTask: handleReassignDeskTask,
         invoices: mgrProfileProps.invoices,
+        invoicesLoading,
         onUpdateInvoice: handleUpdateInvoice,
         onSelectStudent: handleSelectStudent,
         onNotify: addNotification,
@@ -2439,6 +2446,7 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: mgrStudents,
           invoices: mgrProfileProps.invoices,
+          invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       }
@@ -2460,6 +2468,7 @@ function App({ initialView = "dashboard" }) {
           students: adminViewStudents,
           employees: adminViewEmployees,
           invoices: adminBranchScoped ? managerScopedInvoices : invoices,
+          invoicesLoading,
           currentUser,
           onSelectStudent: handleSelectStudent,
           studentsScopeLabel: adminBranchScoped ? managerDataScope.branchLabel || null : null,
@@ -2516,6 +2525,7 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,
           invoices: adminViewProfileProps.invoices,
+          invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       case "tasks":

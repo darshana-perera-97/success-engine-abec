@@ -649,6 +649,7 @@ const StudentProfile = ({
   onUpdateTasks,
   activities = [],
   invoices = [],
+  invoicesLoading = false,
   paymentAccounts = [],
   onUpdateInvoice,
   onCreateInvoice,
@@ -1358,6 +1359,7 @@ const StudentProfile = ({
         return /* @__PURE__ */ jsx(FinanceModule, {
           student: localStudent,
           invoices,
+          invoicesLoading,
           paymentAccounts,
           userRole,
           onUpdateInvoice,
