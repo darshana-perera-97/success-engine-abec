@@ -1754,6 +1754,25 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
   return lines.join("\n");
 }
 
+function buildCounselorAssignmentWhatsappMessage({ studentName, counselorName, counselorEmail, counselorPhone, counselorBranch }) {
+  const lines = [
+    `${COMPANY_NAME} — New Counselor Assigned`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "A new counselor has been assigned to assist you with your application process.",
+    "",
+    "Counselor details:",
+    `Name: ${counselorName || ""}`,
+    counselorEmail ? `Email: ${counselorEmail}` : "",
+    counselorPhone ? `Phone: ${counselorPhone}` : "",
+    counselorBranch ? `Branch: ${counselorBranch}` : "",
+    "",
+    "Feel free to reach out to your counselor for any questions or support.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 const MEETING_REMINDER_MIN_MS = 14 * 60 * 1000;
 const MEETING_REMINDER_MAX_MS = 16 * 60 * 1000;
 const MEETING_REMINDER_POLL_MS = 60 * 1000;
@@ -5637,6 +5656,57 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      let counselorAssignmentWhatsapp = null;
+      const prevCounselorNorm = previousCounselor.toLowerCase();
+      const isNewCounselorAssignment =
+        nextCounselor &&
+        nextCounselor.toLowerCase() !== "unassigned" &&
+        (prevCounselorNorm !== nextCounselor.toLowerCase()) &&
+        (!previousCounselor || prevCounselorNorm === "unassigned" || previousCounselor !== nextCounselor);
+      if (isNewCounselorAssignment) {
+        try {
+          const users = await readUsers();
+          const newCounselorUser = users.find((u) => String(u.id || "") === nextCounselor);
+          if (newCounselorUser) {
+            const studentName = String(merged.name || "").trim();
+            const message = buildCounselorAssignmentWhatsappMessage({
+              studentName: studentName || "Student",
+              counselorName: String(newCounselorUser.username || "").trim(),
+              counselorEmail: normalizeEmail(newCounselorUser.email),
+              counselorPhone: String(newCounselorUser.phone || "").trim(),
+              counselorBranch: String(newCounselorUser.branch || "").trim(),
+            });
+            const result = await deliverCounselorMessageToStudentWhatsapp({
+              senderId: nextCounselor,
+              receiverId: studentId,
+              content: message,
+            });
+            counselorAssignmentWhatsapp = {
+              attempted: Boolean(result?.attempted),
+              status: String(result?.status || "skipped"),
+              reason: String(result?.reason || ""),
+            };
+            logEvent("student", "counselor assignment WhatsApp sent", {
+              studentId,
+              counselorId: nextCounselor,
+              status: result?.status || "unknown",
+            });
+          } else {
+            counselorAssignmentWhatsapp = {
+              attempted: false,
+              status: "skipped",
+              reason: "New counselor user account not found.",
+            };
+          }
+        } catch (error) {
+          counselorAssignmentWhatsapp = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send counselor assignment WhatsApp."),
+          };
+        }
+      }
+
       const transitionedToInquiry =
         !isApplicationStage(previous?.status) &&
         String(previous?.status || "").trim().toLowerCase() !== "inquiry" &&
@@ -5929,6 +5999,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         data: publicStudentRecord(req, merged),
         documentWhatsappNotifications,
+        counselorAssignmentWhatsapp,
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
