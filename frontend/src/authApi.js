@@ -680,6 +680,35 @@ export async function getStudentInvoices() {
   }
 }
 
+export async function getFilteredInvoices(status = "all", query = "") {
+  try {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/st-invoices/${encodeURIComponent(status)}${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load invoices." };
+    }
+    return { ok: true, data: data.data, counts: data.counts || null };
+  } catch {
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
+  }
+}
+
+export async function getInvoicesByStudentId(studentId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/st-invoices/student/${encodeURIComponent(studentId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load student invoices." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach invoice server. Is the backend running on port 3334?" };
+  }
+}
+
 export async function getTasks() {
   try {
     const res = await fetch(`${API_BASE}/api/tasks`);

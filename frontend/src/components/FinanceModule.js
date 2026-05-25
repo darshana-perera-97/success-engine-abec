@@ -1,11 +1,11 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DollarSign, CheckCircle, Clock, FileText, Plus, Upload, X, MessageCircle, Link2 } from "lucide-react";
 import { Button } from "./Button";
 import { formatLKR, formatRawLKR } from "../utils";
 import { isCounselorEquivalentAccountRole } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
-import { getPaymentAccounts, uploadInvoicePaymentProof } from "../authApi";
+import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId } from "../authApi";
 import { COMPANY_NAME } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const escapeInvoiceSvgText = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -91,7 +91,7 @@ const INVOICE_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ]);
 
-const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice }) => {
+const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice }) => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAmount, setNewAmount] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -106,6 +106,20 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
   const [createError, setCreateError] = useState("");
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const { rates: exchangeRates, updatedAt: rateUpdatedAt, live: ratesLive } = useExchangeRates();
+
+  const [studentInvoices, setStudentInvoices] = useState([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
+
+  const loadStudentInvoices = useCallback(async () => {
+    const sid = String(student?.id || "").trim();
+    if (!sid) { setStudentInvoices([]); setInvoicesLoading(false); return; }
+    setInvoicesLoading(true);
+    const result = await getInvoicesByStudentId(sid);
+    if (result.ok) setStudentInvoices(result.data);
+    setInvoicesLoading(false);
+  }, [student?.id]);
+
+  useEffect(() => { loadStudentInvoices(); }, [loadStudentInvoices]);
 
   useEffect(() => {
     setResolvedPaymentAccounts(Array.isArray(paymentAccounts) ? paymentAccounts : []);
@@ -135,7 +149,6 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
     if (!isCreateOpen || !onCreateInvoice) return;
     refreshPaymentAccounts();
   }, [isCreateOpen, onCreateInvoice]);
-  const studentInvoices = invoices.filter((inv) => inv.studentId === student.id).sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime());
   const totalPaid = studentInvoices.filter((i) => i.status === "Paid").reduce((acc, curr) => acc + curr.amount * (exchangeRates[curr.currency] || 1), 0);
   const totalPending = studentInvoices.filter((i) => i.status === "Pending" || i.status === "Overdue" || i.status === "Verifying").reduce((acc, curr) => acc + curr.amount * (exchangeRates[curr.currency] || 1), 0);
   const resetCreateForm = () => {
@@ -210,6 +223,7 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
     }
     setIsCreateOpen(false);
     resetCreateForm();
+    loadStudentInvoices();
   };
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -328,6 +342,7 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
     setIsPaymentModalOpen(false);
     setSelectedInvoice(null);
     setPaymentProofFile(null);
+    loadStudentInvoices();
   };
   const handleApprove = async (invoice) => {
     if (!onUpdateInvoice) return;
@@ -343,6 +358,7 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
         "success"
       );
       showInvoiceWhatsappResult(result, "approved");
+      loadStudentInvoices();
     }
     return result;
   };
@@ -373,6 +389,7 @@ const FinanceModule = ({ student, invoices, invoicesLoading = false, userRole, p
     showInvoiceWhatsappResult(result, "rejected");
     setRejectModal({ open: false, invoice: null, reason: "", error: "" });
     setIsDetailsModalOpen(false);
+    loadStudentInvoices();
   };
   const getStatusColor = (status) => {
     switch (status) {

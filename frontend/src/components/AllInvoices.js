@@ -1,8 +1,9 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useMemo, useState } from "react";
-import { DollarSign, ExternalLink, FileText } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DollarSign, ExternalLink } from "lucide-react";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
+import { getFilteredInvoices } from "../authApi";
 
 const TABS = [
   { id: "all", label: "All" },
@@ -23,14 +24,7 @@ const COLUMNS = [
   { key: "receipt", label: "", className: "min-w-[40px] text-right" }
 ];
 
-function matchesTab(inv, tabId) {
-  const status = String(inv.status || "").trim();
-  if (tabId === "paid") return status === "Paid";
-  if (tabId === "pending") return status === "Pending";
-  if (tabId === "verifying") return status === "Verifying";
-  if (tabId === "overdue") return status === "Overdue";
-  return true;
-}
+const SEARCH_DEBOUNCE_MS = 400;
 
 function statusBadgeClass(status) {
   switch (String(status || "").trim()) {
@@ -48,13 +42,17 @@ function statusBadgeClass(status) {
 }
 
 const AllInvoices = ({
-  invoices = [],
-  invoicesLoading = false,
   students = [],
   onSelectStudent
 }) => {
   const [activeTab, setActiveTab] = useState("all");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [counts, setCounts] = useState({ all: 0, paid: 0, pending: 0, verifying: 0, overdue: 0 });
+  const fetchIdRef = useRef(0);
+  const debounceRef = useRef(null);
 
   const studentById = useMemo(() => {
     const map = new Map();
@@ -65,37 +63,27 @@ const AllInvoices = ({
     return map;
   }, [students]);
 
-  const tabCounts = useMemo(() => {
-    const counts = { all: 0, paid: 0, pending: 0, verifying: 0, overdue: 0 };
-    (invoices || []).forEach((inv) => {
-      counts.all += 1;
-      if (matchesTab(inv, "paid")) counts.paid += 1;
-      if (matchesTab(inv, "pending")) counts.pending += 1;
-      if (matchesTab(inv, "verifying")) counts.verifying += 1;
-      if (matchesTab(inv, "overdue")) counts.overdue += 1;
-    });
-    return counts;
-  }, [invoices]);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
 
-  const filteredRows = useMemo(() => {
-    const q = String(query || "").trim().toLowerCase();
-    return (invoices || [])
-      .filter((inv) => matchesTab(inv, activeTab))
-      .filter((inv) => {
-        if (!q) return true;
-        const sid = String(inv.studentId || "").trim();
-        const student = studentById.get(sid);
-        const studentName = String(student?.name || "").toLowerCase();
-        const id = String(inv.id || "").toLowerCase();
-        const desc = String(inv.description || "").toLowerCase();
-        return studentName.includes(q) || id.includes(q) || desc.includes(q) || sid.toLowerCase().includes(q);
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.issueDate || b.createdAt || 0).getTime() -
-          new Date(a.issueDate || a.createdAt || 0).getTime()
-      );
-  }, [invoices, activeTab, query, studentById]);
+  const fetchData = useCallback(async (tab, q) => {
+    const id = ++fetchIdRef.current;
+    setLoading(true);
+    const result = await getFilteredInvoices(tab, q);
+    if (id !== fetchIdRef.current) return;
+    setLoading(false);
+    if (result.ok) {
+      setRows(result.data);
+      if (result.counts) setCounts(result.counts);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData(activeTab, debouncedQuery);
+  }, [activeTab, debouncedQuery, fetchData]);
 
   return jsxs("div", { className: "space-y-6 animate-in fade-in duration-500 pb-10", children: [
     jsxs("div", { className: "space-y-1", children: [
@@ -119,7 +107,7 @@ const AllInvoices = ({
             type: "button",
             onClick: () => setActiveTab(tab.id),
             className: `px-3 py-1 text-xs font-medium rounded-md transition-all ${activeTab === tab.id ? "bg-white text-indigo-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`,
-            children: [tab.label, " (", tabCounts[tab.id] ?? 0, ")"]
+            children: [tab.label, " (", counts[tab.id] ?? 0, ")"]
           },
           tab.id
         )
@@ -136,9 +124,9 @@ const AllInvoices = ({
       className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
       children: [
         jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
-          filteredRows.length,
+          rows.length,
           " invoice",
-          filteredRows.length === 1 ? "" : "s",
+          rows.length === 1 ? "" : "s",
           " · ",
           TABS.find((t) => t.id === activeTab)?.label || "All"
         ] }) }),
@@ -163,7 +151,7 @@ const AllInvoices = ({
             }),
             jsx("tbody", {
               className: "divide-y divide-slate-100",
-              children: invoicesLoading
+              children: loading
                 ? jsx("tr", {
                     children: jsx("td", {
                       colSpan: COLUMNS.length,
@@ -171,7 +159,7 @@ const AllInvoices = ({
                       children: "Loading…"
                     })
                   })
-                : filteredRows.length === 0
+                : rows.length === 0
                 ? jsx("tr", {
                     children: jsx("td", {
                       colSpan: COLUMNS.length,
@@ -179,7 +167,7 @@ const AllInvoices = ({
                       children: "No invoices found."
                     })
                   })
-                : filteredRows.map((inv) => {
+                : rows.map((inv) => {
                     const sid = String(inv.studentId || "").trim();
                     const student = studentById.get(sid);
                     const studentName = String(student?.name || "").trim() || sid || "—";

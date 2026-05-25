@@ -1,5 +1,5 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "./Button";
@@ -48,6 +48,7 @@ import {
   isVisaPilotUnlocked
 } from "../pipeline";
 import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
+import { getInvoicesByStudentId } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import {
   isCounselorEquivalentAccountRole,
@@ -648,8 +649,6 @@ const StudentProfile = ({
   onAddTasks,
   onUpdateTasks,
   activities = [],
-  invoices = [],
-  invoicesLoading = false,
   paymentAccounts = [],
   onUpdateInvoice,
   onCreateInvoice,
@@ -773,11 +772,20 @@ const StudentProfile = ({
     next.delete("createInvoice");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+  const [studentInvoices, setStudentInvoices] = useState([]);
+  const loadStudentInvoices = useCallback(async () => {
+    const sid = String(localStudent?.id || "").trim();
+    if (!sid) { setStudentInvoices([]); return; }
+    const result = await getInvoicesByStudentId(sid);
+    if (result.ok) setStudentInvoices(result.data);
+  }, [localStudent?.id]);
+  useEffect(() => { loadStudentInvoices(); }, [loadStudentInvoices]);
+
   const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
   const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
   const enrolledAdvanceBlockReasons = useMemo(
-    () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, invoices) : []),
-    [nextStep, localStudent, invoices]
+    () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, studentInvoices) : []),
+    [nextStep, localStudent, studentInvoices]
   );
   const profileStudentKey = useMemo(() => resolveProfileStudentKey(localStudent), [localStudent]);
   const remainingStudentTasks = useMemo(() => {
@@ -1064,7 +1072,7 @@ const StudentProfile = ({
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
       if (nextStep === "Enrolled") {
-        const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, invoices);
+        const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices);
         if (blockReasons.length > 0) {
           onNotify?.("Cannot move to Enrolled", blockReasons.join("\n\n"), "error");
           return;
@@ -1358,8 +1366,6 @@ const StudentProfile = ({
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, {
           student: localStudent,
-          invoices,
-          invoicesLoading,
           paymentAccounts,
           userRole,
           onUpdateInvoice,

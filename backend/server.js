@@ -4553,6 +4553,90 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (
+    req.method === "GET" &&
+    /^\/api\/st-invoices\/(all|paid|pending|verifying|overdue)\/?$/.test(url.pathname)
+  ) {
+    try {
+      const statusSegment = url.pathname.replace(/\/+$/, "").split("/").pop();
+      const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+      const invoices = await readInvoices();
+      const pub = invoices.map((inv) => publicInvoiceRecord(req, inv));
+
+      const matchStatus = (inv, tab) => {
+        const s = String(inv.status || "").trim();
+        if (tab === "paid") return s === "Paid";
+        if (tab === "pending") return s === "Pending";
+        if (tab === "verifying") return s === "Verifying";
+        if (tab === "overdue") return s === "Overdue";
+        return true;
+      };
+      const counts = { all: 0, paid: 0, pending: 0, verifying: 0, overdue: 0 };
+      for (const inv of pub) {
+        counts.all += 1;
+        if (matchStatus(inv, "paid")) counts.paid += 1;
+        if (matchStatus(inv, "pending")) counts.pending += 1;
+        if (matchStatus(inv, "verifying")) counts.verifying += 1;
+        if (matchStatus(inv, "overdue")) counts.overdue += 1;
+      }
+
+      let filtered = pub.filter((inv) => matchStatus(inv, statusSegment));
+      if (q) {
+        const studemts = await readStudemts();
+        const studentMap = new Map();
+        for (const s of studemts) {
+          const id = String(s.id || "").trim();
+          if (id) studentMap.set(id, s);
+        }
+        filtered = filtered.filter((inv) => {
+          const sid = String(inv.studentId || "").trim();
+          const student = studentMap.get(sid);
+          const name = String(student?.name || "").toLowerCase();
+          const id = String(inv.id || "").toLowerCase();
+          const desc = String(inv.description || "").toLowerCase();
+          return name.includes(q) || id.includes(q) || desc.includes(q) || sid.toLowerCase().includes(q);
+        });
+      }
+      filtered.sort(
+        (a, b) =>
+          new Date(b.issueDate || b.createdAt || 0).getTime() -
+          new Date(a.issueDate || a.createdAt || 0).getTime()
+      );
+      sendJson(res, 200, { ok: true, data: filtered, counts });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load invoices." });
+    }
+    return;
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/api\/st-invoices\/student\/[^/]+\/?$/.test(url.pathname)
+  ) {
+    try {
+      const studentId = decodeURIComponent(
+        url.pathname.replace(/\/+$/, "").split("/").pop()
+      ).trim();
+      if (!studentId) {
+        sendJson(res, 400, { ok: false, error: "Student ID is required." });
+        return;
+      }
+      const invoices = await readInvoices();
+      const filtered = invoices
+        .filter((inv) => String(inv.studentId || "").trim() === studentId)
+        .sort(
+          (a, b) =>
+            new Date(b.issueDate || b.createdAt || 0).getTime() -
+            new Date(a.issueDate || a.createdAt || 0).getTime()
+        )
+        .map((inv) => publicInvoiceRecord(req, inv));
+      sendJson(res, 200, { ok: true, data: filtered });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load student invoices." });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/tasks") {
     try {
       const tasks = await readTasks();

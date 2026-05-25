@@ -2233,8 +2233,6 @@ function App({ initialView = "dashboard" }) {
       onNotify: addNotification,
       onSendStaffMessage: handleSendMessage,
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
-      invoices,
-      invoicesLoading,
       paymentAccounts,
       onCreateInvoice: handleCreateInvoice,
       onUpdateInvoice: handleUpdateInvoice,
@@ -2266,7 +2264,7 @@ function App({ initialView = "dashboard" }) {
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees, onUploadStudentDocument: handleUploadStudentDocument });
-      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, invoices, invoicesLoading, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
+      if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
       return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument });
     }
     const openEscalationStudent = (studentId) => {
@@ -2278,7 +2276,7 @@ function App({ initialView = "dashboard" }) {
       const coordTasks = currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
       const coordProfileProps =
         currentRole === "Country Coordinator" && countryCoordinatorScope.active
-          ? { ...studentProfileProps, tasks: coordTasks, invoices: countryCoordinatorScopedInvoices }
+          ? { ...studentProfileProps, tasks: coordTasks }
           : studentProfileProps;
       const openStudentContextForTask = (task) => {
         const sid = String(task?.student_id || task?.studentId || "").trim();
@@ -2330,8 +2328,6 @@ function App({ initialView = "dashboard" }) {
       }
       if (currentView === "invoices") {
         return /* @__PURE__ */ jsx(AllInvoices, {
-          invoices: coordProfileProps.invoices,
-          invoicesLoading,
           students: coordStudents,
           onSelectStudent: handleSelectStudent
         });
@@ -2339,7 +2335,7 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: coordStudents,
-          invoices: coordProfileProps.invoices,
+          invoices: currentRole === "Country Coordinator" && countryCoordinatorScope.active ? countryCoordinatorScopedInvoices : invoices,
           invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
@@ -2349,9 +2345,7 @@ function App({ initialView = "dashboard" }) {
     if (currentRole === "Accountant") {
       const acctStudents = managerDataScope.active ? managerScopedStudents : students;
       const acctInvoices = managerDataScope.active ? managerScopedInvoices : invoices;
-      const acctProfileProps = managerDataScope.active
-        ? { ...studentProfileProps, invoices: acctInvoices }
-        : studentProfileProps;
+      const acctProfileProps = studentProfileProps;
       const acctListProps = {
         onSelectStudent: handleSelectStudent,
         students: acctStudents,
@@ -2397,7 +2391,7 @@ function App({ initialView = "dashboard" }) {
       const mgrActivities = currentRole === "Manager" && managerDataScope.active ? managerScopedActivities : activities;
       const mgrProfileProps =
         currentRole === "Manager" && managerDataScope.active
-          ? { ...studentProfileProps, tasks: mgrTasks, invoices: managerScopedInvoices }
+          ? { ...studentProfileProps, tasks: mgrTasks }
           : studentProfileProps;
       const mgrPipelineEscalations =
         currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
@@ -2409,7 +2403,7 @@ function App({ initialView = "dashboard" }) {
         currentUser,
         onNavigate: handleNavigate,
         onReassignDeskTask: handleReassignDeskTask,
-        invoices: mgrProfileProps.invoices,
+        invoices: currentRole === "Manager" && managerDataScope.active ? managerScopedInvoices : invoices,
         invoicesLoading,
         onUpdateInvoice: handleUpdateInvoice,
         onSelectStudent: handleSelectStudent,
@@ -2426,7 +2420,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null,
           students: mgrStudents,
           allStudents: students,
-          invoices: mgrProfileProps.invoices,
+          invoices: currentRole === "Manager" && managerDataScope.active ? managerScopedInvoices : invoices,
           employees: mgrEmployees,
           branchScopedStudents: managerDataScope.active
         });
@@ -2462,8 +2456,6 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
       if (currentView === "invoices") {
         return /* @__PURE__ */ jsx(AllInvoices, {
-          invoices: mgrProfileProps.invoices,
-          invoicesLoading,
           students: mgrStudents,
           onSelectStudent: handleSelectStudent
         });
@@ -2471,7 +2463,7 @@ function App({ initialView = "dashboard" }) {
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: mgrStudents,
-          invoices: mgrProfileProps.invoices,
+          invoices: currentRole === "Manager" && managerDataScope.active ? managerScopedInvoices : invoices,
           invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
@@ -2484,7 +2476,7 @@ function App({ initialView = "dashboard" }) {
     const adminViewEmployees = adminBranchScoped ? managerScopedEmployees : employees;
     const adminViewActivities = adminBranchScoped ? managerScopedActivities : activities;
     const adminViewProfileProps = adminBranchScoped
-      ? { ...studentProfileProps, tasks: adminViewTasks, invoices: managerScopedInvoices }
+      ? { ...studentProfileProps, tasks: adminViewTasks }
       : studentProfileProps;
     switch (currentView) {
       case "dashboard":
@@ -2549,15 +2541,13 @@ function App({ initialView = "dashboard" }) {
         return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "invoices":
         return /* @__PURE__ */ jsx(AllInvoices, {
-          invoices: adminBranchScoped ? managerScopedInvoices : invoices,
-          invoicesLoading,
           students: adminViewStudents,
           onSelectStudent: handleSelectStudent
         });
       case "finance":
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,
-          invoices: adminViewProfileProps.invoices,
+          invoices: adminBranchScoped ? managerScopedInvoices : invoices,
           invoicesLoading,
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
