@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -876,10 +876,15 @@ function App({ initialView = "dashboard" }) {
   useEffect(() => {
     let cancelled = false;
     const pollInvoices = async () => {
-      const result = await getInvoices();
+      const [result, stResult] = await Promise.all([getInvoices(), getStudentInvoices()]);
       setInvoicesLoading(false);
-      if (!result.ok) return;
-      const next = result.data || [];
+      const primary = result.ok ? result.data || [] : [];
+      const secondary = stResult.ok ? stResult.data || [] : [];
+      const merged = new Map();
+      for (const inv of primary) merged.set(String(inv.id || ""), inv);
+      for (const inv of secondary) { if (!merged.has(String(inv.id || ""))) merged.set(String(inv.id || ""), inv); }
+      const next = Array.from(merged.values());
+      if (!result.ok && !stResult.ok) return;
       setInvoices(next);
       if (cancelled) return;
       if (
