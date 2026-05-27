@@ -1,18 +1,19 @@
 import * as abec from "./profile/abec/companyConfig";
 import * as beacanadian from "./profile/beacanadian/companyConfig";
 import * as ds from "./profile/ds/companyConfig";
+import * as hsenid from "./profile/hsenid/companyConfig";
 import * as nexgenai from "./profile/nexgenai/companyConfig";
 
 // Change this single value to switch the whole app between company profiles.
-// Supported values: "abec" | "beacanadian" | "ds" | "nexgenai"
-export const ACTIVE_PROFILE = "nexgenai";
+// Supported values: "abec" | "beacanadian" | "ds" | "hsenid" | "nexgenai"
+export const ACTIVE_PROFILE = "hsenid";
 
-const profiles = { abec, beacanadian, ds, nexgenai };
+const profiles = { abec, beacanadian, ds, hsenid, nexgenai };
 const config = profiles[ACTIVE_PROFILE];
 
 if (!config) {
   throw new Error(
-    `Unknown ACTIVE_PROFILE: "${ACTIVE_PROFILE}". Use "abec", "beacanadian", "ds", or "nexgenai".`
+    `Unknown ACTIVE_PROFILE: "${ACTIVE_PROFILE}". Use "abec", "beacanadian", "ds", "hsenid", or "nexgenai".`
   );
 }
 
