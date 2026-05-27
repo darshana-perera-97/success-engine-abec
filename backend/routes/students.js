@@ -1,6 +1,4 @@
 const crypto = require("crypto");
-const path = require("path");
-const { pathToFileURL } = require("url");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { logEvent } = require("../lib/logger");
 const {
@@ -43,8 +41,9 @@ const {
   buildDocumentDecisionWhatsappMessage,
   buildUniversityOfferWhatsappMessage,
   isSupportedWhatsappMediaMime,
-  collectDocumentVerificationTransitions,
+  normalizeSriLankaStudentPhone,
 } = require("../services/whatsapp");
+const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
   storeImageDataUrl,
   storeStudentCvDataUrl,
@@ -52,31 +51,21 @@ const {
   safeUnlinkStoredPermissionDoc,
 } = require("../services/uploads");
 const {
-  normalizeSriLankaStudentPhone,
   isApplicationStage,
   isDocumentationStage,
   isInquiryStage,
   isRegistrationStage,
 } = require("../services/pipeline");
 
-let enrolledTransitionModulesPromise = null;
-async function loadEnrolledTransitionModules() {
-  if (!enrolledTransitionModulesPromise) {
-    enrolledTransitionModulesPromise = Promise.all([
-      import(pathToFileURL(path.join(__dirname, "..", "..", "frontend", "src", "pipeline.js")).href),
-      import(pathToFileURL(path.join(__dirname, "..", "..", "frontend", "src", "studentEnrolledGate.js")).href),
-    ]);
-  }
-  return enrolledTransitionModulesPromise;
-}
+const { readCountryDocConfig, getEnrolledAdvanceBlockReasons } = require("../lib/docMappingResolve");
 
 async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent) {
-  const [{ normalizePipelineStatus }, gate] = await loadEnrolledTransitionModules();
   const prevStage = normalizePipelineStatus(previousStudent?.status);
   const nextStage = normalizePipelineStatus(mergedStudent?.status);
   if (nextStage !== "Enrolled" || prevStage === "Enrolled") return null;
   const invoices = await readInvoices();
-  const reasons = gate.getEnrolledAdvanceBlockReasons(mergedStudent, invoices);
+  const countryConfig = await readCountryDocConfig(mergedStudent?.country);
+  const reasons = getEnrolledAdvanceBlockReasons(mergedStudent, invoices, countryConfig);
   if (!reasons.length) return null;
   return reasons.join(" ");
 }
@@ -710,8 +699,13 @@ async function handle(req, res, url) {
         documentWhatsappNotifications,
         counselorAssignmentWhatsapp,
       });
-    } catch {
-      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    } catch (error) {
+      console.error("Student PUT failed:", error);
+      const message =
+        error && typeof error.message === "string" && error.message.trim()
+          ? error.message.trim()
+          : "Invalid request body.";
+      sendJson(res, 400, { ok: false, error: message });
     }
     return true;
   }

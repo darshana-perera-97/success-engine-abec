@@ -23,7 +23,8 @@ import {
   Contact,
   ClipboardList,
   AlertTriangle,
-  Plug
+  Plug,
+  MapPin
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
@@ -280,7 +281,8 @@ const Layout = ({
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge },
-          { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) }
+          { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
+          { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) }
         ];
     }
   };
@@ -359,9 +361,9 @@ const Layout = ({
         )
       ] })
     ] }),
-    /* @__PURE__ */ jsxs("aside", { className: "hidden lg:flex w-64 border-r border-gray-200 bg-white flex-col justify-between transition-all duration-300 z-30", children: [
-      /* @__PURE__ */ jsxs("div", { children: [
-        /* @__PURE__ */ jsx("div", { className: "h-16 flex items-center px-6 border-b border-gray-100", children: /* @__PURE__ */ jsx("div", { className: "w-[80%] flex items-center", children: /* @__PURE__ */ jsx(
+    /* @__PURE__ */ jsxs("aside", { className: "hidden lg:flex w-64 border-r border-gray-200 bg-white flex-col justify-between transition-all duration-300 z-30 h-screen", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex-1 min-h-0 flex flex-col", children: [
+        /* @__PURE__ */ jsx("div", { className: "h-16 flex items-center px-6 border-b border-gray-100 flex-shrink-0", children: /* @__PURE__ */ jsx("div", { className: "w-[80%] flex items-center", children: /* @__PURE__ */ jsx(
           "img",
           {
             src: "/MainLogo.png",
@@ -370,22 +372,24 @@ const Layout = ({
             referrerPolicy: "no-referrer"
           }
         ) }) }),
-        /* @__PURE__ */ jsxs("nav", { className: "mt-6 flex flex-col gap-1 px-4", children: [
-          /* @__PURE__ */ jsx("div", { className: "px-2 pb-4 mb-2 border-b border-gray-50", children: /* @__PURE__ */ jsxs("p", { className: "text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2", children: [
+        /* @__PURE__ */ jsxs("div", { className: "mt-6 flex flex-col px-4 flex-1 min-h-0", children: [
+          /* @__PURE__ */ jsx("div", { className: "px-2 pb-4 mb-2 border-b border-gray-50 flex-shrink-0", children: /* @__PURE__ */ jsxs("p", { className: "text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2", children: [
             currentRole,
             " Interface"
           ] }) }),
-          navItems.map((item) => /* @__PURE__ */ jsx(
-            NavItem,
-            {
-              icon: item.icon,
-              label: item.label,
-              isActive: activeView === item.id || activeView === "student-detail" && item.id === "students",
-              onClick: () => onNavigate(item.id),
-              badge: item.badge
-            },
-            item.id
-          ))
+          /* @__PURE__ */ jsxs("nav", { className: "flex-1 min-h-0 overflow-y-auto flex flex-col gap-1", children: [
+            navItems.map((item) => /* @__PURE__ */ jsx(
+              NavItem,
+              {
+                icon: item.icon,
+                label: item.label,
+                isActive: activeView === item.id || activeView === "student-detail" && item.id === "students",
+                onClick: () => onNavigate(item.id),
+                badge: item.badge
+              },
+              item.id
+            ))
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-t border-gray-100", children: [

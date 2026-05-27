@@ -2,8 +2,14 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useMemo, useState } from "react";
 import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass } from "lucide-react";
 import { Button } from "./Button";
-import { VISA_WORKFLOWS } from "../visaWorkflows";
-import { isVisaPilotUnlocked, normalizePipelineStatus } from "../pipeline";
+import {
+  isVisaPilotUnlockedForConfig,
+  normalizeVisaWorkflowItem,
+  normalizeVisaWorkflowStages,
+  resolveStudentStageId,
+} from "../docMappingConfig";
+import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
+import { normalizePipelineStatus } from "../pipeline";
 import { buildVisaPilotDocType } from "../studentEnrolledGate";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 /** Short label for long filenames (matches Paperless Pipeline / DocumentManager). */
@@ -21,10 +27,29 @@ function isDeletableVisaDocumentStatus(status) {
   return status === "Rejected" || status === "Verified";
 }
 
-const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument, onDeleteDocument }) => {
-  const workflow = VISA_WORKFLOWS[student.country] || VISA_WORKFLOWS.Default;
-  const visaPilotUnlocked = isVisaPilotUnlocked(student.status);
-  const isDocumentationStage = normalizePipelineStatus(student.status) === "Documentation";
+function VisaRequirementBadge({ required }) {
+  const isRequired = required !== false;
+  return jsx("span", {
+    className: `inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${
+      isRequired
+        ? "bg-rose-50 text-rose-700 border-rose-200"
+        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+    }`,
+    children: isRequired ? "Required" : "Optional",
+  });
+}
+
+const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument, onDeleteDocument, countryDocConfig: countryDocConfigProp = null }) => {
+  const { config: loadedCountryConfig } = useCountryDocConfig(countryDocConfigProp ? "" : student?.country);
+  const countryDocConfig = countryDocConfigProp || loadedCountryConfig;
+  const workflow = useMemo(
+    () => normalizeVisaWorkflowStages(countryDocConfig?.visaWorkflow || []),
+    [countryDocConfig]
+  );
+  const visaPilotUnlocked = isVisaPilotUnlockedForConfig(student.status, countryDocConfig);
+  const isDocumentationStage =
+    resolveStudentStageId(student.status, countryDocConfig?.stages) === "documentation" ||
+    normalizePipelineStatus(student.status) === "Documentation";
   const [visaState, setVisaState] = useState(student.visa || {});
   const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0 });
   const [isUploading, setIsUploading] = useState(false);
@@ -37,7 +62,11 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   let currentStageIndex = 0;
   for (let i = 0; i < workflow.length; i++) {
     const stage = workflow[i];
-    const allCompleted = stage.items.every((item) => visaState[item] === "Completed");
+    const allCompleted = stage.items.every((item) => {
+      const { name, required } = normalizeVisaWorkflowItem(item);
+      if (!required) return true;
+      return visaState[name] === "Completed";
+    });
     if (allCompleted) {
       currentStageIndex = i + 1;
     } else {
@@ -122,13 +151,19 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
     setUploadModal({ isOpen: false, item: "", stageIndex: 0 });
   };
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8", children: [
-    /* @__PURE__ */ jsx("div", { className: "flex items-center justify-between", children: /* @__PURE__ */ jsxs("div", { children: [
-      /* @__PURE__ */ jsx("h2", { className: "text-xl font-bold text-slate-800", children: "Visa Pilot Engine" }),
-      /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-500 mt-1", children: [
-        "Country-specific state machine for ",
-        student.country
+    /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3", children: [
+      /* @__PURE__ */ jsxs("div", { children: [
+        /* @__PURE__ */ jsx("h2", { className: "text-xl font-bold text-slate-800", children: "Visa Pilot Engine" }),
+        /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-500 mt-1", children: [
+          "Country-specific state machine for ",
+          student.country
+        ] })
+      ] }),
+      workflow.length > 0 && /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 text-[10px]", children: [
+        /* @__PURE__ */ jsx(VisaRequirementBadge, { required: true }),
+        /* @__PURE__ */ jsx(VisaRequirementBadge, { required: false })
       ] })
-    ] }) }),
+    ] }),
     isDocumentationStage && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900", children: [
       /* @__PURE__ */ jsx("p", { className: "font-semibold", children: "Documentation stage — submit Visa Pilot documents now" }),
       /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-800 mt-1", children: "Upload each required visa document before advancing to the Visa stage." })
@@ -136,7 +171,11 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
     /* @__PURE__ */ jsx("div", { className: "flex flex-col gap-6", children: workflow.map((stage, index) => {
       const isLocked = index > currentStageIndex;
       const isActive = index === currentStageIndex;
-      const isCompleted = index < currentStageIndex || index === workflow.length - 1 && stage.items.every((item) => visaState[item] === "Completed");
+      const isCompleted = index < currentStageIndex || (index === workflow.length - 1 && stage.items.every((rawItem) => {
+        const { name, required } = normalizeVisaWorkflowItem(rawItem);
+        if (!required) return true;
+        return visaState[name] === "Completed";
+      }));
       return /* @__PURE__ */ jsxs(
         "div",
         {
@@ -155,7 +194,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
               /* @__PURE__ */ jsx("h3", { className: `font-bold ${isLocked ? "text-slate-500" : "text-slate-800"}`, children: stage.name }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: stage.description })
             ] }) }),
-            /* @__PURE__ */ jsx("div", { className: "space-y-3 mt-6", children: stage.items.map((item) => {
+            /* @__PURE__ */ jsx("div", { className: "space-y-3 mt-6", children: stage.items.map((rawItem) => {
+              const { name: item, required: itemRequired } = normalizeVisaWorkflowItem(rawItem);
               const itemStatus = visaState[item] || "Pending";
               const itemCompleted = itemStatus === "Completed";
               const itemDocuments = getItemDocuments(item);
@@ -169,11 +209,14 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                       /* @__PURE__ */ jsxs(
                         "div",
                         {
-                          className: `flex items-center gap-3 ${!isLocked ? "cursor-pointer" : ""}`,
+                          className: `flex items-center gap-3 min-w-0 ${!isLocked ? "cursor-pointer" : ""}`,
                           onClick: () => !isLocked && handleToggleItem(item),
                           children: [
                             /* @__PURE__ */ jsx("div", { className: `flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center ${itemCompleted ? "bg-emerald-500 border-emerald-600" : "border-slate-300 bg-slate-50"}`, children: itemCompleted && /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "text-white" }) }),
-                            /* @__PURE__ */ jsx("span", { className: `text-sm font-medium ${itemCompleted ? "text-slate-700 line-through opacity-70" : "text-slate-700"}`, children: item })
+                            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+                              /* @__PURE__ */ jsx("span", { className: `text-sm font-medium ${itemCompleted ? "text-slate-700 line-through opacity-70" : "text-slate-700"}`, children: item }),
+                              /* @__PURE__ */ jsx(VisaRequirementBadge, { required: itemRequired })
+                            ] })
                           ]
                         }
                       ),
@@ -216,11 +259,11 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                         ] })
                       ] }, doc.id || `${doc.name}-${doc.uploadedAt}`);
                     }),
-                    !hasVerifiedVisaDoc && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg ${itemDocuments.length > 0 ? "bg-amber-50/80 border-amber-200" : "bg-slate-50 border-gray-200"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-                      /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${itemDocuments.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : "bg-white border-gray-200 text-slate-400"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
+                    !hasVerifiedVisaDoc && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg ${itemDocuments.length > 0 ? "bg-amber-50/80 border-amber-200" : itemRequired ? "bg-slate-50 border-gray-200" : "bg-emerald-50/40 border-emerald-100"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+                      /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${itemDocuments.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : itemRequired ? "bg-white border-gray-200 text-slate-400" : "bg-emerald-50 border-emerald-200 text-emerald-500"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
                       /* @__PURE__ */ jsxs("div", { children: [
-                        /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${itemDocuments.length > 0 ? "text-amber-900" : "text-slate-500"}`, children: itemDocuments.length > 0 ? "Awaiting approved document" : "Pending upload" }),
-                        /* @__PURE__ */ jsx("p", { className: `text-xs ${itemDocuments.length > 0 ? "text-amber-800/80" : "text-slate-400"}`, children: itemDocuments.length > 0 ? "Upload a new file or approve a pending submission for this visa item." : "No file uploaded yet for this requirement." })
+                        /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${itemDocuments.length > 0 ? "text-amber-900" : itemRequired ? "text-slate-500" : "text-emerald-800"}`, children: itemDocuments.length > 0 ? "Awaiting approved document" : itemRequired ? "Pending upload" : "Optional — not uploaded" }),
+                        /* @__PURE__ */ jsx("p", { className: `text-xs ${itemDocuments.length > 0 ? "text-amber-800/80" : itemRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: itemDocuments.length > 0 ? "Upload a new file or approve a pending submission for this visa item." : itemRequired ? "No file uploaded yet for this requirement." : "Upload only if needed for this student." })
                       ] })
                     ] }) })
                     ] })

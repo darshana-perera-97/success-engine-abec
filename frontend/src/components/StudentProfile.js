@@ -20,6 +20,7 @@ import {
   Clock,
   Calendar,
   Download,
+  Archive,
   Eye,
   Pencil,
   Trash2,
@@ -29,7 +30,6 @@ import { DocumentManager } from "./DocumentManager";
 import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
 import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
 import { BUDGET_CURRENCIES } from "./InquiryIntakeForm";
-import { COUNTRY_CHECKLISTS } from "../constants";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
 import { VisaPilot } from "./VisaPilot";
@@ -44,9 +44,19 @@ import {
   getOpenSlaViolationsForCurrentStage,
   hasOpenSlaViolationsForCurrentStage,
   reconcileStudentSlaViolationsWithDocuments,
-  getRequiredCountryChecklistStagesBeforeAdvance,
-  isVisaPilotUnlocked
 } from "../pipeline";
+import {
+  getNextPipelineStepLabel,
+  getPipelineStagesForConfig,
+  getRequiredDocTypesBeforeAdvance,
+  getStudentPipelineStepIndex,
+  isVisaPilotUnlockedForConfig,
+  resolveStudentStageId,
+  stageLabelsEquivalent,
+  studentHasUploadedDocType,
+} from "../docMappingConfig";
+import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
+import { exportStudentDocumentsZip } from "../utils/exportStudentDocumentsZip";
 import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
@@ -689,7 +699,15 @@ const StudentProfile = ({
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
   useEffect(() => {
-    setLocalStudent(student);
+    setLocalStudent((prev) => {
+      if (!student) return student;
+      if (String(prev?.id || "") !== String(student?.id || "")) return student;
+      const prevAt = new Date(prev?.updatedAt || prev?.stageEnteredAt || 0).getTime();
+      const nextAt = new Date(student?.updatedAt || student?.stageEnteredAt || 0).getTime();
+      if (!Number.isNaN(nextAt) && (Number.isNaN(prevAt) || nextAt >= prevAt)) return student;
+      if (String(prev?.status || "") !== String(student?.status || "")) return student;
+      return prev;
+    });
   }, [student]);
   const advanceDialogStudentKeyRef = useRef("");
   useEffect(() => {
@@ -716,6 +734,7 @@ const StudentProfile = ({
         ? "bg-orange-50 text-orange-900 border-orange-200"
         : "bg-green-50 text-green-800 border-green-200";
   const [inquiryTarget, setInquiryTarget] = useState(null);
+  const [exportingDocuments, setExportingDocuments] = useState(false);
   const inquiryNowMs = useMemo(() => Date.now(), [stageSlaClock]);
   useEffect(() => {
     setInquiryTarget(null);
@@ -737,12 +756,48 @@ const StudentProfile = ({
       children: legacyLine
     });
   }, [localStudent]);
+  const { config: countryDocConfig } = useCountryDocConfig(localStudent?.country);
+  const handleExportDocuments = useCallback(async () => {
+    if (exportingDocuments) return;
+    setExportingDocuments(true);
+    try {
+      const result = await exportStudentDocumentsZip(localStudent, countryDocConfig);
+      if (!result.ok) {
+        onNotify?.("Export failed", result.error || "Could not export documents.", "error");
+        return;
+      }
+      const skipped = result.skippedCount ? ` (${result.skippedCount} skipped)` : "";
+      const docPart =
+        result.exportedCount > 0
+          ? `${result.exportedCount} document${result.exportedCount === 1 ? "" : "s"}`
+          : "no documents";
+      const tone = result.partial ? "warning" : "success";
+      const partialNote = result.warning ? ` ${result.warning}` : "";
+      onNotify?.(
+        result.partial ? "Export partial" : "Export ready",
+        `Downloaded zip with ${docPart}, student-data.csv, and student-data.json${skipped}.${partialNote}`,
+        tone
+      );
+    } catch {
+      onNotify?.("Export failed", "Something went wrong while building the zip file.", "error");
+    } finally {
+      setExportingDocuments(false);
+    }
+  }, [countryDocConfig, exportingDocuments, localStudent, onNotify]);
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
+  const countryStages = useMemo(
+    () => getPipelineStagesForConfig(countryDocConfig),
+    [countryDocConfig]
+  );
+  const pipelineSteps = useMemo(
+    () => countryStages.map((s) => s.label),
+    [countryStages]
+  );
   const currentStageOpenSlaViolations = useMemo(
     () => getOpenSlaViolationsForCurrentStage(localStudent),
     [localStudent]
   );
-  const visaPilotUnlocked = isVisaPilotUnlocked(effectiveStatus);
+  const visaPilotUnlocked = isVisaPilotUnlockedForConfig(localStudent.status, countryDocConfig);
   useEffect(() => {
     if (!visaPilotUnlocked && activeTab === "visa-pilot") {
       setActiveTab("pipeline");
@@ -781,12 +836,26 @@ const StudentProfile = ({
   }, [localStudent?.id]);
   useEffect(() => { loadStudentInvoices(); }, [loadStudentInvoices]);
 
-  const currentStepIndex = Math.max(0, PIPELINE_STEPS.indexOf(effectiveStatus));
-  const nextStep = PIPELINE_STEPS[currentStepIndex + 1];
-  const enrolledAdvanceBlockReasons = useMemo(
-    () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, studentInvoices) : []),
-    [nextStep, localStudent, studentInvoices]
+  const currentStepIndex = useMemo(() => {
+    const idx = getStudentPipelineStepIndex(localStudent.status, countryStages);
+    return idx >= 0 ? idx : 0;
+  }, [localStudent.status, countryStages]);
+  const nextStep = useMemo(
+    () => getNextPipelineStepLabel(localStudent.status, countryDocConfig),
+    [localStudent.status, countryDocConfig]
   );
+  const enrolledAdvanceBlockReasons = useMemo(
+    () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, studentInvoices, countryDocConfig) : []),
+    [nextStep, localStudent, studentInvoices, countryDocConfig]
+  );
+  const pipelineGridSmClass =
+    pipelineSteps.length <= 4
+      ? "sm:grid-cols-4"
+      : pipelineSteps.length <= 5
+        ? "sm:grid-cols-5"
+        : pipelineSteps.length <= 6
+          ? "sm:grid-cols-6"
+          : "sm:grid-cols-7";
   const profileStudentKey = useMemo(() => resolveProfileStudentKey(localStudent), [localStudent]);
   const remainingStudentTasks = useMemo(() => {
     if (!profileStudentKey) return [];
@@ -1078,30 +1147,13 @@ const StudentProfile = ({
           return;
         }
       }
-      const countryChecklist = COUNTRY_CHECKLISTS[localStudent.country] || COUNTRY_CHECKLISTS["Default"];
       const studentDocs = localStudent.documents || [];
-      const checkStageRequirements = (stageName) => {
-        const stageReqs = countryChecklist.find((c) => c.stage === stageName);
-        if (!stageReqs) return [];
-        const missingDocs = stageReqs.items.filter((item) => {
-          const hasUploaded = studentDocs.some((d) => {
-            const dt = String(d?.type || "");
-            const req = String(item.docType || "");
-            const typeMatch = dt === req || dt.includes(req) || req.includes(dt);
-            return typeMatch && String(d?.status || "").trim() !== "Rejected";
-          });
-          return !hasUploaded;
-        });
-        return missingDocs.map((m) => m.docType);
-      };
-      let allMissingItems = [];
-      const st = normalizePipelineStatus(localStudent.status);
-      const requiredChecklistStages = getRequiredCountryChecklistStagesBeforeAdvance(st);
-      for (const checklistStage of requiredChecklistStages) {
-        allMissingItems.push(...checkStageRequirements(checklistStage));
-      }
-      if (st === "Documentation") {
-        for (const { docType } of collectMissingVisaPilotUploads(localStudent)) {
+      const stageId = resolveStudentStageId(localStudent.status, countryDocConfig?.stages);
+      let allMissingItems = getRequiredDocTypesBeforeAdvance(localStudent.status, countryDocConfig)
+        .filter(({ docType }) => !studentHasUploadedDocType(studentDocs, docType))
+        .map(({ docType }) => docType);
+      if (stageId === "documentation") {
+        for (const { docType } of collectMissingVisaPilotUploads(localStudent, countryDocConfig)) {
           allMissingItems.push(docType);
         }
       }
@@ -1170,7 +1222,7 @@ const StudentProfile = ({
           user: userRole,
           role: userRole,
           action: "advanced stage with missing required documents",
-          target: `${requiredChecklistStages.join(" + ") || st} requirements (${localStudent.name})`,
+          target: `${allMissingItems.slice(0, 6).join(", ")} (${localStudent.name})`,
           type: "system",
           studentName: localStudent.name,
           studentId: localStudent.id
@@ -1354,14 +1406,14 @@ const StudentProfile = ({
             onUpdateDocument: handlePipelineDocumentUpdate,
             onUpdateTasks
           }),
-          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, countryDocConfig, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
         ] });
       case "show-money":
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal });
       case "visa-pilot":
         return /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onDeleteDocument: handleDeleteStudentDocument }),
-          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
+          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, countryDocConfig, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onDeleteDocument: handleDeleteStudentDocument }),
+          /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, countryDocConfig, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
         ] });
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, {
@@ -1419,6 +1471,17 @@ const StudentProfile = ({
             ] })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 self-end md:self-auto", children: [
+            /* @__PURE__ */ jsxs(Button, {
+              variant: "outline",
+              onClick: handleExportDocuments,
+              size: "sm",
+              disabled: exportingDocuments,
+              title: "Download pipeline & visa documents, student CSV, and full JSON export",
+              children: [
+                /* @__PURE__ */ jsx(Archive, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                exportingDocuments ? " Exporting…" : " Export"
+              ]
+            }),
             /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages"), size: "sm", children: [
               /* @__PURE__ */ jsx(MessageSquare, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
               " Message"
@@ -1516,13 +1579,16 @@ const StudentProfile = ({
               /* @__PURE__ */ jsxs("span", { className: "text-indigo-700", children: [
                 currentStepIndex + 1,
                 " / ",
-                PIPELINE_STEPS.length,
+                pipelineSteps.length,
                 " Steps"
               ] })
             ] }),
-            /* @__PURE__ */ jsx("nav", { className: "mt-3 sm:mt-4 grid grid-cols-3 sm:grid-cols-7 gap-1.5 sm:gap-2 min-w-0", "aria-label": "Pipeline stages", children: PIPELINE_STEPS.map((step, idx) => {
+            /* @__PURE__ */ jsx("nav", { className: `mt-3 sm:mt-4 grid grid-cols-3 ${pipelineGridSmClass} gap-1.5 sm:gap-2 min-w-0`, "aria-label": "Pipeline stages", children: pipelineSteps.map((step, idx) => {
               const isCompleted = idx < currentStepIndex;
-              const isCurrent = idx === currentStepIndex;
+              const isCurrent =
+                idx === currentStepIndex ||
+                stageLabelsEquivalent(step, localStudent.status) ||
+                stageLabelsEquivalent(step, effectiveStatus);
               return /* @__PURE__ */ jsxs("div", { title: step, className: `flex items-center justify-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold leading-tight transition-all min-w-0 ${isCurrent ? "bg-nexgenai-navy text-white shadow-sm ring-1 ring-indigo-200" : isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-slate-100/80"}`, children: [
                 isCompleted ? /* @__PURE__ */ jsx(CheckCircle, { size: 11, className: "text-emerald-500 shrink-0" }) : /* @__PURE__ */ jsx("span", { className: `w-3.5 h-3.5 rounded-full flex shrink-0 items-center justify-center text-[8px] font-bold ${isCurrent ? "bg-white text-nexgenai-navy" : "bg-slate-200 text-slate-500"}`, children: idx + 1 }),
                 /* @__PURE__ */ jsx("span", { className: "truncate", children: step })

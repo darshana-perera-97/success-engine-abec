@@ -1,9 +1,9 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen } from "lucide-react";
 import { Button } from "./Button";
-import { COUNTRY_CHECKLISTS } from "../constants";
-import { getVisibleCountryChecklistStages } from "../pipeline";
+import { filterChecklistForStudent, shouldShowUniversityOfferLetters } from "../docMappingConfig";
+import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
@@ -29,6 +29,18 @@ function isDeletableDocumentStatus(status) {
 }
 function canStaffUploadOfferLetters(userRole) {
   return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
+}
+
+function DocumentRequirementBadge({ required }) {
+  const isRequired = required !== false;
+  return jsx("span", {
+    className: `inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${
+      isRequired
+        ? "bg-rose-50 text-rose-700 border-rose-200"
+        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+    }`,
+    children: isRequired ? "Required" : "Optional",
+  });
 }
 const OFFER_LETTER_STATUSES = ["Unconditional", "Conditional", "Rejected"];
 const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
@@ -59,8 +71,11 @@ const DocumentManager = ({
   onUploadUniversityOfferLetters,
   showPipelineChecklist = true,
   showUniversityOfferLettersBlock = true,
-  showProfileOtherDocuments = true
+  showProfileOtherDocuments = true,
+  countryDocConfig: countryDocConfigProp = null
 }) => {
+  const { config: loadedCountryConfig } = useCountryDocConfig(countryDocConfigProp ? "" : student?.country);
+  const countryDocConfig = countryDocConfigProp || loadedCountryConfig;
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
@@ -222,9 +237,8 @@ const DocumentManager = ({
       .sort((a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime());
   }, [student.universityOfferLetters]);
   const showUniversityOfferLetters = useMemo(() => {
-    const visibleStages = new Set(getVisibleCountryChecklistStages(student.status));
-    return visibleStages.has("Uni Application") || visibleStages.has("Offer Received");
-  }, [student.status]);
+    return shouldShowUniversityOfferLetters(student.status, countryDocConfig);
+  }, [student.status, countryDocConfig]);
   const canUploadOfferLetters = canStaffUploadOfferLetters(userRole) && typeof onUploadUniversityOfferLetters === "function";
   const getOfferStatusBadgeClass = (status) => {
     if (status === "Unconditional" || status === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -373,18 +387,26 @@ const DocumentManager = ({
     }
   };
   const checklist = useMemo(() => {
-    const countryChecklist = COUNTRY_CHECKLISTS[student.country] || COUNTRY_CHECKLISTS["Default"];
-    const visibleStages = new Set(getVisibleCountryChecklistStages(student.status));
-    return countryChecklist
-      .filter((category) => visibleStages.has(category.stage))
-      .map((category) => ({
-        ...category,
-        items: category.items.map((item) => ({
-          ...item,
-          uploadedFiles: studentDocuments.filter((d) => d.type === item.docType || d.type.includes(item.docType) || item.docType.includes(d.type)).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
-        }))
-      }));
-  }, [student.country, student.status, studentDocuments]);
+    const visible = filterChecklistForStudent(
+      countryDocConfig?.checklist,
+      student.status,
+      countryDocConfig?.stages
+    );
+    return visible.map((category) => ({
+      ...category,
+      items: category.items.map((item) => ({
+        ...item,
+        uploadedFiles: studentDocuments
+          .filter(
+            (d) =>
+              d.type === item.docType ||
+              d.type.includes(item.docType) ||
+              item.docType.includes(d.type)
+          )
+          .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()),
+      })),
+    }));
+  }, [countryDocConfig, student.status, studentDocuments]);
   const isStaff = userRole !== "Student";
   const maxProfileOtherSlotUsed = profileOtherSlotEntries.length
     ? Math.max(...profileOtherSlotEntries.map((e) => Number(e.slot) || 0))
@@ -393,43 +415,69 @@ const DocumentManager = ({
     isStaff && onUploadProfileOtherDocument && maxProfileOtherSlotUsed < PROFILE_OTHER_DOCUMENTS_MAX_SLOT;
   const canDeleteDocument =
     canStaffDeleteStudentDocuments(userRole) && typeof onDeleteDocument === "function";
-  const totalRequired = checklist.reduce((acc, cat) => acc + cat.items.length, 0);
-  const totalVerified = checklist.reduce((acc, cat) => acc + cat.items.filter((item) => item.uploadedFiles.some((f) => f.status === "Verified")).length, 0);
+  const flatItems = checklist.flatMap((cat) => cat.items);
+  const requiredItems = flatItems.filter((item) => item.required !== false);
+  const optionalItems = flatItems.filter((item) => item.required === false);
+  const verifiedRequired = requiredItems.filter((item) =>
+    item.uploadedFiles.some((f) => f.status === "Verified")
+  ).length;
   const showOfferLettersSection = showUniversityOfferLettersBlock && showUniversityOfferLetters;
   const otherDocumentsSectionClass =
     showPipelineChecklist || showOfferLettersSection ? "mt-10 pt-8 border-t border-slate-200" : "mt-2 pt-0";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
-    showPipelineChecklist && /* @__PURE__ */ jsx("div", { className: "flex justify-between items-center bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: /* @__PURE__ */ jsxs("div", { children: [
-      /* @__PURE__ */ jsxs("h4", { className: "text-indigo-900 font-semibold", children: [
-        "Paperless Pipeline: ",
-        student.country
+    showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-header", className: "flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: [
+      /* @__PURE__ */ jsxs("div", { children: [
+        /* @__PURE__ */ jsxs("h4", { className: "text-indigo-900 font-semibold", children: [
+          "Paperless Pipeline: ",
+          student.country
+        ] }),
+        /* @__PURE__ */ jsxs("p", { className: "text-indigo-700 text-xs mt-1", children: [
+          verifiedRequired,
+          " / ",
+          requiredItems.length,
+          " required verified",
+          optionalItems.length > 0 ? ` · ${optionalItems.length} optional` : ""
+        ] })
       ] }),
-      /* @__PURE__ */ jsxs("p", { className: "text-indigo-700 text-xs mt-1", children: [
-        totalVerified,
-        " / ",
-        totalRequired,
-        " Verified"
+      flatItems.length > 0 && /* @__PURE__ */ jsxs("div", { key: "pipeline-badges", className: "flex flex-wrap items-center gap-2 text-[10px]", children: [
+        /* @__PURE__ */ jsx(DocumentRequirementBadge, { key: "badge-required", required: true }),
+        /* @__PURE__ */ jsx(DocumentRequirementBadge, { key: "badge-optional", required: false })
       ] })
-    ] }) }),
-    showPipelineChecklist && /* @__PURE__ */ jsx("div", { className: "space-y-6", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => /* @__PURE__ */ jsxs("div", { children: [
-      /* @__PURE__ */ jsxs("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider mb-2", children: [
-        category.stage,
-        " Requirements"
-      ] }),
-      /* @__PURE__ */ jsx("div", { className: "space-y-3", children: category.items.map(({ docType, description, uploadedFiles }) => {
+    ] }),
+    showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-checklist", className: "space-y-4", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => {
+      const groupRequired = category.items.filter((item) => item.required !== false);
+      const groupVerified = groupRequired.filter((item) =>
+        item.uploadedFiles.some((f) => f.status === "Verified")
+      ).length;
+      return /* @__PURE__ */ jsxs("div", {
+        key: category.stage,
+        className: "rounded-xl border border-slate-200 bg-slate-50/40 shadow-sm overflow-hidden",
+        children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 border-b border-slate-200 bg-white/80", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx(FolderOpen, { size: 16, className: "text-indigo-500 shrink-0" }),
+              /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-800 truncate", children: category.stage })
+            ] }),
+            groupRequired.length > 0 && /* @__PURE__ */ jsx("span", { className: "text-[11px] font-medium text-slate-500 shrink-0", children: `${groupVerified} / ${groupRequired.length} required verified` })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "p-4 space-y-4", children: category.items.map(({ docType, description, uploadedFiles, required }) => {
         const hasVerifiedUpload = uploadedFiles.some((f) => f.status === "Verified");
-        return /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
-        /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center", children: [
-          /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-700", children: docType }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: description })
+        const isRequired = required !== false;
+        return /* @__PURE__ */ jsxs("div", { key: docType, className: "space-y-2", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start gap-3", children: [
+          /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+              /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-700", children: docType }),
+              /* @__PURE__ */ jsx(DocumentRequirementBadge, { required: isRequired })
+            ] }),
+            description ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: description }) : null
           ] }),
           /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, docType }), children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
             " Upload"
           ] })
         ] }),
-        uploadedFiles.length > 0 && uploadedFiles.map((uploadedFile, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
+        uploadedFiles.length > 0 && uploadedFiles.map((uploadedFile, idx) => /* @__PURE__ */ jsxs("div", { key: uploadedFile.id || `${docType}-${uploadedFile.name}-${idx}`, className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between group hover:shadow-sm transition-all", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
             /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${uploadedFile.status === "Verified" ? "bg-emerald-100 text-emerald-600" : uploadedFile.status === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-500"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
             /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
@@ -469,18 +517,20 @@ const DocumentManager = ({
               ] })
             ] })
           ] })
-        ] }, uploadedFile.id || `${uploadedFile.name}-${idx}`)),
-        !hasVerifiedUpload && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg flex items-center justify-between group transition-colors ${uploadedFiles.length > 0 ? "bg-amber-50/80 border-amber-200 hover:border-amber-300" : "bg-slate-50 border-gray-200 hover:border-indigo-200"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${uploadedFiles.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : "bg-white border-gray-200 text-slate-400"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
+        ] })),
+        !hasVerifiedUpload && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg flex items-center justify-between group transition-colors ${uploadedFiles.length > 0 ? "bg-amber-50/80 border-amber-200 hover:border-amber-300" : isRequired ? "bg-slate-50 border-gray-200 hover:border-indigo-200" : "bg-emerald-50/40 border-emerald-100 hover:border-emerald-200"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${uploadedFiles.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : isRequired ? "bg-white border-gray-200 text-slate-400" : "bg-emerald-50 border-emerald-200 text-emerald-500"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${uploadedFiles.length > 0 ? "text-amber-900" : "text-slate-500"}`, children: uploadedFiles.length > 0 ? "Awaiting approved document" : "Pending Upload" }),
-            /* @__PURE__ */ jsx("p", { className: `text-xs ${uploadedFiles.length > 0 ? "text-amber-800/80" : "text-slate-400"}`, children: uploadedFiles.length > 0 ? "Upload a new file or approve a pending submission for this requirement." : "Awaiting submission" })
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${uploadedFiles.length > 0 ? "text-amber-900" : isRequired ? "text-slate-500" : "text-emerald-800"}`, children: uploadedFiles.length > 0 ? "Awaiting approved document" : isRequired ? "Pending upload" : "Optional — not uploaded" }),
+            /* @__PURE__ */ jsx("p", { className: `text-xs ${uploadedFiles.length > 0 ? "text-amber-800/80" : isRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: uploadedFiles.length > 0 ? "Upload a new file or approve a pending submission for this requirement." : isRequired ? "Awaiting submission" : "Upload only if needed for this student." })
           ] })
         ] }) })
-      ] }, docType);
+      ] });
       }) })
-    ] }, category.stage)) }),
-    showOfferLettersSection && /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
+        ]
+      });
+    }) }),
+    showOfferLettersSection && /* @__PURE__ */ jsxs("div", { key: "offer-letters", className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
@@ -496,7 +546,7 @@ const DocumentManager = ({
           ]
         })
       ] }),
-      universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
+      universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { key: letter.id || `offer-letter-${letter.name}-${idx}`, className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
           /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Unconditional" || letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
@@ -511,9 +561,9 @@ const DocumentManager = ({
             /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
           ] })
         ] })
-      ] }, letter.id || `${letter.name}-${idx}`)) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
+      ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
     ] }),
-    showProfileOtherDocuments && /* @__PURE__ */ jsxs("div", { className: otherDocumentsSectionClass, children: [
+    showProfileOtherDocuments && /* @__PURE__ */ jsxs("div", { key: "profile-other-documents", className: otherDocumentsSectionClass, children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-slate-400 uppercase tracking-wider", children: "Other documents" }),
@@ -535,7 +585,7 @@ const DocumentManager = ({
       userRole === "Student"
         ? /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-3", children: [1, 2, 3].map((slotNum) => {
             const entry = profileOtherSlotEntries.find((e) => Number(e.slot) === slotNum) || null;
-            return /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+            return /* @__PURE__ */ jsxs("div", { key: `profile-other-${slotNum}`, className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
               /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
                 /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", slotNum] }),
                 /* @__PURE__ */ jsx(Button, {
@@ -563,12 +613,12 @@ const DocumentManager = ({
                   /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                 ] })
               ] }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic mt-1", children: "No file yet. Choose Upload, add a name, then pick a file." })
-            ] }, `profile-other-${slotNum}`);
+            ] });
           }) })
         : /* @__PURE__ */ jsxs(Fragment, { children: [
             profileOtherSlotEntries.length === 0
               ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center text-sm text-slate-500", children: "No other documents yet. Use Add document to upload the first file." })
-              : /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3", children: profileOtherSlotEntries.map((entry) => /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+              : /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3", children: profileOtherSlotEntries.map((entry) => /* @__PURE__ */ jsxs("div", { key: entry.id || `profile-other-slot-${entry.slot}`, className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 flex flex-col gap-3 min-h-[140px]", children: [
                   /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
                     /* @__PURE__ */ jsxs("span", { className: "text-[10px] font-bold text-slate-400 uppercase tracking-wide", children: ["Slot ", entry.slot] }),
                     /* @__PURE__ */ jsx(Button, {
@@ -596,10 +646,10 @@ const DocumentManager = ({
                       /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                     ] })
                   ] })
-                ] }, entry.id || `profile-other-slot-${entry.slot}`)) })
+                ] })) })
           ] })
     ] }),
-    deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { key: "delete-document-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: deleteDocumentModal.doc.status === "Verified" ? "Delete approved document?" : "Delete rejected document?" }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
@@ -630,7 +680,7 @@ const DocumentManager = ({
         })
       ] })
     ] }) }),
-    rejectionModal.isOpen && rejectionModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    rejectionModal.isOpen && rejectionModal.doc && /* @__PURE__ */ jsx("div", { key: "rejection-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-rose-900", children: "Rejection Reason" }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
@@ -656,7 +706,7 @@ const DocumentManager = ({
         ] })
       ] })
     ] }) }),
-    otherDocModal.open && (otherDocModal.append === true || otherDocModal.slot != null) && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    otherDocModal.open && (otherDocModal.append === true || otherDocModal.slot != null) && /* @__PURE__ */ jsx("div", { key: "other-doc-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: otherDocModal.append ? "Add other document" : "Other document" }),
@@ -695,7 +745,7 @@ const DocumentManager = ({
         otherDocModal.error && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: otherDocModal.error })
       ] })
     ] }) }),
-    offerLetterModal.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    offerLetterModal.open && /* @__PURE__ */ jsx("div", { key: "offer-letter-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload University Offer Letters" }),
@@ -706,10 +756,10 @@ const DocumentManager = ({
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Offer status" }),
-          /* @__PURE__ */ jsx("div", { className: "mt-2 grid grid-cols-1 gap-2", children: OFFER_LETTER_STATUSES.map((status) => /* @__PURE__ */ jsxs("label", { className: `flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${offerLetterModal.offerStatus === status ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-slate-300"}`, children: [
+          /* @__PURE__ */ jsx("div", { className: "mt-2 grid grid-cols-1 gap-2", children: OFFER_LETTER_STATUSES.map((status) => /* @__PURE__ */ jsxs("label", { key: status, className: `flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${offerLetterModal.offerStatus === status ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-slate-300"}`, children: [
             /* @__PURE__ */ jsx("input", { type: "radio", name: "offerStatus", value: status, checked: offerLetterModal.offerStatus === status, disabled: offerLetterUploading, onChange: () => setOfferLetterModal((prev) => ({ ...prev, offerStatus: status, error: "" })), className: "text-indigo-600 focus:ring-indigo-500" }),
             /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-800", children: status })
-          ] }, status)) })
+          ] })) })
         ] }),
         !offerLetterUploading ? /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
           /* @__PURE__ */ jsxs("label", { className: "border-2 border-dashed border-indigo-200 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors", children: [
@@ -733,7 +783,7 @@ const DocumentManager = ({
         offerLetterModal.error && /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: offerLetterModal.error })
       ] })
     ] }) }),
-    uploadModal.isOpen && uploadModal.docType && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    uploadModal.isOpen && uploadModal.docType && /* @__PURE__ */ jsx("div", { key: "upload-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload Document" }),
@@ -762,7 +812,7 @@ const DocumentManager = ({
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your file." })
       ] }) })
     ] }) }),
-    whatsappNotification.show && /* @__PURE__ */ jsx("div", { className: "fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300", children: /* @__PURE__ */ jsxs("div", { className: "bg-white border border-emerald-100 shadow-xl rounded-lg p-4 flex items-start gap-3 max-w-sm", children: [
+    whatsappNotification.show && /* @__PURE__ */ jsx("div", { key: "whatsapp-notification", className: "fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300", children: /* @__PURE__ */ jsxs("div", { className: "bg-white border border-emerald-100 shadow-xl rounded-lg p-4 flex items-start gap-3 max-w-sm", children: [
       /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0", children: /* @__PURE__ */ jsx(MessageCircle, { size: 20 }) }),
       /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
         /* @__PURE__ */ jsxs("h4", { className: "text-sm font-semibold text-slate-900 flex items-center gap-2", children: [

@@ -1,10 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
 import { PersonContactCard } from "./PersonContactCard";
-import { COUNTRY_CHECKLISTS } from "../constants";
-import { PIPELINE_STEPS, normalizePipelineStatus, getVisibleCountryChecklistStages } from "../pipeline";
+import { filterChecklistForStudent, getStudentPipelineStepIndex } from "../docMappingConfig";
+import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
+import { PIPELINE_STEPS } from "../pipeline";
 import { buildStudentDashboardCounselorRoster } from "../studentContactHelpers";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const formatRegisteredDate = (student) => {
@@ -22,11 +23,11 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
+  const { config: countryDocConfig } = useCountryDocConfig(student?.country);
 
-  const canonical = normalizePipelineStatus(student.status);
-  const rawIndex = PIPELINE_STEPS.indexOf(canonical);
-  const visualIndex = rawIndex < 0 ? 0 : rawIndex;
-  const steps = PIPELINE_STEPS.map((label, i) => ({ label, icon: String(i + 1) }));
+  const pipelineSteps = countryDocConfig?.pipelineSteps?.length ? countryDocConfig.pipelineSteps : PIPELINE_STEPS;
+  const visualIndex = Math.max(0, getStudentPipelineStepIndex(student.status, countryDocConfig?.stages));
+  const steps = pipelineSteps.map((label, i) => ({ label, icon: String(i + 1) }));
   const progressPercentage = steps.length <= 1 ? 0 : visualIndex / (steps.length - 1) * 100;
   const pendingTasks = tasks.filter((t) => t.student_id === student.id && t.status !== "Completed");
   const sortedActions = pendingTasks.sort((a, b) => {
@@ -36,15 +37,27 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
     if (a.priority !== "High" && b.priority === "High") return 1;
     return 0;
   });
-  const checklist = COUNTRY_CHECKLISTS[student.country] || COUNTRY_CHECKLISTS["Default"] || [];
-  const visibleChecklistStages = new Set(getVisibleCountryChecklistStages(student.status));
-  const documentTypeOptions = Array.from(
-    new Set(
-      checklist
-        .filter((category) => visibleChecklistStages.has(category.stage))
-        .flatMap((category) => category.items.map((item) => item.docType))
-    )
-  );
+  const documentTypeOptions = useMemo(() => {
+    const visible = filterChecklistForStudent(
+      countryDocConfig?.checklist,
+      student.status,
+      countryDocConfig?.stages
+    );
+    const seen = new Set();
+    const options = [];
+    for (const category of visible) {
+      for (const item of category.items) {
+        if (seen.has(item.docType)) continue;
+        seen.add(item.docType);
+        const isRequired = item.required !== false;
+        options.push({
+          docType: item.docType,
+          label: `${item.docType} (${isRequired ? "Required" : "Optional"})`,
+        });
+      }
+    }
+    return options;
+  }, [countryDocConfig, student.status]);
   const closeUploadModal = () => {
     setIsUploadModalOpen(false);
     setSelectedDocumentType("");
@@ -345,7 +358,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
       /* @__PURE__ */ jsx("label", { className: "block text-sm font-medium text-slate-700 mb-2", children: "Document Type" }),
       /* @__PURE__ */ jsxs("select", { className: "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500", value: selectedDocumentType, onChange: (event) => setSelectedDocumentType(event.target.value), children: [
         /* @__PURE__ */ jsx("option", { value: "", children: "Select a document type" }),
-        documentTypeOptions.map((docType) => /* @__PURE__ */ jsx("option", { value: docType, children: docType }, docType))
+        documentTypeOptions.map((opt) => /* @__PURE__ */ jsx("option", { value: opt.docType, children: opt.label }, opt.docType))
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-indigo-400 hover:bg-indigo-50 transition-colors cursor-pointer", onClick: () => fileInputRef.current?.click(), children: [
         /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3", children: /* @__PURE__ */ jsx(Upload, { size: 24 }) }),

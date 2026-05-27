@@ -29,6 +29,7 @@ import { RequestedStudents } from "./components/RequestedStudents";
 import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
+import { DocMapping } from "./components/DocMapping";
 import { Bell, Clock, X } from "lucide-react";
 import { Button } from "./components/Button";
 import {
@@ -78,7 +79,8 @@ const VIEW_TO_PATH = {
   settings: "/settings",
   "student-detail": "/student-detail",
   "requested-students": "/requested-students",
-  "stage-escalations": "/stage-escalations"
+  "stage-escalations": "/stage-escalations",
+  maps: "/maps"
 };
 
 function App({ initialView = "dashboard" }) {
@@ -1914,9 +1916,15 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: saved.data };
   };
+  const buildAutoTaskDueDate = (daysFromNow = 7) => {
+    const due = new Date();
+    due.setDate(due.getDate() + daysFromNow);
+    return due.toISOString().split("T")[0];
+  };
   const generateTasks = (student) => {
     const newTasks = [];
     const existingTaskTypes = tasks.filter((t) => t.student_id === student.id).map((t) => t.documentType);
+    const counselorId = String(student.counselor || "").trim();
     const st = normalizePipelineStatus(student.status);
     if (st === "Documentation") {
       const requiredDocs = ["Passport", "Identity", "Transcript", "EnglishProficiency"];
@@ -1925,13 +1933,15 @@ function App({ initialView = "dashboard" }) {
           newTasks.push({
             id: generateId("T-AUTO"),
             task: `Upload ${docType}`,
-            assigned_to: [student.counselor],
+            assigned_to: counselorId ? [counselorId] : [],
             student_id: student.id,
             priority: "High",
             status: "Pending",
+            dueDate: buildAutoTaskDueDate(7),
             tier: "Global",
             phase: 1,
             isBlocking: true,
+            isPrivate: true,
             documentType: docType
           });
         }
@@ -1944,13 +1954,15 @@ function App({ initialView = "dashboard" }) {
           newTasks.push({
             id: generateId("T-AUTO"),
             task: `Upload ${docType} for ${student.targetUniversity}`,
-            assigned_to: [student.counselor],
+            assigned_to: counselorId ? [counselorId] : [],
             student_id: student.id,
             priority: "Medium",
             status: "Pending",
+            dueDate: buildAutoTaskDueDate(14),
             tier: "University",
             phase: 3,
             isBlocking: false,
+            isPrivate: true,
             documentType: docType
           });
         }
@@ -1977,13 +1989,15 @@ function App({ initialView = "dashboard" }) {
           newTasks.push({
             id: generateId("T-AUTO"),
             task: `Upload ${docType}`,
-            assigned_to: [student.counselor],
+            assigned_to: counselorId ? [counselorId] : [],
             student_id: student.id,
             priority: "High",
             status: "Pending",
+            dueDate: buildAutoTaskDueDate(7),
             tier: "Country",
             phase: 2,
             isBlocking: true,
+            isPrivate: true,
             documentType: docType
           });
         }
@@ -2550,6 +2564,8 @@ function App({ initialView = "dashboard" }) {
             /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate })
           ]
         });
+      case "maps":
+        return /* @__PURE__ */ jsx(DocMapping, {});
       default:
         return /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Under Construction" });
     }

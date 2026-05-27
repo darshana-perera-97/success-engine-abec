@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import App from "./App";
+import { CountryDocConfigPreloader } from "./components/CountryDocConfigPreloader";
 import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
 import { StudentRegistrationForm } from "./components/StudentRegistrationForm";
 import { applyCompanyBrandingToDocument } from "./companyConfig";
@@ -27,7 +28,8 @@ const ROUTE_VIEWS = [
   { path: "/integration", view: "integration" },
   { path: "/finance", view: "finance" },
   { path: "/invoices", view: "invoices" },
-  { path: "/settings", view: "settings" }
+  { path: "/settings", view: "settings" },
+  { path: "/maps", view: "maps" }
 ];
 
 const rootElement = document.getElementById("root");
@@ -39,6 +41,7 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <BrowserRouter>
+      <CountryDocConfigPreloader />
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         {ROUTE_VIEWS.map((route) => (

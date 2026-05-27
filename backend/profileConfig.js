@@ -1,18 +1,19 @@
 const abec = require("./profile/abec/companyConfig");
 const beacanadian = require("./profile/beacanadian/companyConfig");
 const ds = require("./profile/ds/companyConfig");
+const nexgenai = require("./profile/nexgenai/companyConfig");
 
 // Change this single value to switch backend branding between company profiles.
 // Keep in sync with frontend/src/profileConfig.js ACTIVE_PROFILE.
-// Supported values: "abec" | "beacanadian" | "ds"
-const ACTIVE_PROFILE = "beacanadian";
+// Supported values: "abec" | "beacanadian" | "ds" | "nexgenai"
+const ACTIVE_PROFILE = "nexgenai";
 
-const profiles = { abec, beacanadian, ds };
+const profiles = { abec, beacanadian, ds, nexgenai };
 const config = profiles[ACTIVE_PROFILE];
 
 if (!config) {
   throw new Error(
-    `Unknown ACTIVE_PROFILE: "${ACTIVE_PROFILE}". Use "abec", "beacanadian", or "ds".`
+    `Unknown ACTIVE_PROFILE: "${ACTIVE_PROFILE}". Use "abec", "beacanadian", "ds", or "nexgenai".`
   );
 }
 

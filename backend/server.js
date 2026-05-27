@@ -20,6 +20,7 @@ const appointmentRoutes = require("./routes/appointments");
 const whatsappRoutes = require("./routes/whatsapp");
 const universityRoutes = require("./routes/university");
 const aiRoutes = require("./routes/ai");
+const docMappingRoutes = require("./routes/docMapping");
 const frontendRoutes = require("./routes/frontend");
 
 const fs = require("fs/promises");
@@ -60,6 +61,7 @@ const server = http.createServer(async (req, res) => {
   if (await chatRoutes.handle(req, res, url)) return;
   if (await activityRoutes.handle(req, res, url)) return;
   if (await branchRoutes.handle(req, res, url)) return;
+  if (await docMappingRoutes.handle(req, res, url)) return;
   if (await aiRoutes.handle(req, res, url)) return;
   if (await frontendRoutes.handle(req, res, url)) return;
 

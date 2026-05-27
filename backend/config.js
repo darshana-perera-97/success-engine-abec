@@ -33,6 +33,8 @@ const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
+const DOC_MAPPING_FILE = path.join(DATA_DIR, "docMapping.json");
+const STAGES_FILE = path.join(DATA_DIR, "stages.json");
 const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
 const WHATSAPP_INCOMING_FILE = path.join(DATA_DIR, "whatsapp-incoming.json");
 const CHAT_FILES_DIR = path.join(DATA_DIR, "chats");
@@ -172,6 +174,8 @@ module.exports = {
   INVOICES_FILE,
   TASKS_FILE,
   REQ_STUDENTS_FILE,
+  DOC_MAPPING_FILE,
+  STAGES_FILE,
   WHATSAPP_CONNECTIONS_DIR,
   WHATSAPP_INCOMING_FILE,
   CHAT_FILES_DIR,
