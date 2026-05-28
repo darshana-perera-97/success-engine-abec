@@ -847,6 +847,10 @@ const StudentProfile = ({
     () => (nextStep === "Enrolled" ? getEnrolledAdvanceBlockReasons(localStudent, studentInvoices, countryDocConfig) : []),
     [nextStep, localStudent, studentInvoices, countryDocConfig]
   );
+  const missingRequiredDocsBeforeAdvance = useMemo(
+    () => collectMissingDocTypesForStage(localStudent, localStudent.status, countryDocConfig),
+    [localStudent, countryDocConfig]
+  );
   const pipelineGridSmClass =
     pipelineSteps.length <= 4
       ? "sm:grid-cols-4"
@@ -1139,6 +1143,16 @@ const StudentProfile = ({
   };
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
+      if (missingRequiredDocsBeforeAdvance.length > 0) {
+        const preview = missingRequiredDocsBeforeAdvance.slice(0, 8).join(", ");
+        const suffix = missingRequiredDocsBeforeAdvance.length > 8 ? "..." : "";
+        onNotify?.(
+          "Required documents pending",
+          `Cannot move to next stage until required documents are completed: ${preview}${suffix}`,
+          "error"
+        );
+        return;
+      }
       if (nextStep === "Enrolled") {
         const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices);
         if (blockReasons.length > 0) {
@@ -1633,6 +1647,11 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx("ul", { className: "list-disc pl-4 space-y-1", children: enrolledAdvanceBlockReasons.map((r, i) => /* @__PURE__ */ jsx("li", { className: "whitespace-pre-wrap", children: r }, i)) }),
               /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: "Complete pipeline documents (all checklist stages), the Visa tab checklist, and pay every invoice (Paid status)." })
             ] }),
+            missingRequiredDocsBeforeAdvance.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
+              /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Stage move is blocked until required documents are completed:" }),
+              /* @__PURE__ */ jsx("ul", { className: "list-disc pl-4 space-y-1", children: missingRequiredDocsBeforeAdvance.slice(0, 12).map((docType) => /* @__PURE__ */ jsx("li", { className: "whitespace-pre-wrap", children: docType }, docType)) }),
+              missingRequiredDocsBeforeAdvance.length > 12 && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: `+${missingRequiredDocsBeforeAdvance.length - 12} more required document(s)` })
+            ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Remaining tasks" }),
               remainingStudentTasks.length > 0 ? /* @__PURE__ */ jsx("div", { className: "max-h-56 overflow-y-auto space-y-2 pr-1", children: remainingStudentTasks.map((task) => /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs space-y-2", children: [
@@ -1675,7 +1694,7 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white shrink-0", children: [
             /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0, children: "Confirm & Continue" })
+            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0 || missingRequiredDocsBeforeAdvance.length > 0, children: "Confirm & Continue" })
           ] })
         ] }) }),
         /* @__PURE__ */ jsx(InquiryCaptureFlowModals, {

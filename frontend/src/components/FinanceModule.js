@@ -182,6 +182,13 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     }
     setIsCreatingInvoice(true);
     setIsCreateOpen(false);
+    onNotify?.(
+      "Invoice generation started",
+      "The invoice popup is closed. Generation is running in the background and you will get an update in about 2-3 minutes.",
+      "info",
+      student?.id ? { studentId: student.id, view: "finance" } : null,
+      7e3
+    );
     const newInv = {
       id: `INV-${Date.now()}`,
       studentId: student.id,
@@ -224,6 +231,13 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       return;
     }
     resetCreateForm();
+    onNotify?.(
+      "Invoice generated",
+      `Invoice ${result?.data?.id || newInv.id} is ready. We will keep you updated if any further processing is needed.`,
+      "success",
+      student?.id ? { studentId: student.id, view: "finance" } : null,
+      7e3
+    );
     loadStudentInvoices();
   };
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);

@@ -344,7 +344,10 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
 function PipelineDocSection({ stages, docs, onChange }) {
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
-  const [selectedStageIds, setSelectedStageIds] = useState([]);
+  const defaultStartStageId = stages[0]?.id || "";
+  const defaultCheckingStageId = stages[1]?.id || stages[0]?.id || "";
+  const [startVisibleStageId, setStartVisibleStageId] = useState(defaultStartStageId);
+  const [checkingStageId, setCheckingStageId] = useState(defaultCheckingStageId);
   const [showDocModal, setShowDocModal] = useState(null);
   const [newDocName, setNewDocName] = useState("");
   const [newDocRequired, setNewDocRequired] = useState(true);
@@ -359,27 +362,37 @@ function PipelineDocSection({ stages, docs, onChange }) {
     return Array.from(map.entries());
   }, [docs]);
 
-  const toggleStage = (id) => {
-    setSelectedStageIds((prev) => prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]);
-  };
+  useEffect(() => {
+    if (!stages.some((s) => s.id === startVisibleStageId)) {
+      setStartVisibleStageId(defaultStartStageId);
+    }
+    if (!stages.some((s) => s.id === checkingStageId)) {
+      setCheckingStageId(defaultCheckingStageId);
+    }
+  }, [stages, startVisibleStageId, checkingStageId, defaultStartStageId, defaultCheckingStageId]);
 
   const addGroup = () => {
     const name = newGroupName.trim();
     if (!name) return;
     if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
-    const stageIds = selectedStageIds.length > 0 ? selectedStageIds : stages.map((s) => s.id);
-    onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds }]);
+    const visibleFrom = startVisibleStageId || defaultStartStageId;
+    const completeBy = checkingStageId || visibleFrom || defaultCheckingStageId;
+    const stageIds = getStageRangeIds(stages, visibleFrom, completeBy);
+    onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds, visibleFrom, completeBy }]);
     setNewGroupName("");
-    setSelectedStageIds([]);
+    setStartVisibleStageId(defaultStartStageId);
+    setCheckingStageId(defaultCheckingStageId);
     setShowGroupModal(false);
   };
 
   const addDoc = (group) => {
     const name = newDocName.trim();
     if (!name) return;
-    const existing = docs.find((d) => d.group === group && d.stageIds);
-    const stageIds = existing ? existing.stageIds : stages.map((s) => s.id);
-    onChange([...docs, { id: genId("doc"), group, name, required: newDocRequired, stageIds }]);
+    const existing = docs.find((d) => d.group === group);
+    const visibleFrom = existing?.visibleFrom || startVisibleStageId || defaultStartStageId;
+    const completeBy = existing?.completeBy || checkingStageId || visibleFrom || defaultCheckingStageId;
+    const stageIds = getStageRangeIds(stages, visibleFrom, completeBy);
+    onChange([...docs, { id: genId("doc"), group, name, required: newDocRequired, stageIds, visibleFrom, completeBy }]);
     setNewDocName("");
     setNewDocRequired(true);
     setShowDocModal(null);
@@ -402,7 +415,7 @@ function PipelineDocSection({ stages, docs, onChange }) {
         jsx(FileText, { size: 16, className: "text-blue-500" }),
         jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Pipeline Documents" })
       ] }),
-      jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); setSelectedStageIds([]); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
+      jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); setStartVisibleStageId(defaultStartStageId); setCheckingStageId(defaultCheckingStageId); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
     ] }),
     jsx("div", { className: "p-4 space-y-4", children:
       jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages })
@@ -418,7 +431,7 @@ function PipelineDocSection({ stages, docs, onChange }) {
           jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
             jsxs("div", { children: [
               jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "New Document Group" }),
-              jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Select which stages this group should be visible in." })
+              jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Select when this group starts and where it must be checked." })
             ] }),
             jsx("button", { type: "button", onClick: () => setShowGroupModal(false), className: "text-slate-400 hover:text-slate-700 p-1", children: jsx(X, { size: 18 }) })
           ] }),
@@ -434,20 +447,25 @@ function PipelineDocSection({ stages, docs, onChange }) {
                 onChange: (e) => setNewGroupName(e.target.value)
               })
             ] }),
-            jsxs("div", { children: [
-              jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1.5 block", children: "Visible at Stages" }),
-              jsx("div", { className: "flex flex-wrap gap-1.5", children:
-                stages.map((s) => {
-                  const selected = selectedStageIds.includes(s.id);
-                  return jsx("button", {
-                    type: "button",
-                    onClick: () => toggleStage(s.id),
-                    className: `px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${selected ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-600 border-gray-200 hover:border-indigo-300 hover:text-indigo-700"}`,
-                    children: s.label
-                  }, s.id);
+            jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3", children: [
+              jsxs("div", { children: [
+                jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Start Visible" }),
+                jsx("select", {
+                  className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all",
+                  value: startVisibleStageId,
+                  onChange: (e) => setStartVisibleStageId(e.target.value),
+                  children: stages.map((s) => jsx("option", { value: s.id, children: s.label }, s.id))
                 })
-              }),
-              selectedStageIds.length === 0 && jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: "No stages selected — group will be visible in all stages." })
+              ] }),
+              jsxs("div", { children: [
+                jsx("label", { className: "text-xs font-semibold text-slate-700 mb-1 block", children: "Checking Stage" }),
+                jsx("select", {
+                  className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all",
+                  value: checkingStageId,
+                  onChange: (e) => setCheckingStageId(e.target.value),
+                  children: stages.map((s) => jsx("option", { value: s.id, children: s.label }, s.id))
+                })
+              ] })
             ] }),
             jsxs("div", { className: "flex justify-end gap-2 pt-1", children: [
               jsx(Button, { variant: "secondary", size: "sm", onClick: () => setShowGroupModal(false), children: "Cancel" }),
@@ -597,6 +615,16 @@ function StageSelect({ stages, value, onChange, className = "" }) {
       ...stages.map((s) => jsx("option", { value: s.id, children: s.label }, s.id))
     ]
   });
+}
+
+function getStageRangeIds(stages, startStageId, endStageId) {
+  const list = Array.isArray(stages) ? stages : [];
+  const startIdx = list.findIndex((s) => s.id === startStageId);
+  const endIdx = list.findIndex((s) => s.id === endStageId);
+  if (startIdx < 0 || endIdx < 0) return list.map((s) => s.id);
+  const from = Math.min(startIdx, endIdx);
+  const to = Math.max(startIdx, endIdx);
+  return list.slice(from, to + 1).map((s) => s.id);
 }
 
 // ─── Stage counselor tasks: add task + assign stage dropdown ───

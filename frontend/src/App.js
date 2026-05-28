@@ -2250,9 +2250,25 @@ function App({ initialView = "dashboard" }) {
     if (!studentId) return { ok: false, error: "Student account not found." };
     if (!offerStatus) return { ok: false, error: "Select an offer status." };
     if (!Array.isArray(files) || files.length === 0) return { ok: false, error: "Choose at least one offer letter." };
-    const result = await uploadStudentUniversityOfferLetters(studentId, { offerStatus, files });
-    if (!result.ok) return result;
-    const updatedStudent = result.data;
+    let latestStudent = null;
+    const uploadedLetters = [];
+    const whatsappNotifications = [];
+    // Upload one-by-one to avoid oversized JSON requests when multiple base64 files are selected.
+    for (const file of files) {
+      const result = await uploadStudentUniversityOfferLetters(studentId, { offerStatus, files: [file] });
+      if (!result.ok) return result;
+      latestStudent = result.data || latestStudent;
+      if (Array.isArray(result.universityOfferLetters)) {
+        uploadedLetters.push(...result.universityOfferLetters);
+      }
+      if (Array.isArray(result.offerLetterWhatsappNotifications)) {
+        whatsappNotifications.push(...result.offerLetterWhatsappNotifications);
+      }
+    }
+    const updatedStudent = latestStudent;
+    if (!updatedStudent) {
+      return { ok: false, error: "Upload completed but student data is unavailable. Please refresh and try again." };
+    }
     setStudents((prev) => prev.map((s) => s.id === updatedStudent.id ? updatedStudent : s));
     if (selectedStudent?.id === updatedStudent.id) {
       setSelectedStudent(updatedStudent);
@@ -2260,8 +2276,8 @@ function App({ initialView = "dashboard" }) {
     return {
       ok: true,
       data: updatedStudent,
-      universityOfferLetters: result.universityOfferLetters || [],
-      offerLetterWhatsappNotifications: result.offerLetterWhatsappNotifications || []
+      universityOfferLetters: uploadedLetters,
+      offerLetterWhatsappNotifications: whatsappNotifications
     };
   };
   const handleOpenCreateTaskModal = (student) => {
