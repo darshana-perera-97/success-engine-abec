@@ -27,7 +27,6 @@ const ROUTE_VIEWS = [
   { path: "/calendar", view: "calendar" },
   { path: "/integration", view: "integration" },
   { path: "/finance", view: "finance" },
-  { path: "/invoices", view: "invoices" },
   { path: "/settings", view: "settings" },
   { path: "/maps", view: "maps" }
 ];

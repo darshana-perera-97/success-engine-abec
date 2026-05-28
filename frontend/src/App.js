@@ -19,8 +19,6 @@ import { UniversityKnowledgeBase } from "./components/UniversityKnowledgeBase";
 import { FinanceModule } from "./components/FinanceModule";
 import { StaffFinanceHub } from "./components/StaffFinanceHub";
 import { AccountantDashboard } from "./components/AccountantDashboard";
-import { AccountantInvoices } from "./components/AccountantInvoices";
-import { AllInvoices } from "./components/AllInvoices";
 import { CalendarScheduler } from "./components/CalendarScheduler";
 import { CounselorManagement } from "./components/CounselorManagement";
 import { AccountsManagement } from "./components/AccountsManagement";
@@ -81,7 +79,6 @@ const VIEW_TO_PATH = {
   calendar: "/calendar",
   integration: "/integration",
   finance: "/finance",
-  invoices: "/invoices",
   settings: "/settings",
   "student-detail": "/student-detail",
   "requested-students": "/requested-students",
@@ -2359,12 +2356,6 @@ function App({ initialView = "dashboard" }) {
           ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: studentInScope, userRole: currentRole })
           : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       }
-      if (currentView === "invoices") {
-        return /* @__PURE__ */ jsx(AllInvoices, {
-          students: coordStudents,
-          onSelectStudent: handleSelectStudent
-        });
-      }
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: coordStudents,
@@ -2392,16 +2383,6 @@ function App({ initialView = "dashboard" }) {
       };
       if (currentView === "students") {
         return /* @__PURE__ */ jsx(StudentList, acctListProps);
-      }
-      if (currentView === "invoices") {
-        return /* @__PURE__ */ jsx(AccountantInvoices, {
-          invoices: acctInvoices,
-          invoicesLoading,
-          students: acctStudents,
-          paymentAccounts,
-          onUpdateInvoice: handleUpdateInvoice,
-          onNotify: addNotification
-        });
       }
       if (currentView === "student-detail") {
         return selectedStudent && acctStudents.some((s) => s.id === selectedStudent.id)
@@ -2482,12 +2463,6 @@ function App({ initialView = "dashboard" }) {
       }
       if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
-      if (currentView === "invoices") {
-        return /* @__PURE__ */ jsx(AllInvoices, {
-          students: mgrStudents,
-          onSelectStudent: handleSelectStudent
-        });
-      }
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: mgrStudents,
@@ -2562,11 +2537,6 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
       case "student-detail":
         return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
-      case "invoices":
-        return /* @__PURE__ */ jsx(AllInvoices, {
-          students: adminViewStudents,
-          onSelectStudent: handleSelectStudent
-        });
       case "finance":
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,

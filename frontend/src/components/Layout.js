@@ -201,8 +201,6 @@ const Layout = ({
     { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
     { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
     { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-    { id: "invoices", label: "All Invoices", icon: /* @__PURE__ */ jsx(FileText, { size: 20 }) },
-    { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
     { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
     { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
     { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
@@ -229,7 +227,6 @@ const Layout = ({
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "Country students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-          { id: "invoices", label: "All Invoices", icon: /* @__PURE__ */ jsx(FileText, { size: 20 }) },
           { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
@@ -240,7 +237,7 @@ const Layout = ({
         return [
           { id: "dashboard", label: "Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "students", label: "Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
-          { id: "invoices", label: "Review payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) }
+          { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) }
         ];
       case "Manager":
         return [
@@ -250,7 +247,6 @@ const Layout = ({
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-          { id: "invoices", label: "All Invoices", icon: /* @__PURE__ */ jsx(FileText, { size: 20 }) },
           { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
@@ -263,7 +259,6 @@ const Layout = ({
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-          { id: "invoices", label: "All Invoices", icon: /* @__PURE__ */ jsx(FileText, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
@@ -276,7 +271,6 @@ const Layout = ({
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
-          { id: "invoices", label: "All Invoices", icon: /* @__PURE__ */ jsx(FileText, { size: 20 }) },
           { id: "requested-students", label: "Requested Students", icon: /* @__PURE__ */ jsx(ClipboardList, { size: 20 }), badge: requestedStudentsBadge },
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
