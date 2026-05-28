@@ -18,6 +18,8 @@ const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./
 const { appendWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
 
+const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
+
 function sanitizeUserIdForPath(userId) {
   return String(userId || "")
     .trim()
@@ -46,6 +48,16 @@ function ensureWhatsappState(userId) {
 
 function snapshotWhatsappState(userId) {
   const state = ensureWhatsappState(userId);
+  if (state.status === "authenticated") {
+    const lastUpdateMs = new Date(state.lastUpdatedAt || 0).getTime();
+    const isStaleAuthenticated =
+      Number.isFinite(lastUpdateMs) && Date.now() - lastUpdateMs > AUTHENTICATED_STUCK_TIMEOUT_MS;
+    if (isStaleAuthenticated) {
+      state.status = "error";
+      state.error = "WhatsApp sign-in is taking too long. Please disconnect and connect again.";
+      state.lastUpdatedAt = new Date().toISOString();
+    }
+  }
   return {
     userId: String(userId || "").trim(),
     status: state.status,

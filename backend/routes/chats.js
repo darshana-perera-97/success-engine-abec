@@ -5,10 +5,15 @@ const { readStudemts, publicChatFileUrl } = require("../models/students");
 const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
 const { storeChatAttachmentDataUrl } = require("../services/uploads");
 
+function normalizeId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/chats") {
     try {
       const userId = String(url.searchParams.get("userId") || "").trim();
+      const normalizedUserId = normalizeId(userId);
       const shouldMarkRead = url.searchParams.get("markRead") !== "0";
       const chatsAll = await readChats();
       let chatsAllNext = chatsAll;
@@ -16,7 +21,7 @@ async function handle(req, res, url) {
         // Mark messages as read when the receiver opens their chat inbox.
         let hasReadUpdates = false;
         chatsAllNext = chatsAll.map((chat) => {
-          if (String(chat.receiverId || "") === userId && chat.read !== true) {
+          if (normalizeId(chat.receiverId) === normalizedUserId && chat.read !== true) {
             hasReadUpdates = true;
             return { ...chat, read: true, readAt: new Date().toISOString() };
           }
@@ -36,13 +41,13 @@ async function handle(req, res, url) {
         const visibleStudentIds = new Set(
           (students || [])
             .filter((s) => {
-              const c = String(s.counselor || "").trim();
-              const inquiry = String(s.inquiryCounselorId || "").trim();
+              const c = normalizeId(s.counselor);
+              const inquiry = normalizeId(s.inquiryCounselorId);
               const history = Array.isArray(s.counselorHistory) ? s.counselorHistory : [];
               return (
-                c === userId ||
-                inquiry === userId ||
-                history.some((id) => String(id || "").trim() === userId)
+                c === normalizedUserId ||
+                inquiry === normalizedUserId ||
+                history.some((id) => normalizeId(id) === normalizedUserId)
               );
             })
             .map((s) => String(s.id || "").trim())
@@ -51,7 +56,12 @@ async function handle(req, res, url) {
         chatsForResponse = chatsForResponse.filter((chat) => {
           const sid = String(chat.senderId || "").trim();
           const rid = String(chat.receiverId || "").trim();
-          return sid === userId || rid === userId || visibleStudentIds.has(sid) || visibleStudentIds.has(rid);
+          return (
+            normalizeId(sid) === normalizedUserId ||
+            normalizeId(rid) === normalizedUserId ||
+            visibleStudentIds.has(sid) ||
+            visibleStudentIds.has(rid)
+          );
         });
       }
       const withPublicUrls = chatsForResponse.map((chat) => {
@@ -69,7 +79,8 @@ async function handle(req, res, url) {
         return true;
       }
       const scopedChats = withPublicUrls.filter(
-        (chat) => String(chat.senderId || "") === userId || String(chat.receiverId || "") === userId
+        (chat) =>
+          normalizeId(chat.senderId) === normalizedUserId || normalizeId(chat.receiverId) === normalizedUserId
       );
       // Counselors get chatsForResponse already scoped by handled students (includes prior counselor thread).
       sendJson(res, 200, { ok: true, data: counselor ? withPublicUrls : scopedChats });
