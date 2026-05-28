@@ -2006,94 +2006,10 @@ function App({ initialView = "dashboard" }) {
     }
     return { ok: true, data: saved.data };
   };
-  const buildAutoTaskDueDate = (daysFromNow = 7) => {
-    const due = new Date();
-    due.setDate(due.getDate() + daysFromNow);
-    return due.toISOString().split("T")[0];
-  };
-  const generateTasks = (student) => {
-    const newTasks = [];
-    const existingTaskTypes = tasks.filter((t) => t.student_id === student.id).map((t) => t.documentType);
-    const counselorId = String(student.counselor || "").trim();
-    const st = normalizePipelineStatus(student.status);
-    if (st === "Documentation") {
-      const requiredDocs = ["Passport", "Identity", "Transcript", "EnglishProficiency"];
-      requiredDocs.forEach((docType) => {
-        if (!existingTaskTypes.includes(docType)) {
-          newTasks.push({
-            id: generateId("T-AUTO"),
-            task: `Upload ${docType}`,
-            assigned_to: counselorId ? [counselorId] : [],
-            student_id: student.id,
-            priority: "High",
-            status: "Pending",
-            dueDate: buildAutoTaskDueDate(7),
-            tier: "Global",
-            phase: 1,
-            isBlocking: true,
-            isPrivate: true,
-            documentType: docType
-          });
-        }
-      });
-    }
-    if (student.targetUniversity) {
-      const universityDocs = ["Portfolio", "ReferenceLetter"];
-      universityDocs.forEach((docType) => {
-        if (!existingTaskTypes.includes(docType)) {
-          newTasks.push({
-            id: generateId("T-AUTO"),
-            task: `Upload ${docType} for ${student.targetUniversity}`,
-            assigned_to: counselorId ? [counselorId] : [],
-            student_id: student.id,
-            priority: "Medium",
-            status: "Pending",
-            dueDate: buildAutoTaskDueDate(14),
-            tier: "University",
-            phase: 3,
-            isBlocking: false,
-            isPrivate: true,
-            documentType: docType
-          });
-        }
-      });
-    }
-    if (st === "Application") {
-      let countryDocs = [];
-      switch (student.country) {
-        case "Australia":
-          countryDocs = ["GTE", "OSHC", "Financials"];
-          break;
-        case "New Zealand":
-          countryDocs = ["Financials", "PoliceClearance", "UpfrontMedicals"];
-          break;
-        case "UK":
-          countryDocs = ["TBTest", "Financials"];
-          break;
-        case "Canada":
-          countryDocs = ["SOP", "UpfrontMedicals"];
-          break;
-      }
-      countryDocs.forEach((docType) => {
-        if (!existingTaskTypes.includes(docType)) {
-          newTasks.push({
-            id: generateId("T-AUTO"),
-            task: `Upload ${docType}`,
-            assigned_to: counselorId ? [counselorId] : [],
-            student_id: student.id,
-            priority: "High",
-            status: "Pending",
-            dueDate: buildAutoTaskDueDate(7),
-            tier: "Country",
-            phase: 2,
-            isBlocking: true,
-            isPrivate: true,
-            documentType: docType
-          });
-        }
-      });
-    }
-    return newTasks;
+  const generateTasks = (_student) => {
+    // Document request tasks must come from country Doc Mapping (admin-managed),
+    // not from hardcoded defaults in App-level status transitions.
+    return [];
   };
   const handleAcknowledgeMeetingReminder = async () => {
     const apt = meetingReminderPopup;

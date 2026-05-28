@@ -101,6 +101,38 @@ const DocumentManager = ({
     () => migrateProfileOtherDocumentsToSlotEntries(student.profileOtherDocuments),
     [student.profileOtherDocuments]
   );
+  const approvedTaskRequestDocuments = useMemo(() => {
+    const sid = String(student?.id || "").trim();
+    if (!sid) return [];
+    const taskLookup = new Map();
+    for (const task of tasks || []) {
+      if (!task || typeof task !== "object") continue;
+      const taskId = String(task.id || "").trim();
+      const taskStudentId = String(task.student_id || task.studentId || "").trim();
+      if (!taskId || taskStudentId !== sid || task.requiresStudentDocuments !== true) continue;
+      taskLookup.set(taskId, task);
+    }
+    return (studentDocuments || [])
+      .filter((doc) => {
+        if (!doc || String(doc.status || "") !== "Verified") return false;
+        const link = doc.taskDocumentLink;
+        if (!link || typeof link !== "object") return false;
+        const taskId = String(link.taskId || "").trim();
+        return taskLookup.has(taskId);
+      })
+      .map((doc) => {
+        const link = doc.taskDocumentLink || {};
+        const task = taskLookup.get(String(link.taskId || "").trim());
+        const taskName = String(task?.task || "").trim();
+        const slotLabel = String(link.label || "").trim();
+        return {
+          ...doc,
+          _taskName: taskName,
+          _taskSlotLabel: slotLabel || "Requested document",
+        };
+      })
+      .sort((a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime());
+  }, [student?.id, studentDocuments, tasks]);
   const showWhatsappNotification = (message) => {
     setWhatsappNotification({ show: true, message });
     setTimeout(() => setWhatsappNotification({ show: false, message: "" }), 4e3);
@@ -659,6 +691,26 @@ const DocumentManager = ({
                     ] })
                   ] })
                 ] })) })
+            ,
+            approvedTaskRequestDocuments.length > 0 && /* @__PURE__ */ jsxs("div", { className: "mt-4 space-y-3", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-[11px] font-semibold text-slate-500 uppercase tracking-wider", children: "Approved task-requested documents" }),
+              /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3", children: approvedTaskRequestDocuments.map((doc, idx) => /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 flex flex-col gap-3 min-h-[140px]", children: [
+                /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                  /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold text-emerald-700 uppercase tracking-wide", children: "Approved" }),
+                  /* @__PURE__ */ jsx("span", { className: "px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-50 text-emerald-700 border-emerald-200", children: "Verified" })
+                ] }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", title: doc._taskSlotLabel, children: doc._taskSlotLabel }),
+                  doc._taskName && /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: doc._taskName, children: doc._taskName }),
+                  /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 truncate mt-0.5", title: doc.name, children: shortDisplayFileName(doc.name) }),
+                  /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "" })
+                ] }),
+                doc.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-emerald-100", children: [
+                  /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                  /* @__PURE__ */ jsx("a", { href: doc.url, download: doc.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                ] })
+              ] }, doc.id || `approved-task-doc-${idx}`)) })
+            ] })
           ] })
     ] }),
     deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { key: "delete-document-modal", className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [

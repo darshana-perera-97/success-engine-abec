@@ -4,6 +4,8 @@
  * belongs to a monitored student and every assignee is either the counselor (any
  * linked id/email/name) or the student id (portal convention for shared queues).
  * Tasks assigned only to other counselors on the same student are excluded.
+ * Student-upload request tasks (requiresStudentDocuments) are excluded from this
+ * fallback unless the counselor is directly assigned/linked.
  */
 
 function normalize(value) {
@@ -41,6 +43,7 @@ export function filterTasksForCounselorIdentities(tasks, identitySet, monitoredS
     const isAssigned = assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
     const isRelatedCounselorTask = relatedCounselorIds.some((counselorId) => identitySet.has(normalize(counselorId)));
     if (isAssigned || isRelatedCounselorTask) return true;
+    if (task?.requiresStudentDocuments === true) return false;
     const sid = String(task.student_id || task.studentId || "").trim();
     const isMonitoredStudentTask = sid ? studentIds.has(sid) : false;
     if (!isMonitoredStudentTask) return false;
