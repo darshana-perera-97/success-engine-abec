@@ -932,14 +932,14 @@ async function handle(req, res, url) {
         return true;
       }
       const rawFiles = Array.isArray(body.files) ? body.files : [];
-      const singleDataUrl = String(body.dataUrl || "");
+      const singleDataUrl = String(body.dataUrl || body.dataURL || "");
       const singleFileName = String(body.fileName || "offer-letter");
       const fileInputs =
         rawFiles.length > 0
           ? rawFiles
               .map((f) => ({
-                dataUrl: String(f?.dataUrl || ""),
-                fileName: String(f?.fileName || "offer-letter"),
+                dataUrl: typeof f === "string" ? String(f) : String(f?.dataUrl || f?.dataURL || ""),
+                fileName: typeof f === "string" ? "offer-letter" : String(f?.fileName || "offer-letter"),
               }))
               .filter((f) => f.dataUrl.startsWith("data:"))
           : singleDataUrl.startsWith("data:")
@@ -1045,8 +1045,13 @@ async function handle(req, res, url) {
         })),
         offerLetterWhatsappNotifications,
       });
-    } catch {
-      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    } catch (error) {
+      const errorMessage = String(error?.message || "").trim();
+      if (errorMessage === "Request body too large") {
+        sendJson(res, 413, { ok: false, error: "Request body too large. Upload a smaller file." });
+        return true;
+      }
+      sendJson(res, 400, { ok: false, error: errorMessage || "Invalid request body." });
     }
     return true;
   }

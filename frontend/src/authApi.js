@@ -291,12 +291,44 @@ export async function uploadStudentProfileOtherDocument(studentId, { dataUrl, fi
 
 export async function uploadStudentUniversityOfferLetters(studentId, { offerStatus, files }) {
   try {
-    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/university-offer-letters`, {
+    const normalizedFiles = Array.isArray(files)
+      ? files
+          .map((f) => ({
+            dataUrl: typeof f?.dataUrl === "string" ? f.dataUrl : typeof f?.dataURL === "string" ? f.dataURL : "",
+            fileName: typeof f?.fileName === "string" ? f.fileName : "offer-letter"
+          }))
+          .filter((f) => f.dataUrl)
+      : [];
+    const firstFile = normalizedFiles[0] || null;
+    const primaryBody = {
+      offerStatus,
+      files: normalizedFiles
+    };
+    let res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/university-offer-letters`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ offerStatus, files })
+      body: JSON.stringify(primaryBody)
     });
-    const data = await res.json().catch(() => ({}));
+    let data = await res.json().catch(() => ({}));
+    // Backward-compatible retry for servers that only accept single-file fields.
+    if (
+      !res.ok &&
+      firstFile &&
+      (String(data?.error || "").toLowerCase().includes("invalid request body") ||
+        String(data?.error || "").toLowerCase().includes("at least one offer letter"))
+    ) {
+      const fallbackBody = {
+        offerStatus,
+        dataUrl: firstFile.dataUrl,
+        fileName: firstFile.fileName
+      };
+      res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(studentId)}/university-offer-letters`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fallbackBody)
+      });
+      data = await res.json().catch(() => ({}));
+    }
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to upload offer letters." };
     }
@@ -905,6 +937,23 @@ export async function uploadInvoicePaymentProof(invoiceId, dataUrl, fileName) {
       return { ok: false, error: data.error || "Failed to upload payment proof." };
     }
     return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach invoice server. Please contact the Support team." };
+  }
+}
+
+export async function resendInvoiceWhatsapp(invoiceId, payload = {}) {
+  try {
+    const res = await fetch(`${API_BASE}/api/invoices/${encodeURIComponent(invoiceId)}/resend-whatsapp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to resend invoice WhatsApp." };
+    }
+    return { ok: true, data: data.data, whatsappDelivery: data.whatsappDelivery || null };
   } catch {
     return { ok: false, error: "Cannot reach invoice server. Please contact the Support team." };
   }

@@ -17,6 +17,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [isChatsLoading, setIsChatsLoading] = useState(true);
   const [whatsappSyncStatus, setWhatsappSyncStatus] = useState("disconnected");
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const lastSignatureRef = useRef("");
   useEffect(() => {
@@ -104,8 +105,12 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
   }, [selectedConversationId, conversationList, liveMessages, currentRole]);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [liveMessages, selectedConversationId]);
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
   const activeConversationId = selectedConversationId || conversationList[0]?.id;
   const getActiveMessages = () => {
     if (!activeConversationId) return [];
@@ -330,7 +335,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           whatsappSyncLabel
         ] })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50", children: [
+      /* @__PURE__ */ jsxs("div", { ref: messagesContainerRef, className: "flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50", children: [
         isChatsLoading ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center h-full text-slate-400", children: [
           /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mb-4 text-slate-300" }),
           /* @__PURE__ */ jsx("p", { children: "Loading chats..." }),

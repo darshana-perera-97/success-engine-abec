@@ -5,7 +5,7 @@ import { Button } from "./Button";
 import { formatLKR, formatRawLKR } from "../utils";
 import { isCounselorEquivalentAccountRole } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
-import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId } from "../authApi";
+import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp } from "../authApi";
 import { COMPANY_NAME } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const escapeInvoiceSvgText = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -250,6 +250,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [rejectModal, setRejectModal] = useState({ open: false, invoice: null, reason: "", error: "" });
   const [isRejecting, setIsRejecting] = useState(false);
+  const [resendingInvoiceId, setResendingInvoiceId] = useState("");
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
   const showWhatsappNotification = (message) => {
     setWhatsappNotification({ show: true, message });
@@ -404,6 +405,31 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     showInvoiceWhatsappResult(result, "rejected");
     setRejectModal({ open: false, invoice: null, reason: "", error: "" });
     setIsDetailsModalOpen(false);
+    loadStudentInvoices();
+  };
+  const handleResendInvoiceWhatsapp = async (invoice) => {
+    if (!invoice?.id || !isStaff) {
+      onNotify?.(
+        "WhatsApp resend unavailable",
+        "This action is only available to staff users.",
+        "warning"
+      );
+      return;
+    }
+    setResendingInvoiceId(String(invoice.id));
+    const result = await resendInvoiceWhatsapp(invoice.id, { actorRole: userRole });
+    setResendingInvoiceId("");
+    if (!result?.ok) {
+      onNotify?.("WhatsApp resend failed", result?.error || "Could not resend invoice via WhatsApp.", "error");
+      return;
+    }
+    const ws = result?.whatsappDelivery;
+    const detail = ws?.reason ? ` ${ws.reason}` : "";
+    if (ws?.status === "sent") {
+      onNotify?.("WhatsApp sent", `Invoice ${invoice.id} was resent to student via WhatsApp.`, "success");
+    } else {
+      onNotify?.("WhatsApp not sent", `Invoice ${invoice.id} resend did not complete.${detail}`, "warning");
+    }
     loadStudentInvoices();
   };
   const getStatusColor = (status) => {
@@ -657,10 +683,29 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           ] })
         ] }) }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`, children: inv.status }) }),
-        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: (event) => {
-          event.stopPropagation();
-          handleOpenDetails(inv);
-        }, children: "View More" }) })
+        /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap justify-end gap-2", children: [
+          isStudentView && (inv.status === "Pending" || inv.status === "Overdue") ? /* @__PURE__ */ jsx(Button, { size: "sm", onClick: (event) => {
+            event.stopPropagation();
+            handlePayClick(inv);
+          }, children: "Pay" }) : null,
+          isStaff ? /* @__PURE__ */ jsx(
+            Button,
+            {
+              size: "sm",
+              variant: "outline",
+              onClick: (event) => {
+                event.stopPropagation();
+                handleResendInvoiceWhatsapp(inv);
+              },
+              disabled: resendingInvoiceId === String(inv.id),
+              children: resendingInvoiceId === String(inv.id) ? "Sending…" : "Resend WhatsApp"
+            }
+          ) : null,
+          /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: (event) => {
+            event.stopPropagation();
+            handleOpenDetails(inv);
+          }, children: "View More" })
+        ] }) })
       ] }, inv.id)) })
     ] }) }),
     isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
@@ -707,6 +752,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6 flex-wrap", children: [
+        isStaff ? /* @__PURE__ */ jsx(
+          Button,
+          {
+            variant: "outline",
+            className: "flex-1 min-w-[140px]",
+            onClick: () => handleResendInvoiceWhatsapp(detailsInvoice),
+            disabled: resendingInvoiceId === String(detailsInvoice.id),
+            children: resendingInvoiceId === String(detailsInvoice.id) ? "Sending…" : "Resend WhatsApp"
+          }
+        ) : null,
         isStudentView && (detailsInvoice.status === "Pending" || detailsInvoice.status === "Overdue") ? /* @__PURE__ */ jsx(Button, { className: "flex-1 min-w-[140px]", onClick: () => {
           setIsDetailsModalOpen(false);
           handlePayClick(detailsInvoice);

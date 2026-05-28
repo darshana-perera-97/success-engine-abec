@@ -249,6 +249,77 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "POST" && /^\/api\/invoices\/[^/]+\/resend-whatsapp\/?$/.test(url.pathname)) {
+    try {
+      const invoiceId = decodeURIComponent(url.pathname.replace(/\/+$/, "").split("/")[3] || "").trim();
+      if (!invoiceId) {
+        sendJson(res, 400, { ok: false, error: "Invoice ID is required." });
+        return true;
+      }
+      const body = await parseBody(req);
+      const invoices = await readInvoices();
+      const idx = invoices.findIndex((inv) => String(inv.id || "") === invoiceId);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Invoice not found." });
+        return true;
+      }
+      const invoice = invoices[idx];
+      const students = await readStudemts();
+      const student = students.find((item) => String(item.id || "") === String(invoice.studentId || ""));
+      if (!student) {
+        sendJson(res, 404, { ok: false, error: "Student record not found for this invoice." });
+        return true;
+      }
+      const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+      if (!counselorId || counselorId === "Unassigned") {
+        sendJson(res, 400, { ok: false, error: "Student has no assigned counselor for WhatsApp sending." });
+        return true;
+      }
+      let paymentAccount = invoice.paymentAccount || null;
+      if (!paymentAccount && invoice.paymentAccountId) {
+        const accounts = await readPaymentAccounts();
+        paymentAccount = accounts.find((a) => String(a.id || "") === String(invoice.paymentAccountId || "")) || null;
+      }
+      const messageText = buildInvoiceWhatsappMessage({
+        studentName: String(student.name || "").trim(),
+        invoiceId: invoice.id,
+        currency: invoice.currency,
+        amount: invoice.amount,
+        description: invoice.description,
+        issueDate: invoice.issueDate,
+        dueDate: invoice.dueDate,
+        paymentAccount,
+        attachmentLink: invoice.attachmentLink,
+        attachmentFileUrl: invoice.attachmentFileUrl,
+        attachmentFileName: invoice.attachmentFileName,
+        generatedReceiptUrl: invoice.generatedReceiptUrl,
+      });
+      const whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
+        senderId: counselorId,
+        receiverId: String(invoice.studentId || "").trim(),
+        messageText,
+      });
+      const merged = {
+        ...invoice,
+        whatsappDelivery: {
+          ...(invoice.whatsappDelivery || {}),
+          ...whatsappDelivery,
+          resentAt: new Date().toISOString(),
+          resentByRole: String(body?.actorRole || "").trim(),
+          resentById: String(body?.actorId || "").trim(),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      const updated = [...invoices];
+      updated[idx] = merged;
+      await writeInvoices(updated);
+      sendJson(res, 200, { ok: true, data: publicInvoiceRecord(req, merged), whatsappDelivery });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: String(error?.message || "Failed to resend invoice via WhatsApp.") });
+    }
+    return true;
+  }
+
   if (req.method === "PUT" && url.pathname.startsWith("/api/invoices/") && !url.pathname.endsWith("/payment-proof")) {
     try {
       const invoiceId = decodeURIComponent(url.pathname.replace("/api/invoices/", "").trim()).replace(/\/+$/, "");
