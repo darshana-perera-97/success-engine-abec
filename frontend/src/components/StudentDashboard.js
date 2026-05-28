@@ -1,13 +1,13 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useMemo, useRef, useState } from "react";
-import { CheckCircle, Upload, AlertTriangle, Calendar, Info, X, CheckSquare, FileText, Download, Eye } from "lucide-react";
+import { useRef } from "react";
+import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
+import { DocumentManager } from "./DocumentManager";
 import { PersonContactCard } from "./PersonContactCard";
-import { filterChecklistForStudent, getStudentPipelineStepIndex } from "../docMappingConfig";
+import { getStudentPipelineStepIndex } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { PIPELINE_STEPS } from "../pipeline";
 import { buildStudentDashboardCounselorRoster } from "../studentContactHelpers";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -15,13 +15,16 @@ const formatRegisteredDate = (student) => {
   if (Number.isNaN(parsed.getTime())) return String(candidate);
   return parsed.toLocaleDateString();
 };
-const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onUploadDocument }) => {
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [selectedDocumentType, setSelectedDocumentType] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadError, setUploadError] = useState("");
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef(null);
+const StudentDashboard = ({
+  student,
+  onNavigate,
+  tasks = [],
+  employees = [],
+  onUploadDocument,
+  onUploadProfileOtherDocument,
+  onUpdateTasks
+}) => {
+  const pipelineDocsRef = useRef(null);
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
   const { config: countryDocConfig } = useCountryDocConfig(student?.country);
 
@@ -37,91 +40,8 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
     if (a.priority !== "High" && b.priority === "High") return 1;
     return 0;
   });
-  const documentTypeOptions = useMemo(() => {
-    const visible = filterChecklistForStudent(
-      countryDocConfig?.checklist,
-      student.status,
-      countryDocConfig?.stages
-    );
-    const seen = new Set();
-    const options = [];
-    for (const category of visible) {
-      for (const item of category.items) {
-        if (seen.has(item.docType)) continue;
-        seen.add(item.docType);
-        const isRequired = item.required !== false;
-        options.push({
-          docType: item.docType,
-          label: `${item.docType} (${isRequired ? "Required" : "Optional"})`,
-        });
-      }
-    }
-    return options;
-  }, [countryDocConfig, student.status]);
-  const closeUploadModal = () => {
-    setIsUploadModalOpen(false);
-    setSelectedDocumentType("");
-    setSelectedFile(null);
-    setUploadError("");
-    setIsUploading(false);
-  };
-  const handleUploadSubmit = async () => {
-    if (!selectedDocumentType) {
-      setUploadError("Please choose a document type.");
-      return;
-    }
-    if (!selectedFile) {
-      setUploadError("Please choose a file to upload.");
-      return;
-    }
-    const allowedTypes = new Set([
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ]);
-    if (!allowedTypes.has(selectedFile.type)) {
-      setUploadError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
-      return;
-    }
-    if (selectedFile.size > MAX_UPLOAD_BYTES) {
-      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
-      return;
-    }
-    if (!onUploadDocument) {
-      closeUploadModal();
-      return;
-    }
-    setUploadError("");
-    setIsUploading(true);
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("read_error"));
-      reader.readAsDataURL(selectedFile);
-    }).catch(() => "");
-    if (!dataUrl) {
-      setIsUploading(false);
-      setUploadError("Unable to read file. Try again.");
-      return;
-    }
-    const result = await onUploadDocument({
-      studentId: student.id,
-      dataUrl,
-      fileName: selectedFile.name,
-      docType: selectedDocumentType,
-      phase: 1,
-      tier: "Global"
-    });
-    if (!result?.ok) {
-      setIsUploading(false);
-      setUploadError(result?.error || "Failed to upload document.");
-      return;
-    }
-    setIsUploading(false);
-    closeUploadModal();
+  const scrollToPipelineDocs = () => {
+    pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
     /* @__PURE__ */ jsxs("div", { className: "bg-[#0F172A] rounded-2xl p-8 text-white shadow-xl relative overflow-hidden group", children: [
@@ -159,7 +79,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
               ]
             }
           ),
-          /* @__PURE__ */ jsxs(Button, { variant: "ghost", className: "text-white hover:bg-white/10 hover:text-white border border-white/20", onClick: () => setIsUploadModalOpen(true), children: [
+          /* @__PURE__ */ jsxs(Button, { variant: "ghost", className: "text-white hover:bg-white/10 hover:text-white border border-white/20", onClick: scrollToPipelineDocs, children: [
             /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-2" }),
             "Upload Documents"
           ] })
@@ -278,6 +198,34 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
             ] })
           ] })
         ] }),
+        /* @__PURE__ */ jsxs("div", {
+          id: "student-pipeline-docs",
+          ref: pipelineDocsRef,
+          className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm scroll-mt-6",
+          children: [
+            /* @__PURE__ */ jsxs("div", { className: "mb-4", children: [
+              /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 flex items-center gap-2", children: [
+                /* @__PURE__ */ jsx(FileText, { size: 18, className: "text-indigo-600" }),
+                "Your documents"
+              ] }),
+              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: "Pipeline requirements for your country and stage. Upload files and track review status — your counselor will approve or request changes." })
+            ] }),
+            /* @__PURE__ */ jsx(
+              DocumentManager,
+              {
+                student,
+                userRole: "Student",
+                tasks,
+                onUpdateTasks,
+                onUploadDocument,
+                onUploadProfileOtherDocument,
+                showPipelineChecklist: true,
+                showUniversityOfferLettersBlock: true,
+                showProfileOtherDocuments: false
+              }
+            )
+          ]
+        }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
           /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 mb-4 flex items-center", children: [
             /* @__PURE__ */ jsx(AlertTriangle, { size: 18, className: "mr-2 text-amber-500" }),
@@ -297,7 +245,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
                 ] })
               ] })
             ] }),
-            task.documentType ? /* @__PURE__ */ jsx(Button, { size: "sm", className: "w-full sm:w-auto", onClick: () => setIsUploadModalOpen(true), children: "Upload Now" }) : /* @__PURE__ */ jsx(Button, { size: "sm", variant: "secondary", className: "w-full sm:w-auto", onClick: () => onNavigate("tasks"), children: "View Task" })
+            task.documentType ? /* @__PURE__ */ jsx(Button, { size: "sm", className: "w-full sm:w-auto", onClick: scrollToPipelineDocs, children: "Upload Now" }) : /* @__PURE__ */ jsx(Button, { size: "sm", variant: "secondary", className: "w-full sm:w-auto", onClick: () => onNavigate("tasks"), children: "View Task" })
           ] }, task.id)) : /* @__PURE__ */ jsxs("div", { className: "text-center py-8 text-slate-500 text-sm", children: [
             /* @__PURE__ */ jsx(CheckCircle, { size: 24, className: "mx-auto mb-2 text-emerald-500" }),
             "No pending actions required at this stage."
@@ -349,33 +297,7 @@ const StudentDashboard = ({ student, onNavigate, tasks = [], employees = [], onU
           /* @__PURE__ */ jsx("div", { className: "absolute -bottom-6 -right-6 w-24 h-24 bg-indigo-700 rounded-full blur-xl opacity-50" })
         ] })
       ] })
-    ] }),
-    isUploadModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
-      /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
-        /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Upload Documents" }),
-        /* @__PURE__ */ jsx("button", { onClick: closeUploadModal, className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
-      ] }),
-      /* @__PURE__ */ jsx("label", { className: "block text-sm font-medium text-slate-700 mb-2", children: "Document Type" }),
-      /* @__PURE__ */ jsxs("select", { className: "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500", value: selectedDocumentType, onChange: (event) => setSelectedDocumentType(event.target.value), children: [
-        /* @__PURE__ */ jsx("option", { value: "", children: "Select a document type" }),
-        documentTypeOptions.map((opt) => /* @__PURE__ */ jsx("option", { value: opt.docType, children: opt.label }, opt.docType))
-      ] }),
-      /* @__PURE__ */ jsxs("div", { className: "border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-indigo-400 hover:bg-indigo-50 transition-colors cursor-pointer", onClick: () => fileInputRef.current?.click(), children: [
-        /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3", children: /* @__PURE__ */ jsx(Upload, { size: 24 }) }),
-        /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: selectedFile?.name || "Click to choose a file" }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: `PDF, JPG, PNG, DOC or DOCX (max. ${MAX_UPLOAD_LABEL})` })
-      ] }),
-      /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", className: "hidden", accept: ".pdf,.png,.jpg,.jpeg,.doc,.docx", onChange: (event) => {
-        const file = event.target.files?.[0];
-        setSelectedFile(file || null);
-        setUploadError("");
-      } }),
-      uploadError && /* @__PURE__ */ jsx("p", { className: "mt-3 text-xs text-rose-600", children: uploadError }),
-      /* @__PURE__ */ jsxs("div", { className: "mt-4 flex justify-end gap-2", children: [
-        /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: closeUploadModal, children: "Cancel" }),
-        /* @__PURE__ */ jsx(Button, { onClick: handleUploadSubmit, disabled: !selectedDocumentType || !selectedFile || isUploading, children: isUploading ? "Uploading..." : "Upload" })
-      ] })
-    ] }) })
+    ] })
   ] });
 };
 export {

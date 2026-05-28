@@ -377,7 +377,8 @@ function PipelineDocSection({ stages, docs, onChange }) {
     if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
     const visibleFrom = startVisibleStageId || defaultStartStageId;
     const completeBy = checkingStageId || visibleFrom || defaultCheckingStageId;
-    const stageIds = getStageRangeIds(stages, visibleFrom, completeBy);
+    const showUntilStageId = getEnrolledStageId(stages);
+    const stageIds = getStageRangeIds(stages, visibleFrom, showUntilStageId);
     onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds, visibleFrom, completeBy }]);
     setNewGroupName("");
     setStartVisibleStageId(defaultStartStageId);
@@ -391,7 +392,8 @@ function PipelineDocSection({ stages, docs, onChange }) {
     const existing = docs.find((d) => d.group === group);
     const visibleFrom = existing?.visibleFrom || startVisibleStageId || defaultStartStageId;
     const completeBy = existing?.completeBy || checkingStageId || visibleFrom || defaultCheckingStageId;
-    const stageIds = getStageRangeIds(stages, visibleFrom, completeBy);
+    const showUntilStageId = getEnrolledStageId(stages);
+    const stageIds = getStageRangeIds(stages, visibleFrom, showUntilStageId);
     onChange([...docs, { id: genId("doc"), group, name, required: newDocRequired, stageIds, visibleFrom, completeBy }]);
     setNewDocName("");
     setNewDocRequired(true);
@@ -625,6 +627,14 @@ function getStageRangeIds(stages, startStageId, endStageId) {
   const from = Math.min(startIdx, endIdx);
   const to = Math.max(startIdx, endIdx);
   return list.slice(from, to + 1).map((s) => s.id);
+}
+
+function getEnrolledStageId(stages) {
+  const list = Array.isArray(stages) ? stages : [];
+  const enrolled = list.find(
+    (s) => String(s?.id || "").trim().toLowerCase() === "enrolled" || String(s?.label || "").trim().toLowerCase() === "enrolled"
+  );
+  return enrolled?.id || list[list.length - 1]?.id || "";
 }
 
 // ─── Stage counselor tasks: add task + assign stage dropdown ───

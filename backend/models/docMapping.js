@@ -36,7 +36,7 @@ const DEFAULT_PIPELINE_DOC = {
   name: "Offer Letter",
   required: true,
   locked: true,
-  stageIds: ["registration", "application"],
+  stageIds: ["registration", "application", "documentation", "visa", "enrolled"],
   visibleFrom: "registration",
   completeBy: "application",
 };

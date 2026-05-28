@@ -20,10 +20,16 @@ function pipelineDocsToChecklist(pipelineDocs) {
     if (!name || name === "(placeholder)") continue;
     const group = String(doc?.group || "").trim() || "Ungrouped";
     if (!groupMap.has(group)) groupMap.set(group, []);
+    const stageIds = Array.isArray(doc.stageIds)
+      ? doc.stageIds.map((s) => String(s).trim()).filter(Boolean)
+      : [];
     groupMap.get(group).push({
       docType: name,
       required: doc.required !== false,
-      stageIds: Array.isArray(doc.stageIds) ? doc.stageIds.map((s) => String(s).trim()).filter(Boolean) : [],
+      visibleFrom: doc.visibleFrom
+        ? String(doc.visibleFrom).trim()
+        : stageIds[0] || "",
+      stageIds,
       completeBy: doc.completeBy ? String(doc.completeBy).trim() : "",
     });
   }

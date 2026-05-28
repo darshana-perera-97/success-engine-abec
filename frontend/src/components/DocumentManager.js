@@ -598,7 +598,7 @@ const DocumentManager = ({
           /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${uploadedFiles.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : isRequired ? "bg-white border-gray-200 text-slate-400" : "bg-emerald-50 border-emerald-200 text-emerald-500"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${uploadedFiles.length > 0 ? "text-amber-900" : isRequired ? "text-slate-500" : "text-emerald-800"}`, children: uploadedFiles.length > 0 ? "Awaiting approved document" : isRequired ? "Pending upload" : "Optional — not uploaded" }),
-            /* @__PURE__ */ jsx("p", { className: `text-xs ${uploadedFiles.length > 0 ? "text-amber-800/80" : isRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: uploadedFiles.length > 0 ? "Upload a new file or approve a pending submission for this requirement." : isRequired ? "Awaiting submission" : "Upload only if needed for this student." })
+            /* @__PURE__ */ jsx("p", { className: `text-xs ${uploadedFiles.length > 0 ? "text-amber-800/80" : isRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: uploadedFiles.length > 0 ? isStaff ? "Upload a new file or approve a pending submission for this requirement." : "Your counselor is reviewing your upload. You can submit a new file if needed." : isRequired ? "Awaiting submission" : isStaff ? "Upload only if needed for this student." : "Optional — upload only if you have this document." })
           ] })
         ] }) })
       ] });

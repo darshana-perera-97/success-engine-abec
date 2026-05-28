@@ -213,12 +213,18 @@ export function pipelineDocsToChecklist(pipelineDocs) {
     if (!name || name === "(placeholder)") continue;
     const group = String(doc?.group || "").trim() || "Ungrouped";
     if (!groupMap.has(group)) groupMap.set(group, []);
+    const stageIds = Array.isArray(doc.stageIds)
+      ? doc.stageIds.map((s) => String(s).trim()).filter(Boolean)
+      : [];
     groupMap.get(group).push({
       docType: name,
       description: "",
       required: doc.required !== false,
       locked: doc.locked === true,
-      stageIds: Array.isArray(doc.stageIds) ? doc.stageIds.map((s) => String(s).trim()).filter(Boolean) : [],
+      visibleFrom: doc.visibleFrom
+        ? String(doc.visibleFrom).trim()
+        : stageIds[0] || "",
+      stageIds,
       completeBy: doc.completeBy ? String(doc.completeBy).trim() : "",
     });
   }
@@ -348,6 +354,47 @@ export function isVisaPilotUnlockedForConfig(status, countryConfig) {
   return false;
 }
 
+function getPipelineStageIndex(stages, stageId) {
+  return (Array.isArray(stages) ? stages : []).findIndex((s) => s.id === stageId);
+}
+
+function getEnrolledPipelineStageIndex(stages) {
+  const stageList = Array.isArray(stages) ? stages : [];
+  const enrolledIdx = stageList.findIndex(
+    (s) =>
+      String(s?.id || "").trim().toLowerCase() === "enrolled" ||
+      String(s?.label || "").trim().toLowerCase() === "enrolled"
+  );
+  return enrolledIdx >= 0 ? enrolledIdx : stageList.length - 1;
+}
+
+/** True when a mapped pipeline doc should appear at the student's current stage (start → Enrolled). */
+export function isPipelineChecklistItemVisibleAtStage(item, currentStageId, stages) {
+  const stageList = Array.isArray(stages) ? stages : [];
+  const currentIdx = getPipelineStageIndex(stageList, currentStageId);
+  if (currentIdx < 0) return false;
+  const endIdx = getEnrolledPipelineStageIndex(stageList);
+  if (endIdx < 0) return true;
+
+  const visibleFromId = String(item?.visibleFrom || "").trim();
+  const stageIds = Array.isArray(item?.stageIds)
+    ? item.stageIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+
+  let startIdx = -1;
+  if (visibleFromId) {
+    startIdx = getPipelineStageIndex(stageList, visibleFromId);
+  } else if (stageIds.length > 0) {
+    const indices = stageIds
+      .map((id) => getPipelineStageIndex(stageList, id))
+      .filter((idx) => idx >= 0);
+    startIdx = indices.length > 0 ? Math.min(...indices) : -1;
+  }
+
+  if (startIdx < 0) return currentIdx <= endIdx;
+  return currentIdx >= startIdx && currentIdx <= endIdx;
+}
+
 /**
  * Checklist sections visible for the student's current pipeline stage (doc-mapping stageIds).
  */
@@ -359,8 +406,11 @@ export function filterChecklistForStudent(checklist, status, stages) {
   const hasStageIds = list.some((cat) =>
     (cat.items || []).some((item) => Array.isArray(item.stageIds) && item.stageIds.length > 0)
   );
+  const hasVisibleFrom = list.some((cat) =>
+    (cat.items || []).some((item) => String(item?.visibleFrom || "").trim())
+  );
 
-  if (!hasStageIds) {
+  if (!hasStageIds && !hasVisibleFrom) {
     const visibleGroups = new Set(getVisibleCountryChecklistStages(status));
     return list
       .filter((category) => visibleGroups.has(category.stage))
@@ -372,11 +422,9 @@ export function filterChecklistForStudent(checklist, status, stages) {
   return list
     .map((category) => ({
       ...category,
-      items: (category.items || []).filter((item) => {
-        const ids = item.stageIds || [];
-        if (ids.length === 0) return true;
-        return ids.includes(stageId);
-      }),
+      items: (category.items || []).filter((item) =>
+        isPipelineChecklistItemVisibleAtStage(item, stageId, stages)
+      ),
     }))
     .filter((category) => category.items.length > 0);
 }
