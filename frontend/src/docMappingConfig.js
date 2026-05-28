@@ -435,8 +435,15 @@ function legacyRequiredGroupsForStageId(stageId) {
 }
 
 export function documentTypeMatchesRequirement(docType, requiredDocType) {
-  const dt = String(docType || "");
-  const req = String(requiredDocType || "");
+  const normalizeDocType = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g, " ")
+      .replace(/[^a-z0-9 ]/g, "");
+  const dt = normalizeDocType(docType);
+  const req = normalizeDocType(requiredDocType);
+  if (!dt || !req) return false;
   return dt === req || dt.includes(req) || req.includes(dt);
 }
 
