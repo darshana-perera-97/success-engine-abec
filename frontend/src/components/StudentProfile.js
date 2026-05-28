@@ -1143,16 +1143,6 @@ const StudentProfile = ({
   };
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
-      if (missingRequiredDocsBeforeAdvance.length > 0) {
-        const preview = missingRequiredDocsBeforeAdvance.slice(0, 8).join(", ");
-        const suffix = missingRequiredDocsBeforeAdvance.length > 8 ? "..." : "";
-        onNotify?.(
-          "Required documents pending",
-          `Cannot move to next stage until required documents are completed: ${preview}${suffix}`,
-          "error"
-        );
-        return;
-      }
       if (nextStep === "Enrolled") {
         const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices);
         if (blockReasons.length > 0) {
@@ -1648,7 +1638,7 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: "Complete pipeline documents (all checklist stages), the Visa tab checklist, and pay every invoice (Paid status)." })
             ] }),
             missingRequiredDocsBeforeAdvance.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
-              /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Stage move is blocked until required documents are completed:" }),
+              /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Required documents are still pending (you can still continue):" }),
               /* @__PURE__ */ jsx("ul", { className: "list-disc pl-4 space-y-1", children: missingRequiredDocsBeforeAdvance.slice(0, 12).map((docType) => /* @__PURE__ */ jsx("li", { className: "whitespace-pre-wrap", children: docType }, docType)) }),
               missingRequiredDocsBeforeAdvance.length > 12 && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: `+${missingRequiredDocsBeforeAdvance.length - 12} more required document(s)` })
             ] }),
@@ -1694,7 +1684,7 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-white shrink-0", children: [
             /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0 || missingRequiredDocsBeforeAdvance.length > 0, children: "Confirm & Continue" })
+            /* @__PURE__ */ jsx(Button, { onClick: handleConfirmAdvancePipeline, disabled: advanceDialog.counselorMode === "another" && !advanceDialog.counselorId || nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0, children: "Confirm & Continue" })
           ] })
         ] }) }),
         /* @__PURE__ */ jsx(InquiryCaptureFlowModals, {

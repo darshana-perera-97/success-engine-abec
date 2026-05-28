@@ -523,6 +523,16 @@ export function studentHasUploadedDocType(studentDocs, docType) {
   });
 }
 
+function studentHasUniversityOfferLetter(student) {
+  return (student?.universityOfferLetters || []).some((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const hasFile = Boolean(String(entry.url || "").trim());
+    if (!hasFile) return false;
+    const status = String(entry.offerStatus || "").trim().toLowerCase();
+    return status !== "rejected";
+  });
+}
+
 /** Doc types still missing for the stage the student is leaving (before advance). */
 export function collectMissingDocTypesForStage(student, previousStatusLabel, countryConfig) {
   const statusLabel = String(previousStatusLabel || "").trim();
@@ -530,7 +540,17 @@ export function collectMissingDocTypesForStage(student, previousStatusLabel, cou
   const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
   const stageId = resolveStudentStageId(statusLabel, countryConfig?.stages);
   let missing = getRequiredDocTypesBeforeAdvance(statusLabel, countryConfig)
-    .filter(({ docType }) => !studentHasUploadedDocType(studentDocs, docType))
+    .filter(({ group, docType }) => {
+      if (studentHasUploadedDocType(studentDocs, docType)) return false;
+      if (
+        isOfferLetterChecklistGroup(group) &&
+        documentTypeMatchesRequirement(docType, "Offer Letter") &&
+        studentHasUniversityOfferLetter(student)
+      ) {
+        return false;
+      }
+      return true;
+    })
     .map(({ docType }) => docType);
   if (stageId === "documentation") {
     const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
