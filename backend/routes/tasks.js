@@ -3,8 +3,7 @@ const { parseBody, sendJson } = require("../lib/httpUtils");
 const { logEvent } = require("../lib/logger");
 const { readTasks, writeTasks, withTasksMutationLock } = require("../models/tasks");
 const { readStudemts } = require("../models/students");
-const { resolveCounselor } = require("../services/roles");
-const { deliverCounselorMessageToStudentWhatsapp } = require("../services/whatsapp");
+const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
 
 async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/tasks") {
@@ -81,6 +80,9 @@ async function handle(req, res, url) {
         phase: Number.isFinite(Number(body.phase)) ? Number(body.phase) : 1,
         isBlocking: body.isBlocking === true,
         documentType: body.documentType ? String(body.documentType) : undefined,
+        ...(body.stageSourceKey ? { stageSourceKey: String(body.stageSourceKey).trim() } : {}),
+        ...(body.stageId ? { stageId: String(body.stageId).trim() } : {}),
+        ...(body.stageLabel ? { stageLabel: String(body.stageLabel).trim() } : {}),
         requiresStudentDocuments,
         taskDocumentRequests: requiresStudentDocuments ? taskDocumentRequests : [],
         createdBy: body.createdBy ? String(body.createdBy) : "",

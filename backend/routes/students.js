@@ -30,19 +30,14 @@ const {
 } = require("../services/pipeline");
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
 const {
-  getSmtpConfigError,
-  sendStudentWelcomeEmail,
-  buildStudentPortalLoginUrl,
-} = require("../services/email");
-const {
   deliverCounselorMessageToStudentWhatsapp,
   buildCounselorAssignmentWhatsappMessage,
-  buildStudentAccountDetailsWhatsappMessage,
   buildDocumentDecisionWhatsappMessage,
   buildUniversityOfferWhatsappMessage,
   isSupportedWhatsappMediaMime,
   normalizeSriLankaStudentPhone,
 } = require("../services/whatsapp");
+const { sendStudentPortalAccountDetails } = require("../services/studentAccountDetails");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
   storeImageDataUrl,
@@ -52,12 +47,14 @@ const {
 } = require("../services/uploads");
 const {
   isApplicationStage,
-  isDocumentationStage,
-  isInquiryStage,
-  isRegistrationStage,
 } = require("../services/pipeline");
 
-const { readCountryDocConfig, getEnrolledAdvanceBlockReasons } = require("../lib/docMappingResolve");
+const {
+  readCountryDocConfig,
+  getEnrolledAdvanceBlockReasons,
+  resolveStudentStageId,
+} = require("../lib/docMappingResolve");
+const { normalizeAccountDetailsStageId } = require("../models/docMapping");
 
 async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent) {
   const prevStage = normalizePipelineStatus(previousStudent?.status);
@@ -420,8 +417,17 @@ async function handle(req, res, url) {
         }
       }
 
-      const transitionedToDocumentation =
-        !isDocumentationStage(previous?.status) && isDocumentationStage(merged?.status);
+      const countryConfig = await readCountryDocConfig(merged.country);
+      const configStages = countryConfig?.stages || [];
+      const accountDetailsStageId = normalizeAccountDetailsStageId(
+        countryConfig?.accountDetailsStageId,
+        configStages
+      );
+      const previousStageId = resolveStudentStageId(previous?.status, configStages);
+      const mergedStageId = resolveStudentStageId(merged?.status, configStages);
+      const transitionedToAccountDetailsStage =
+        mergedStageId === accountDetailsStageId && previousStageId !== accountDetailsStageId;
+
       const alreadySent = Boolean(
         previous?.accountDetailsSentAt ||
           merged?.accountDetailsSentAt ||
@@ -429,186 +435,21 @@ async function handle(req, res, url) {
           merged?.applicationAccountDetailsSentAt
       );
 
-      const transitionedToApplication =
-        isApplicationStage(merged?.status) &&
-        !isApplicationStage(previous?.status) &&
-        (isInquiryStage(previous?.status) || isRegistrationStage(previous?.status));
-
-      if (transitionedToApplication && !alreadySent) {
+      if (transitionedToAccountDetailsStage && !alreadySent) {
+        const delivery = await sendStudentPortalAccountDetails({ req, student: merged, studentId });
         const emailAddress = normalizeEmail(merged.email);
-        const password = String(merged.password || "");
-        const studentName = String(merged.name || "").trim();
-        const loginUrl = buildStudentPortalLoginUrl(req);
-
-        const delivery = {
-          email: { attempted: false, status: "skipped", reason: "" },
-          whatsapp: { attempted: false, status: "skipped", reason: "" },
-        };
-
-        try {
-          const smtpError = getSmtpConfigError();
-          if (smtpError) {
-            delivery.email = { attempted: false, status: "skipped", reason: smtpError };
-          } else if (!emailAddress || !password) {
-            delivery.email = { attempted: false, status: "skipped", reason: "Missing student email or password." };
-          } else {
-            const users = await readUsers();
-            const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
-            const counselorUser = users.find((u) => String(u.id || "") === counselorId);
-            const counselorNameForEmail =
-              String(merged.counselorName || "").trim() ||
-              (counselorUser ? String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email) : "") ||
-              "Not assigned yet";
-            await sendStudentWelcomeEmail({
-              to: emailAddress,
-              studentName: studentName || emailAddress,
-              loginUrl,
-              emailAddress,
-              password,
-              counselorName: counselorNameForEmail,
-            });
-            delivery.email = { attempted: true, status: "sent", reason: "" };
-          }
-        } catch (error) {
-          console.error("Student inquiry->application email failed:", error);
-          delivery.email = {
-            attempted: true,
-            status: "failed",
-            reason: String(error?.message || "Failed to send email."),
-          };
-        }
-
-        try {
-          const inquiryCounselorId = String(merged.inquiryCounselorId || "").trim();
-          const counselorId = inquiryCounselorId || String(merged.counselor || "").trim();
-          if (!counselorId || counselorId === "Unassigned") {
-            delivery.whatsapp = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
-          } else {
-            const message = buildStudentAccountDetailsWhatsappMessage({
-              studentName: studentName || emailAddress,
-              emailAddress,
-              password,
-              loginUrl,
-            });
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId: counselorId,
-              receiverId: studentId,
-              content: message,
-            });
-            if (result && result.attempted) {
-              delivery.whatsapp = {
-                attempted: true,
-                status: result.status || "failed",
-                reason: result.reason || "",
-              };
-            } else {
-              delivery.whatsapp = { attempted: false, status: "skipped", reason: result?.reason || "Not attempted." };
-            }
-          }
-        } catch (error) {
-          console.error("Student inquiry->application WhatsApp failed:", error);
-          delivery.whatsapp = {
-            attempted: true,
-            status: "failed",
-            reason: String(error?.message || "Failed to send WhatsApp message."),
-          };
-        }
-
-        merged.applicationAccountDetailsSentAt = nowIso;
-        merged.applicationAccountDetailsDelivery = delivery;
-        logEvent("student", "moved to Application: sent account details", {
-          studentId,
-          email: emailAddress,
-          counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
-          delivery,
-        });
-      }
-
-      if (transitionedToDocumentation && !alreadySent) {
-        const emailAddress = normalizeEmail(merged.email);
-        const password = String(merged.password || "");
-        const studentName = String(merged.name || "").trim();
-        const loginUrl = buildStudentPortalLoginUrl(req);
-
-        const delivery = {
-          email: { attempted: false, status: "skipped", reason: "" },
-          whatsapp: { attempted: false, status: "skipped", reason: "" },
-        };
-
-        try {
-          const smtpError = getSmtpConfigError();
-          if (smtpError) {
-            delivery.email = { attempted: false, status: "skipped", reason: smtpError };
-          } else if (!emailAddress || !password) {
-            delivery.email = { attempted: false, status: "skipped", reason: "Missing student email or password." };
-          } else {
-            const users = await readUsers();
-            const counselorId = String(merged.counselor || "").trim();
-            const counselorUser = users.find((u) => String(u.id || "") === counselorId);
-            const counselorNameForEmail =
-              String(merged.counselorName || "").trim() ||
-              (counselorUser ? String(counselorUser.username || "").trim() || normalizeEmail(counselorUser.email) : "") ||
-              "Not assigned yet";
-            await sendStudentWelcomeEmail({
-              to: emailAddress,
-              studentName: studentName || emailAddress,
-              loginUrl,
-              emailAddress,
-              password,
-              counselorName: counselorNameForEmail,
-            });
-            delivery.email = { attempted: true, status: "sent", reason: "" };
-          }
-        } catch (error) {
-          console.error("Student documentation-stage email failed:", error);
-          delivery.email = {
-            attempted: true,
-            status: "failed",
-            reason: String(error?.message || "Failed to send email."),
-          };
-        }
-
-        try {
-          const inquiryCounselorId = String(merged.inquiryCounselorId || "").trim();
-          const counselorId = inquiryCounselorId || String(merged.counselor || "").trim();
-          if (!counselorId || counselorId === "Unassigned") {
-            delivery.whatsapp = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
-          } else {
-            const message = buildStudentAccountDetailsWhatsappMessage({
-              studentName: studentName || emailAddress,
-              emailAddress,
-              password,
-              loginUrl,
-            });
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId: counselorId,
-              receiverId: studentId,
-              content: message,
-            });
-            if (result && result.attempted) {
-              delivery.whatsapp = {
-                attempted: true,
-                status: result.status || "failed",
-                reason: result.reason || "",
-              };
-            } else {
-              delivery.whatsapp = { attempted: false, status: "skipped", reason: result?.reason || "Not attempted." };
-            }
-          }
-        } catch (error) {
-          console.error("Student documentation-stage WhatsApp failed:", error);
-          delivery.whatsapp = {
-            attempted: true,
-            status: "failed",
-            reason: String(error?.message || "Failed to send WhatsApp message."),
-          };
-        }
-
         merged.accountDetailsSentAt = nowIso;
         merged.accountDetailsDelivery = delivery;
-        logEvent("student", "moved to Documentation: sent account details", {
+        if (accountDetailsStageId === "application") {
+          merged.applicationAccountDetailsSentAt = nowIso;
+          merged.applicationAccountDetailsDelivery = delivery;
+        }
+        const stageLabel =
+          configStages.find((s) => s.id === accountDetailsStageId)?.label || accountDetailsStageId;
+        logEvent("student", `moved to ${stageLabel}: sent account details`, {
           studentId,
           email: emailAddress,
+          stageId: accountDetailsStageId,
           counselorId: String(merged.inquiryCounselorId || merged.counselor || ""),
           delivery,
         });

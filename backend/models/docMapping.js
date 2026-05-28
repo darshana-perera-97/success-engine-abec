@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { DOC_MAPPING_FILE, STAGES_FILE } = require("../config");
@@ -44,8 +45,59 @@ function defaultPipelineDocs() {
   return [{ ...DEFAULT_PIPELINE_DOC }];
 }
 
+const DEFAULT_ACCOUNT_DETAILS_STAGE_ID = "application";
+
 function emptyDocConfig() {
-  return { pipelineDocs: defaultPipelineDocs(), visaDocs: [] };
+  return {
+    pipelineDocs: defaultPipelineDocs(),
+    visaDocs: [],
+    stageTasks: {},
+    accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
+  };
+}
+
+/** Resolve configured stage for sending portal login; defaults to Application. */
+function normalizeAccountDetailsStageId(raw, stages) {
+  const fallback = DEFAULT_ACCOUNT_DETAILS_STAGE_ID;
+  const id = String(raw || fallback).trim() || fallback;
+  const stageList = Array.isArray(stages) && stages.length > 0 ? stages : defaultStagesCopy();
+  if (stageList.some((s) => s.id === id)) return id;
+  const application = stageList.find(
+    (s) => s.id === fallback || String(s.label || "").trim().toLowerCase() === "application"
+  );
+  return application ? application.id : stageList[0]?.id || fallback;
+}
+
+/** @returns {Record<string, Array<{id:string,title:string,priority?:string,dueDays?:number}>>} */
+function normalizeStageTasks(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  const allowedPriority = new Set(["High", "Medium", "Low"]);
+  for (const [stageId, tasks] of Object.entries(raw)) {
+    const key = String(stageId || "").trim();
+    if (!key || !Array.isArray(tasks)) continue;
+    const cleaned = tasks
+      .map((t) => {
+        const title = String(t?.title || t?.task || "").trim();
+        if (!title) return null;
+        const priority = allowedPriority.has(String(t?.priority || ""))
+          ? String(t.priority)
+          : "Medium";
+        const dueDaysRaw = Number(t?.dueDays);
+        const dueDays = Number.isFinite(dueDaysRaw)
+          ? Math.min(90, Math.max(1, Math.round(dueDaysRaw)))
+          : 3;
+        return {
+          id: String(t?.id || "").trim() || `stt-${crypto.randomUUID().slice(0, 8)}`,
+          title,
+          priority,
+          dueDays,
+        };
+      })
+      .filter(Boolean);
+    if (cleaned.length > 0) out[key] = cleaned;
+  }
+  return out;
 }
 
 function ensureDefaultPipelineDocs(pipelineDocs) {
@@ -109,9 +161,12 @@ module.exports = {
   readDocMapping,
   writeDocMapping,
   emptyDocConfig,
+  normalizeStageTasks,
+  normalizeAccountDetailsStageId,
   defaultStagesCopy,
   defaultPipelineDocs,
   ensureDefaultPipelineDocs,
   DEFAULT_STAGES,
   DEFAULT_PIPELINE_DOC,
+  DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
 };

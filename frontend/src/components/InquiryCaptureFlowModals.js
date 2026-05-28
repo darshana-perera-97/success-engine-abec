@@ -3,7 +3,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 import { getBranches, getCountries, moveStudentToRequests } from "../authApi";
-import { getInquiryIntakeSlaRemainingParts } from "../pipeline";
+import { getInquiryIntakeSlaRemainingParts, normalizePipelineStatus } from "../pipeline";
 import {
   examResultsRowsFromStudent,
   InquiryIntakeForm,
@@ -203,28 +203,18 @@ const InquiryCaptureFlowModals = ({
     };
     const merged = {
       ...summaryStudent,
-      meetingNotes: [noteEntry, ...existingNotes]
+      meetingNotes: [noteEntry, ...existingNotes],
+      ...(normalizePipelineStatus(summaryStudent.status) === "Inquiry"
+        ? { status: "Registration" }
+        : {})
     };
     await onUpdateStudent?.(merged);
     if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
     setSummaryOpen(false);
     setSummaryStudent(null);
     onClear?.();
-    const latest = resolveStudentById(studentId) || merged;
+    const latest = { ...(resolveStudentById(studentId) || {}), ...merged };
     return { ok: true, latest };
-  };
-
-  const handleSaveAndCreateInvoice = async () => {
-    if (!summaryStudent || summaryAction !== "meeting-note") return;
-    setIsSavingSummary(true);
-    setSummaryError("");
-    try {
-      const result = await saveMeetingNoteFromSummary();
-      if (!result.ok) return;
-      onSelectStudent?.(result.latest, { profileTab: "ledger", openCreateInvoice: true });
-    } finally {
-      setIsSavingSummary(false);
-    }
   };
 
   const handleSaveSummary = async (e) => {
@@ -450,15 +440,6 @@ const InquiryCaptureFlowModals = ({
                   /* @__PURE__ */ jsxs("div", {
                     className: "flex flex-wrap justify-end items-center gap-2 pt-2 border-t border-gray-100",
                     children: [
-                      summaryAction === "meeting-note" &&
-                        /* @__PURE__ */ jsx(Button, {
-                          type: "button",
-                          variant: "outline",
-                          onClick: handleSaveAndCreateInvoice,
-                          isLoading: isSavingSummary,
-                          disabled: isSavingSummary,
-                          children: "Save and create Invoice"
-                        }),
                       /* @__PURE__ */ jsx(Button, {
                         type: "button",
                         variant: "ghost",

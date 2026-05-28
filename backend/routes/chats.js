@@ -2,8 +2,7 @@ const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readChats, writeChats } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
-const { resolveCounselor } = require("../services/roles");
-const { deliverCounselorMessageToStudentWhatsapp } = require("../services/whatsapp");
+const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
 const { storeChatAttachmentDataUrl } = require("../services/uploads");
 
 async function handle(req, res, url) {

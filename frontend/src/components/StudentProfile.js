@@ -48,16 +48,15 @@ import {
 import {
   getNextPipelineStepLabel,
   getPipelineStagesForConfig,
-  getRequiredDocTypesBeforeAdvance,
+  collectMissingDocTypesForStage,
   getStudentPipelineStepIndex,
   isVisaPilotUnlockedForConfig,
   resolveStudentStageId,
   stageLabelsEquivalent,
-  studentHasUploadedDocType,
 } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { exportStudentDocumentsZip } from "../utils/exportStudentDocumentsZip";
-import { getEnrolledAdvanceBlockReasons, collectMissingVisaPilotUploads } from "../studentEnrolledGate.js";
+import { getEnrolledAdvanceBlockReasons } from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import {
@@ -1147,77 +1146,20 @@ const StudentProfile = ({
           return;
         }
       }
-      const studentDocs = localStudent.documents || [];
-      const stageId = resolveStudentStageId(localStudent.status, countryDocConfig?.stages);
-      let allMissingItems = getRequiredDocTypesBeforeAdvance(localStudent.status, countryDocConfig)
-        .filter(({ docType }) => !studentHasUploadedDocType(studentDocs, docType))
-        .map(({ docType }) => docType);
-      if (stageId === "documentation") {
-        for (const { docType } of collectMissingVisaPilotUploads(localStudent, countryDocConfig)) {
-          allMissingItems.push(docType);
-        }
-      }
-      allMissingItems = [...new Set(allMissingItems)];
+      const allMissingItems = collectMissingDocTypesForStage(
+        localStudent,
+        localStudent.status,
+        countryDocConfig
+      );
       const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
       const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
       const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
-      const docTaskCounselorId = nextCounselorId || String(localStudent.counselor || "").trim() || currentCounselorId;
-      const relatedCounselorIds = Array.from(
-        new Set(
-          [
-            String(localStudent.counselor || "").trim(),
-            String(localStudent.inquiryCounselorId || "").trim(),
-            String(currentCounselorId || "").trim(),
-            String(nextCounselorId || "").trim(),
-            ...(Array.isArray(localStudent.counselorHistory) ? localStudent.counselorHistory : []).map((id) => String(id || "").trim())
-          ].filter((id) => id && id !== "Unassigned")
-        )
-      );
       const buildDueDate = (daysFromNow = 3) => {
         const due = new Date();
         due.setDate(due.getDate() + daysFromNow);
         return due.toISOString().split("T")[0];
       };
-      let updatedViolations = [...localStudent.slaViolations || []];
       if (allMissingItems.length > 0) {
-        const existingTaskTypes = new Set(
-          (tasks || [])
-            .filter((t) => {
-              const tid = resolveTaskStudentKey(t);
-              const pk = resolveProfileStudentKey(localStudent);
-              return Boolean(pk) && Boolean(tid) && tid === pk && t.status !== "Completed";
-            })
-            .map((t) => String(t.documentType || "").trim())
-            .filter(Boolean)
-        );
-        const now = Date.now();
-        const docTasks = allMissingItems
-          .filter((docType) => !existingTaskTypes.has(String(docType || "").trim()))
-          .map((docType, idx) => ({
-            id: `T-DOC-${localStudent.id}-${now}-${idx}`,
-            task: `Upload ${docType}`,
-            assigned_to: relatedCounselorIds.length > 0 ? relatedCounselorIds : docTaskCounselorId ? [docTaskCounselorId] : [],
-            counselor_ids: relatedCounselorIds,
-            student_id: localStudent.id,
-            priority: "High",
-            status: "Pending",
-            dueDate: buildDueDate(3),
-            tier: "Global",
-            phase: 1,
-            isBlocking: true,
-            isPrivate: true,
-            documentType: docType
-          }));
-        if (docTasks.length > 0) {
-          onAddTasks?.(docTasks);
-        }
-        updatedViolations = [...updatedViolations, {
-          id: `SLA-${Date.now()}`,
-          stage: localStudent.status,
-          missingItems: allMissingItems,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          resolved: false
-        }];
         onAddActivity?.({
           user: userRole,
           role: userRole,
@@ -1255,7 +1197,6 @@ const StudentProfile = ({
       const updated = {
         ...localStudent,
         status: nextStep,
-        slaViolations: updatedViolations,
         counselor: shouldAssignAnother ? advanceDialog.counselorId : localStudent.counselor,
         counselorName: shouldAssignAnother ? selectedCounselor?.name || selectedCounselor?.username || localStudent.counselorName : localStudent.counselorName
       };

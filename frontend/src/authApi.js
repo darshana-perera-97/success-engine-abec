@@ -518,6 +518,38 @@ export async function saveDocMappingVisaDocs(country, docs) {
   }
 }
 
+export async function saveDocMappingStageTasks(country, stageTasks) {
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/stage-tasks`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, stageTasks })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return { ok: false, error: data.error || "Failed to save stage tasks." };
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
+export async function saveDocMappingAccountDetailsStage(country, accountDetailsStageId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/account-details-stage`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, accountDetailsStageId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save account details stage." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
 export async function getPaymentAccounts() {
   try {
     const res = await fetch(`${API_BASE}/api/payment-accounts`);

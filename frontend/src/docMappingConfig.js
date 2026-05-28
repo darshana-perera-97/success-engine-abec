@@ -13,6 +13,8 @@ const DEFAULT_STAGE_ROWS = [
 
 const OFFER_LETTER_GROUPS = new Set(["Offer Letter", "Offer Received", "Uni Application"]);
 
+export const DEFAULT_ACCOUNT_DETAILS_STAGE_ID = "application";
+
 /**
  * @param {{ stages?: Array<{id:string,label:string}>, pipelineDocs?: Array, visaDocs?: Array }} apiData
  */
@@ -20,6 +22,8 @@ export function buildCountryDocConfig(apiData) {
   const stages = Array.isArray(apiData?.stages) && apiData.stages.length > 0 ? apiData.stages : DEFAULT_STAGE_ROWS;
   const pipelineDocs = Array.isArray(apiData?.pipelineDocs) ? apiData.pipelineDocs : [];
   const visaDocs = Array.isArray(apiData?.visaDocs) ? apiData.visaDocs : [];
+  const stageTasks = normalizeStageTasksMap(apiData?.stageTasks);
+  const accountDetailsStageId = normalizeAccountDetailsStageId(apiData?.accountDetailsStageId, stages);
   return {
     stages,
     pipelineSteps: stages.map((s) => s.label),
@@ -27,7 +31,130 @@ export function buildCountryDocConfig(apiData) {
     visaWorkflow: normalizeVisaWorkflowStages(visaDocsToWorkflow(visaDocs)),
     pipelineDocs,
     visaDocs,
+    stageTasks,
+    accountDetailsStageId,
   };
+}
+
+export function normalizeAccountDetailsStageId(raw, stages) {
+  const fallback = DEFAULT_ACCOUNT_DETAILS_STAGE_ID;
+  const id = String(raw || fallback).trim() || fallback;
+  const stageList = Array.isArray(stages) && stages.length > 0 ? stages : DEFAULT_STAGE_ROWS;
+  if (stageList.some((s) => s.id === id)) return id;
+  const application = stageList.find(
+    (s) => s.id === fallback || String(s.label || "").trim().toLowerCase() === "application"
+  );
+  return application ? application.id : stageList[0]?.id || fallback;
+}
+
+/** @returns {Record<string, Array<{id:string,title:string,priority:string,dueDays:number}>>} */
+export function normalizeStageTasksMap(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  const allowedPriority = new Set(["High", "Medium", "Low"]);
+  for (const [stageId, tasks] of Object.entries(raw)) {
+    const key = String(stageId || "").trim();
+    if (!key || !Array.isArray(tasks)) continue;
+    const cleaned = tasks
+      .map((t) => {
+        const title = String(t?.title || t?.task || "").trim();
+        if (!title) return null;
+        const priority = allowedPriority.has(String(t?.priority || ""))
+          ? String(t.priority)
+          : "Medium";
+        const dueDaysRaw = Number(t?.dueDays);
+        const dueDays = Number.isFinite(dueDaysRaw)
+          ? Math.min(90, Math.max(1, Math.round(dueDaysRaw)))
+          : 3;
+        return {
+          id: String(t?.id || "").trim() || `stt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          title,
+          priority,
+          dueDays,
+        };
+      })
+      .filter(Boolean);
+    if (cleaned.length > 0) out[key] = cleaned;
+  }
+  return out;
+}
+
+export function getConfiguredStageTasks(stageId, countryConfig) {
+  const key = String(stageId || "").trim();
+  if (!key) return [];
+  const map = countryConfig?.stageTasks;
+  return Array.isArray(map?.[key]) ? map[key] : [];
+}
+
+export function buildStageTransitionTaskKey(studentId, stageId, configTaskId) {
+  return `stage-task:${String(studentId || "").trim()}:${String(stageId || "").trim()}:${String(configTaskId || "").trim()}`;
+}
+
+/**
+ * Build counselor tasks when a student enters a pipeline stage (from doc mapping).
+ */
+export function buildStageTransitionTasks({
+  student,
+  targetStageLabel,
+  countryConfig,
+  existingTasks = [],
+  assigneeIds = [],
+}) {
+  const studentId = String(student?.id || "").trim();
+  if (!studentId || !targetStageLabel) return [];
+  const stages = countryConfig?.stages || [];
+  const stageId = resolveStudentStageId(targetStageLabel, stages);
+  if (!stageId) return [];
+  const configured = getConfiguredStageTasks(stageId, countryConfig);
+  if (configured.length === 0) return [];
+
+  const openKeys = new Set(
+    (existingTasks || [])
+      .filter((t) => {
+        const tid = String(t?.student_id || t?.studentId || "").trim();
+        return tid === studentId && String(t?.status || "").trim().toLowerCase() !== "completed";
+      })
+      .map((t) => String(t?.stageSourceKey || "").trim())
+      .filter(Boolean)
+  );
+
+  const assignees = Array.from(
+    new Set((assigneeIds || []).map((id) => String(id || "").trim()).filter((id) => id && id !== "Unassigned"))
+  );
+  const counselorId = String(student?.counselor || "").trim();
+  if (assignees.length === 0 && counselorId) assignees.push(counselorId);
+
+  const buildDueDate = (dueDays) => {
+    const due = new Date();
+    due.setDate(due.getDate() + (Number.isFinite(dueDays) ? dueDays : 3));
+    return due.toISOString().split("T")[0];
+  };
+
+  const now = Date.now();
+  return configured
+    .map((cfg, idx) => {
+      const configId = String(cfg.id || "").trim() || `cfg-${idx}`;
+      const stageSourceKey = buildStageTransitionTaskKey(studentId, stageId, configId);
+      if (openKeys.has(stageSourceKey)) return null;
+      return {
+        id: `T-STG-${studentId}-${stageId}-${configId}-${now}-${idx}`,
+        stageSourceKey,
+        task: String(cfg.title).trim(),
+        assigned_to: assignees,
+        counselor_ids: assignees,
+        student_id: studentId,
+        priority: cfg.priority || "Medium",
+        status: "Pending",
+        dueDate: buildDueDate(cfg.dueDays),
+        tier: "Global",
+        phase: 1,
+        isBlocking: false,
+        isPrivate: true,
+        stageId,
+        stageLabel: targetStageLabel,
+      };
+    })
+    .filter(Boolean);
 }
 
 function withDefaultRequiredOnChecklist(checklist) {
@@ -74,6 +201,8 @@ export function buildFallbackCountryDocConfig(country) {
     ),
     pipelineDocs: [],
     visaDocs: [],
+    stageTasks: {},
+    accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
   };
 }
 
@@ -252,13 +381,17 @@ export function filterChecklistForStudent(checklist, status, stages) {
     .filter((category) => category.items.length > 0);
 }
 
+export function isOfferLetterChecklistGroup(stage) {
+  return OFFER_LETTER_GROUPS.has(String(stage || "").trim());
+}
+
 export function shouldShowUniversityOfferLetters(status, countryConfig) {
   const visible = filterChecklistForStudent(
     countryConfig?.checklist,
     status,
     countryConfig?.stages
   );
-  return visible.some((cat) => OFFER_LETTER_GROUPS.has(cat.stage));
+  return visible.some((cat) => isOfferLetterChecklistGroup(cat.stage));
 }
 
 /** Doc types required before advancing from the current stage. */
@@ -381,4 +514,114 @@ export function studentHasUploadedDocType(studentDocs, docType) {
       String(d?.status || "").trim() !== "Rejected"
     );
   });
+}
+
+/** Doc types still missing for the stage the student is leaving (before advance). */
+export function collectMissingDocTypesForStage(student, previousStatusLabel, countryConfig) {
+  const statusLabel = String(previousStatusLabel || "").trim();
+  if (!statusLabel) return [];
+  const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
+  const stageId = resolveStudentStageId(statusLabel, countryConfig?.stages);
+  let missing = getRequiredDocTypesBeforeAdvance(statusLabel, countryConfig)
+    .filter(({ docType }) => !studentHasUploadedDocType(studentDocs, docType))
+    .map(({ docType }) => docType);
+  if (stageId === "documentation") {
+    const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
+    for (const stage of countryConfig?.visaWorkflow || []) {
+      for (const item of stage.items || []) {
+        const { name, required } = normalizeVisaWorkflowItem(item);
+        if (!required) continue;
+        if (visaState[name] === "Completed") continue;
+        const docType = `${VISA_PILOT_DOC_TYPE_PREFIX}${name}`;
+        if (!studentHasUploadedDocType(studentDocs, docType)) missing.push(docType);
+      }
+    }
+  }
+  return [...new Set(missing.map((d) => String(d || "").trim()).filter(Boolean))];
+}
+
+export function buildMissingStageDocTaskKey(studentId, stageId, docType) {
+  return `missing-doc:${String(studentId || "").trim()}:${String(stageId || "").trim()}:${String(docType || "").trim()}`;
+}
+
+/**
+ * Counselor tasks for documents required on the stage being left when a student advances early.
+ */
+export function buildMissingStageDocTasks({
+  student,
+  previousStatusLabel,
+  countryConfig,
+  existingTasks = [],
+  assigneeId = "",
+  relatedCounselorIds = [],
+}) {
+  const studentId = String(student?.id || "").trim();
+  if (!studentId) return [];
+  const allMissingItems = collectMissingDocTypesForStage(student, previousStatusLabel, countryConfig);
+  if (allMissingItems.length === 0) return [];
+
+  const openKeys = new Set(
+    (existingTasks || [])
+      .filter((t) => {
+        const tid = String(t?.student_id || t?.studentId || "").trim();
+        return tid === studentId && String(t?.status || "").trim().toLowerCase() !== "completed";
+      })
+      .map((t) => String(t?.stageSourceKey || "").trim())
+      .filter(Boolean)
+  );
+  const openDocTypes = new Set(
+    (existingTasks || [])
+      .filter((t) => {
+        const tid = String(t?.student_id || t?.studentId || "").trim();
+        return tid === studentId && String(t?.status || "").trim().toLowerCase() !== "completed";
+      })
+      .map((t) => String(t?.documentType || "").trim())
+      .filter(Boolean)
+  );
+
+  const counselorId = String(assigneeId || student?.counselor || "").trim();
+  const related = Array.from(
+    new Set(
+      [counselorId, ...(relatedCounselorIds || []).map((id) => String(id || "").trim())].filter(
+        (id) => id && id !== "Unassigned"
+      )
+    )
+  );
+  const assignedTo = counselorId ? [counselorId] : related;
+
+  const buildDueDate = (daysFromNow = 3) => {
+    const due = new Date();
+    due.setDate(due.getDate() + daysFromNow);
+    return due.toISOString().split("T")[0];
+  };
+
+  const previousStageId = resolveStudentStageId(previousStatusLabel, countryConfig?.stages);
+  const now = Date.now();
+
+  return allMissingItems
+    .filter((docType) => {
+      const dt = String(docType || "").trim();
+      if (!dt) return false;
+      if (openDocTypes.has(dt)) return false;
+      const key = buildMissingStageDocTaskKey(studentId, previousStageId, dt);
+      return !openKeys.has(key);
+    })
+    .map((docType, idx) => ({
+      id: `T-DOC-${studentId}-${now}-${idx}`,
+      task: `Upload ${docType}`,
+      assigned_to: assignedTo,
+      counselor_ids: related.length > 0 ? related : assignedTo,
+      student_id: studentId,
+      priority: "High",
+      status: "Pending",
+      dueDate: buildDueDate(3),
+      tier: "Global",
+      phase: 1,
+      isBlocking: true,
+      isPrivate: true,
+      documentType: docType,
+      stageId: previousStageId,
+      stageLabel: String(previousStatusLabel || "").trim(),
+      stageSourceKey: buildMissingStageDocTaskKey(studentId, previousStageId, docType),
+    }));
 }

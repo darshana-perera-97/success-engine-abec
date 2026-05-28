@@ -2,7 +2,11 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
 import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen } from "lucide-react";
 import { Button } from "./Button";
-import { filterChecklistForStudent, shouldShowUniversityOfferLetters } from "../docMappingConfig";
+import {
+  filterChecklistForStudent,
+  shouldShowUniversityOfferLetters,
+  isOfferLetterChecklistGroup
+} from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
@@ -421,9 +425,10 @@ const DocumentManager = ({
   const verifiedRequired = requiredItems.filter((item) =>
     item.uploadedFiles.some((f) => f.status === "Verified")
   ).length;
-  const showOfferLettersSection = showUniversityOfferLettersBlock && showUniversityOfferLetters;
+  const showUniversityOfferLettersInline =
+    showUniversityOfferLettersBlock && showUniversityOfferLetters;
   const otherDocumentsSectionClass =
-    showPipelineChecklist || showOfferLettersSection ? "mt-10 pt-8 border-t border-slate-200" : "mt-2 pt-0";
+    showPipelineChecklist ? "mt-10 pt-8 border-t border-slate-200" : "mt-2 pt-0";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-header", className: "flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -444,7 +449,46 @@ const DocumentManager = ({
         /* @__PURE__ */ jsx(DocumentRequirementBadge, { key: "badge-optional", required: false })
       ] })
     ] }),
-    showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-checklist", className: "space-y-4", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : checklist.map((category) => {
+    showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-checklist", className: "space-y-4", children: checklist.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500", children: "Document requirements appear when the student reaches the Application stage." }) : (() => {
+      let offerLettersInlineRendered = false;
+      return checklist.map((category) => {
+      if (isOfferLetterChecklistGroup(category.stage)) {
+        if (!showUniversityOfferLettersInline || offerLettersInlineRendered) return null;
+        offerLettersInlineRendered = true;
+        return /* @__PURE__ */ jsxs("div", { key: "university-offer-letters", className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Unconditional, Conditional, or Rejected." })
+            ] }),
+            canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
+              size: "sm",
+              className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
+              onClick: () => setOfferLetterModal({ open: true, offerStatus: "Unconditional", error: "", pendingFiles: [] }),
+              children: [
+                /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
+                "Upload offer letters"
+              ]
+            })
+          ] }),
+          universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { key: letter.id || `offer-letter-${letter.name}-${idx}`, className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
+              /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Unconditional" || letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
+              /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: shortDisplayFileName(letter.name) }),
+                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: letter.uploadedAt ? new Date(letter.uploadedAt).toLocaleString() : "" })
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
+              /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus === "Approved" ? "Unconditional" : letter.offerStatus || "Conditional" }),
+              letter.url && /* @__PURE__ */ jsxs(Fragment, { children: [
+                /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
+                /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+              ] })
+            ] })
+          ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
+        ] });
+      }
       const groupRequired = category.items.filter((item) => item.required !== false);
       const groupVerified = groupRequired.filter((item) =>
         item.uploadedFiles.some((f) => f.status === "Verified")
@@ -529,40 +573,8 @@ const DocumentManager = ({
       }) })
         ]
       });
-    }) }),
-    showOfferLettersSection && /* @__PURE__ */ jsxs("div", { key: "offer-letters", className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
-      /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
-        /* @__PURE__ */ jsxs("div", { children: [
-          /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Unconditional, Conditional, or Rejected." })
-        ] }),
-        canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
-          size: "sm",
-          className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
-          onClick: () => setOfferLetterModal({ open: true, offerStatus: "Unconditional", error: "", pendingFiles: [] }),
-          children: [
-            /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
-            "Upload offer letters"
-          ]
-        })
-      ] }),
-      universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { key: letter.id || `offer-letter-${letter.name}-${idx}`, className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
-        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
-          /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Unconditional" || letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
-          /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-            /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-900 truncate", title: letter.name, children: shortDisplayFileName(letter.name) }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: letter.uploadedAt ? new Date(letter.uploadedAt).toLocaleString() : "" })
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
-          /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus === "Approved" ? "Unconditional" : letter.offerStatus || "Conditional" }),
-          letter.url && /* @__PURE__ */ jsxs(Fragment, { children: [
-            /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-            /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
-          ] })
-        ] })
-      ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
-    ] }),
+    });
+    })() }),
     showProfileOtherDocuments && /* @__PURE__ */ jsxs("div", { key: "profile-other-documents", className: otherDocumentsSectionClass, children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-4", children: [
         /* @__PURE__ */ jsxs("div", { children: [

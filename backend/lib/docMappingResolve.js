@@ -3,6 +3,8 @@ const {
   readDocMapping,
   emptyDocConfig,
   ensureDefaultPipelineDocs,
+  normalizeStageTasks,
+  normalizeAccountDetailsStageId,
   getCountryStages,
   DEFAULT_STAGES,
 } = require("../models/docMapping");
@@ -101,6 +103,8 @@ async function readCountryDocConfig(country) {
     visaWorkflow: visaDocsToWorkflow(docs.visaDocs || []),
     pipelineDocs,
     visaDocs: docs.visaDocs || [],
+    stageTasks: normalizeStageTasks(docs.stageTasks),
+    accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
   };
 }
 
@@ -183,4 +187,5 @@ module.exports = {
   resolveStudentStageId,
   OFFER_LETTER_GROUPS,
   DEFAULT_STAGE_ROWS,
+  normalizeAccountDetailsStageId,
 };

@@ -2,10 +2,18 @@ import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, X, MapPin, ChevronDown, ChevronRight, GripVertical,
-  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle
+  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail
 } from "lucide-react";
-import { getCountries, createCountry, getDocMapping, saveDocMappingStages, saveDocMappingPipelineDocs, saveDocMappingVisaDocs } from "../authApi";
+import {
+  getCountries, createCountry, getDocMapping, saveDocMappingStages,
+  saveDocMappingPipelineDocs, saveDocMappingVisaDocs, saveDocMappingStageTasks,
+  saveDocMappingAccountDetailsStage
+} from "../authApi";
 import { invalidateCountryDocConfigCache } from "../countryDocConfigStore";
+import {
+  DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
+  normalizeAccountDetailsStageId
+} from "../docMappingConfig";
 import { Button } from "./Button";
 
 function genId(prefix = "dm") {
@@ -14,8 +22,8 @@ function genId(prefix = "dm") {
 
 const DEFAULT_STAGE_IDS = new Set(["inquiry", "registration", "application", "documentation", "visa", "enrolled"]);
 
-function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs) {
-  return JSON.stringify({ stages, pipelineDocs, visaDocs });
+function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId) {
+  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId });
 }
 
 // ─── Stage Manager (horizontal stepper) ─────────────────────────
@@ -334,7 +342,6 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
 
 // ─── Pipeline Documents Section (with stage visibility picker) ──
 function PipelineDocSection({ stages, docs, onChange }) {
-  const [expanded, setExpanded] = useState(true);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [selectedStageIds, setSelectedStageIds] = useState([]);
@@ -390,15 +397,14 @@ function PipelineDocSection({ stages, docs, onChange }) {
   };
 
   return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
-    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100 cursor-pointer select-none", onClick: () => setExpanded(!expanded), children: [
+    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
       jsxs("div", { className: "flex items-center gap-2", children: [
-        jsx(expanded ? ChevronDown : ChevronRight, { size: 16, className: "text-indigo-500" }),
         jsx(FileText, { size: 16, className: "text-blue-500" }),
         jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Pipeline Documents" })
       ] }),
       jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); setSelectedStageIds([]); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
     ] }),
-    expanded && jsx("div", { className: "p-4 space-y-4", children:
+    jsx("div", { className: "p-4 space-y-4", children:
       jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages })
     }),
 
@@ -456,7 +462,6 @@ function PipelineDocSection({ stages, docs, onChange }) {
 
 // ─── Visa Documents Section (fixed: Documentation stage & after) ─
 function VisaDocSection({ stages, docs, onChange }) {
-  const [expanded, setExpanded] = useState(true);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [showDocModal, setShowDocModal] = useState(null);
@@ -503,15 +508,14 @@ function VisaDocSection({ stages, docs, onChange }) {
   const removeGroup = (groupName) => { onChange(docs.filter((d) => d.group !== groupName)); };
 
   return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
-    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100 cursor-pointer select-none", onClick: () => setExpanded(!expanded), children: [
+    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
       jsxs("div", { className: "flex items-center gap-2", children: [
-        jsx(expanded ? ChevronDown : ChevronRight, { size: 16, className: "text-indigo-500" }),
         jsx(ShieldCheck, { size: 16, className: "text-emerald-500" }),
         jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Visa Documents" })
       ] }),
       jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
     ] }),
-    expanded && jsxs("div", { className: "p-4 space-y-4", children: [
+    jsxs("div", { className: "p-4 space-y-4", children: [
       jsx("div", { className: "flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500", children:
         jsxs(Fragment, { children: [
           jsx("span", { className: "font-semibold text-slate-600 mr-1", children: "Visible from:" }),
@@ -559,6 +563,266 @@ function VisaDocSection({ stages, docs, onChange }) {
   ] });
 }
 
+function flattenStageTasksMap(stageTasks) {
+  const rows = [];
+  for (const [stageId, list] of Object.entries(stageTasks || {})) {
+    if (!Array.isArray(list)) continue;
+    for (const task of list) {
+      rows.push({ ...task, stageId });
+    }
+  }
+  return rows;
+}
+
+function stageTasksMapFromRows(rows) {
+  const map = {};
+  for (const row of rows) {
+    const stageId = String(row.stageId || "").trim();
+    const title = String(row.title || "").trim();
+    if (!stageId || !title) continue;
+    if (!map[stageId]) map[stageId] = [];
+    const { stageId: _omit, ...task } = row;
+    map[stageId].push(task);
+  }
+  return map;
+}
+
+function StageSelect({ stages, value, onChange, className = "" }) {
+  return jsx("select", {
+    className: `px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white min-w-[140px] ${className}`,
+    value: value || "",
+    onChange: (e) => onChange(e.target.value),
+    children: [
+      jsx("option", { value: "", disabled: true, children: "Select stage…" }),
+      ...stages.map((s) => jsx("option", { value: s.id, children: s.label }, s.id))
+    ]
+  });
+}
+
+// ─── Stage counselor tasks: add task + assign stage dropdown ───
+function StageTasksSection({ stages, stageTasks, onChange }) {
+  const [expanded, setExpanded] = useState(true);
+  const defaultStageId = stages[0]?.id || "";
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftStageId, setDraftStageId] = useState(defaultStageId);
+  const [draftPriority, setDraftPriority] = useState("Medium");
+  const [draftDueDays, setDraftDueDays] = useState(3);
+
+  useEffect(() => {
+    if (!draftStageId && defaultStageId) setDraftStageId(defaultStageId);
+    if (draftStageId && !stages.some((s) => s.id === draftStageId) && defaultStageId) {
+      setDraftStageId(defaultStageId);
+    }
+  }, [stages, defaultStageId, draftStageId]);
+
+  const taskRows = useMemo(() => flattenStageTasksMap(stageTasks), [stageTasks]);
+
+  const applyRows = (rows) => onChange(stageTasksMapFromRows(rows));
+
+  const addTask = () => {
+    const title = draftTitle.trim();
+    const stageId = String(draftStageId || "").trim();
+    if (!title || !stageId) return;
+    const dueDays = Math.min(90, Math.max(1, Number(draftDueDays) || 3));
+    applyRows([
+      ...taskRows,
+      { id: genId("stt"), title, priority: draftPriority, dueDays, stageId },
+    ]);
+    setDraftTitle("");
+    setDraftPriority("Medium");
+    setDraftDueDays(3);
+  };
+
+  const updateRow = (taskId, patch) => {
+    applyRows(
+      taskRows.map((row) => (row.id === taskId ? { ...row, ...patch } : row))
+    );
+  };
+
+  const removeRow = (taskId) => {
+    applyRows(taskRows.filter((row) => row.id !== taskId));
+  };
+
+  return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
+    jsxs("div", {
+      className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100 cursor-pointer select-none",
+      onClick: () => setExpanded(!expanded),
+      children: [
+        jsxs("div", { className: "flex items-center gap-2", children: [
+          jsx(expanded ? ChevronDown : ChevronRight, { size: 16, className: "text-indigo-500" }),
+          jsx(ListChecks, { size: 16, className: "text-violet-500" }),
+          jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Stage Counselor Tasks" }),
+          jsx("span", { className: "text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100", children: taskRows.length })
+        ] }),
+        jsx("p", { className: "text-[10px] text-slate-400 max-w-xs text-right hidden sm:block", children: "Assigned to counselors when a student enters the selected stage" })
+      ]
+    }),
+    expanded && jsx("div", { className: "p-4 space-y-4", children:
+      stages.length === 0
+        ? jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "Add pipeline stages first." })
+        : jsxs(Fragment, { children: [
+            jsxs("div", {
+              className: "p-3 rounded-lg border border-indigo-100 bg-indigo-50/40 space-y-3",
+              children: [
+                jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Add task" }),
+                jsxs("div", { className: "flex flex-col lg:flex-row lg:items-end gap-2", children: [
+                  jsxs("div", { className: "flex-1 min-w-0 space-y-1", children: [
+                    jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Task" }),
+                    jsx("input", {
+                      type: "text",
+                      className: "w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white placeholder:text-slate-400",
+                      placeholder: "e.g. Schedule intake call",
+                      value: draftTitle,
+                      onChange: (e) => setDraftTitle(e.target.value),
+                      onKeyDown: (e) => { if (e.key === "Enter") addTask(); }
+                    })
+                  ] }),
+                  jsxs("div", { className: "space-y-1 shrink-0", children: [
+                    jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Stage" }),
+                    jsx(StageSelect, { stages, value: draftStageId, onChange: setDraftStageId })
+                  ] }),
+                  jsxs("div", { className: "space-y-1 shrink-0", children: [
+                    jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Priority" }),
+                    jsx("select", {
+                      className: "w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white",
+                      value: draftPriority,
+                      onChange: (e) => setDraftPriority(e.target.value),
+                      children: [
+                        jsx("option", { value: "High", children: "High" }),
+                        jsx("option", { value: "Medium", children: "Medium" }),
+                        jsx("option", { value: "Low", children: "Low" })
+                      ]
+                    })
+                  ] }),
+                  jsxs("div", { className: "space-y-1 shrink-0", children: [
+                    jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Due (days)" }),
+                    jsx("input", {
+                      type: "number",
+                      min: 1,
+                      max: 90,
+                      className: "w-20 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white",
+                      value: draftDueDays,
+                      onChange: (e) => setDraftDueDays(Number(e.target.value))
+                    })
+                  ] }),
+                  jsx(Button, {
+                    type: "button",
+                    size: "sm",
+                    className: "shrink-0 lg:mb-0",
+                    onClick: addTask,
+                    disabled: !draftTitle.trim() || !draftStageId,
+                    children: jsxs(Fragment, { children: [jsx(Plus, { size: 14, className: "mr-1" }), "Add Task"] })
+                  })
+                ] })
+              ]
+            }),
+            taskRows.length === 0
+              ? jsx("p", { className: "text-sm text-slate-400 text-center py-4", children: "No stage tasks configured yet." })
+              : jsx("div", { className: "space-y-2", children:
+                  taskRows.map((row) =>
+                    jsxs("div", {
+                      key: row.id,
+                      className: "flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-lg border border-gray-100 bg-slate-50/50",
+                      children: [
+                        jsx("input", {
+                          type: "text",
+                          className: "flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white",
+                          value: row.title,
+                          onChange: (e) => updateRow(row.id, { title: e.target.value })
+                        }),
+                        jsx(StageSelect, {
+                          stages,
+                          value: row.stageId,
+                          onChange: (stageId) => updateRow(row.id, { stageId })
+                        }),
+                        jsx("select", {
+                          className: "px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white shrink-0",
+                          value: row.priority || "Medium",
+                          onChange: (e) => updateRow(row.id, { priority: e.target.value }),
+                          children: [
+                            jsx("option", { value: "High", children: "High" }),
+                            jsx("option", { value: "Medium", children: "Medium" }),
+                            jsx("option", { value: "Low", children: "Low" })
+                          ]
+                        }),
+                        jsxs("label", { className: "flex items-center gap-1 text-[10px] text-slate-500 shrink-0", children: [
+                          "Due",
+                          jsx("input", {
+                            type: "number",
+                            min: 1,
+                            max: 90,
+                            className: "w-12 px-1.5 py-1 text-xs border border-gray-200 rounded-lg bg-white",
+                            value: row.dueDays ?? 3,
+                            onChange: (e) => updateRow(row.id, { dueDays: Number(e.target.value) })
+                          }),
+                          "d"
+                        ] }),
+                        jsx("button", {
+                          type: "button",
+                          onClick: () => removeRow(row.id),
+                          className: "p-1.5 text-slate-400 hover:text-rose-500 shrink-0 self-end sm:self-center",
+                          title: "Remove task",
+                          children: jsx(Trash2, { size: 14 })
+                        })
+                      ]
+                    }, row.id)
+                  )
+                })
+          ] })
+    })
+  ] });
+}
+
+// ─── Student portal account details (email + WhatsApp) ──────────
+function AccountDetailsStageSection({ stages, accountDetailsStageId, onChange }) {
+  const resolvedId = normalizeAccountDetailsStageId(accountDetailsStageId, stages);
+  const selectedStage = stages.find((s) => s.id === resolvedId);
+
+  return jsxs("div", {
+    className: "bg-white rounded-xl border border-gray-200 shadow-sm",
+    children: [
+      jsxs("div", {
+        className: "flex items-center gap-2 px-5 py-3.5 border-b border-gray-100",
+        children: [
+          jsx(Mail, { size: 16, className: "text-indigo-600 shrink-0" }),
+          jsxs("div", { children: [
+            jsx("p", {
+              className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600",
+              children: "Student Portal Account Details"
+            }),
+            jsx("p", {
+              className: "text-xs text-slate-400 mt-0.5",
+              children: "When a student enters the selected pipeline stage, their portal login is sent by email and WhatsApp (from the assigned counselor's WhatsApp)."
+            })
+          ] })
+        ]
+      }),
+      jsx("div", { className: "px-5 py-4", children:
+        jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center gap-3", children: [
+          jsx("label", {
+            htmlFor: "account-details-stage",
+            className: "text-sm font-medium text-slate-700 shrink-0",
+            children: "Send on stage"
+          }),
+          jsx("select", {
+            id: "account-details-stage",
+            className: "w-full sm:max-w-xs px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+            value: resolvedId,
+            onChange: (e) => onChange(e.target.value),
+            children: stages.map((s) =>
+              jsx("option", { value: s.id, children: s.label }, s.id)
+            )
+          }),
+          selectedStage && jsx("p", {
+            className: "text-xs text-slate-500",
+            children: `Default: Application. Currently: ${selectedStage.label}.`
+          })
+        ] })
+      })
+    ]
+  });
+}
+
 // ─── Main DocMapping Page ───────────────────────────────────────
 export function DocMapping() {
   const [countries, setCountries] = useState([]);
@@ -572,6 +836,8 @@ export function DocMapping() {
   const [stages, setStages] = useState([]);
   const [pipelineDocs, setPipelineDocs] = useState([]);
   const [visaDocs, setVisaDocs] = useState([]);
+  const [stageTasks, setStageTasks] = useState({});
+  const [accountDetailsStageId, setAccountDetailsStageId] = useState(DEFAULT_ACCOUNT_DETAILS_STAGE_ID);
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -602,10 +868,23 @@ export function DocMapping() {
       const nextStages = result.data.stages || [];
       const nextPipelineDocs = result.data.pipelineDocs || [];
       const nextVisaDocs = result.data.visaDocs || [];
+      const nextStageTasks = result.data.stageTasks || {};
+      const nextAccountDetailsStageId = normalizeAccountDetailsStageId(
+        result.data.accountDetailsStageId,
+        nextStages
+      );
       setStages(nextStages);
       setPipelineDocs(nextPipelineDocs);
       setVisaDocs(nextVisaDocs);
-      setSavedSnapshot(buildDocMappingSnapshot(nextStages, nextPipelineDocs, nextVisaDocs));
+      setStageTasks(nextStageTasks);
+      setAccountDetailsStageId(nextAccountDetailsStageId);
+      setSavedSnapshot(buildDocMappingSnapshot(
+        nextStages,
+        nextPipelineDocs,
+        nextVisaDocs,
+        nextStageTasks,
+        nextAccountDetailsStageId
+      ));
     } else {
       setConfigError(result.error);
     }
@@ -618,8 +897,14 @@ export function DocMapping() {
 
   const isDirty = useMemo(() => {
     if (!savedSnapshot || !selectedCountry || configLoading) return false;
-    return buildDocMappingSnapshot(stages, pipelineDocs, visaDocs) !== savedSnapshot;
-  }, [stages, pipelineDocs, visaDocs, savedSnapshot, selectedCountry, configLoading]);
+    return buildDocMappingSnapshot(
+      stages,
+      pipelineDocs,
+      visaDocs,
+      stageTasks,
+      accountDetailsStageId
+    ) !== savedSnapshot;
+  }, [stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, savedSnapshot, selectedCountry, configLoading]);
 
   const handleSaveAll = async () => {
     if (!selectedCountry || !isDirty) return;
@@ -638,18 +923,46 @@ export function DocMapping() {
       return;
     }
     const visaResult = await saveDocMappingVisaDocs(selectedCountry, visaDocs);
-    setSaving(false);
     if (!visaResult.ok) {
       setConfigError(visaResult.error);
+      setSaving(false);
+      return;
+    }
+    const stageTasksResult = await saveDocMappingStageTasks(selectedCountry, stageTasks);
+    if (!stageTasksResult.ok) {
+      setConfigError(stageTasksResult.error);
+      setSaving(false);
+      return;
+    }
+    const accountDetailsResult = await saveDocMappingAccountDetailsStage(
+      selectedCountry,
+      accountDetailsStageId
+    );
+    setSaving(false);
+    if (!accountDetailsResult.ok) {
+      setConfigError(accountDetailsResult.error);
       return;
     }
     const nextStages = stagesResult.data.stages;
     const nextPipelineDocs = pipelineResult.data.pipelineDocs;
     const nextVisaDocs = visaResult.data.visaDocs;
+    const nextStageTasks = stageTasksResult.data.stageTasks || {};
+    const nextAccountDetailsStageId = normalizeAccountDetailsStageId(
+      accountDetailsResult.data.accountDetailsStageId,
+      nextStages
+    );
     setStages(nextStages);
     setPipelineDocs(nextPipelineDocs);
     setVisaDocs(nextVisaDocs);
-    setSavedSnapshot(buildDocMappingSnapshot(nextStages, nextPipelineDocs, nextVisaDocs));
+    setStageTasks(nextStageTasks);
+    setAccountDetailsStageId(nextAccountDetailsStageId);
+    setSavedSnapshot(buildDocMappingSnapshot(
+      nextStages,
+      nextPipelineDocs,
+      nextVisaDocs,
+      nextStageTasks,
+      nextAccountDetailsStageId
+    ));
     invalidateCountryDocConfigCache(selectedCountry);
     flash("All changes saved");
   };
@@ -673,10 +986,9 @@ export function DocMapping() {
 
     // ── Header ───────────────────────────────────────────────────
     jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4", children: [
-      jsxs("div", { children: [
-        jsx("h1", { className: "text-2xl font-semibold tracking-tight text-[#0F172A]", children: "Doc Mapping" }),
-        jsx("p", { className: "text-sm text-slate-500 mt-1", children: "Configure pipeline stages and required documents per destination country." })
-      ] }),
+      jsx("div", { children:
+        jsx("h1", { className: "text-2xl font-semibold tracking-tight text-[#0F172A]", children: "Doc Mapping" })
+      }),
       jsxs("div", { className: "flex w-full sm:w-auto flex-wrap gap-2", children: [
         jsx("select", {
           className: "w-full sm:w-56 px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
@@ -720,6 +1032,11 @@ export function DocMapping() {
         ? jsx("div", { className: "flex items-center justify-center py-24 text-sm text-slate-400", children: "Loading configuration…" })
         : jsxs("div", { className: "space-y-6", children: [
             jsx(StageManager, { stages, onChange: setStages }),
+            jsx(AccountDetailsStageSection, {
+              stages,
+              accountDetailsStageId,
+              onChange: setAccountDetailsStageId
+            }),
             jsxs("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-6", children: [
               jsx(PipelineDocSection, {
                 stages,
@@ -731,7 +1048,8 @@ export function DocMapping() {
                 docs: visaDocs,
                 onChange: setVisaDocs
               })
-            ] })
+            ] }),
+            jsx(StageTasksSection, { stages, stageTasks, onChange: setStageTasks })
           ] }),
 
     // ── Add Country Modal ────────────────────────────────────────

@@ -2,8 +2,19 @@ const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const {
   readStages, writeStages, getCountryStages,
-  readDocMapping, writeDocMapping, emptyDocConfig, ensureDefaultPipelineDocs, DEFAULT_STAGES
+  readDocMapping, writeDocMapping, emptyDocConfig, ensureDefaultPipelineDocs,
+  normalizeStageTasks, normalizeAccountDetailsStageId, DEFAULT_STAGES
 } = require("../models/docMapping");
+
+function docMappingPayload(stages, docs) {
+  return {
+    stages,
+    pipelineDocs: ensureDefaultPipelineDocs(docs.pipelineDocs || []),
+    visaDocs: docs.visaDocs || [],
+    stageTasks: normalizeStageTasks(docs.stageTasks),
+    accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
+  };
+}
 
 function genId() {
   return `dm-${crypto.randomUUID().slice(0, 8)}`;
@@ -22,12 +33,7 @@ async function handle(req, res, url) {
     for (const country of countries) {
       const stages = getCountryStages(allStages, country);
       const docs = allDocs[country] || emptyDocConfig();
-      const pipelineDocs = ensureDefaultPipelineDocs(docs.pipelineDocs || []);
-      data[country] = {
-        stages,
-        pipelineDocs,
-        visaDocs: docs.visaDocs || [],
-      };
+      data[country] = docMappingPayload(stages, docs);
     }
     sendJson(res, 200, { ok: true, data });
     return true;
@@ -43,8 +49,7 @@ async function handle(req, res, url) {
     const [allStages, allDocs] = await Promise.all([readStages(), readDocMapping()]);
     const stages = getCountryStages(allStages, country);
     const docs = allDocs[country] || emptyDocConfig();
-    const pipelineDocs = ensureDefaultPipelineDocs(docs.pipelineDocs || []);
-    sendJson(res, 200, { ok: true, data: { stages, pipelineDocs, visaDocs: docs.visaDocs || [] } });
+    sendJson(res, 200, { ok: true, data: docMappingPayload(stages, docs) });
     return true;
   }
 
@@ -91,7 +96,47 @@ async function handle(req, res, url) {
 
       const allDocs = await readDocMapping();
       const docs = allDocs[country] || emptyDocConfig();
-      sendJson(res, 200, { ok: true, data: { stages: cleaned, pipelineDocs: docs.pipelineDocs || [], visaDocs: docs.visaDocs || [] } });
+      sendJson(res, 200, { ok: true, data: docMappingPayload(cleaned, docs) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  // PUT /api/doc-mapping/account-details-stage — when to email/WhatsApp portal login
+  if (req.method === "PUT" && url.pathname === "/api/doc-mapping/account-details-stage") {
+    try {
+      const body = await parseBody(req);
+      const country = String(body.country || "").trim();
+      if (!country) { sendJson(res, 400, { ok: false, error: "Country is required." }); return true; }
+      const allStages = await readStages();
+      const stages = getCountryStages(allStages, country);
+      const accountDetailsStageId = normalizeAccountDetailsStageId(body.accountDetailsStageId, stages);
+      const allDocs = await readDocMapping();
+      if (!allDocs[country]) allDocs[country] = emptyDocConfig();
+      allDocs[country].accountDetailsStageId = accountDetailsStageId;
+      await writeDocMapping(allDocs);
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  // PUT /api/doc-mapping/stage-tasks — counselor checklist per pipeline stage
+  if (req.method === "PUT" && url.pathname === "/api/doc-mapping/stage-tasks") {
+    try {
+      const body = await parseBody(req);
+      const country = String(body.country || "").trim();
+      if (!country) { sendJson(res, 400, { ok: false, error: "Country is required." }); return true; }
+      const stageTasks = normalizeStageTasks(body.stageTasks);
+      const allDocs = await readDocMapping();
+      if (!allDocs[country]) allDocs[country] = emptyDocConfig();
+      allDocs[country].stageTasks = stageTasks;
+      await writeDocMapping(allDocs);
+      const allStages = await readStages();
+      const stages = getCountryStages(allStages, country);
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -127,7 +172,7 @@ async function handle(req, res, url) {
 
       const allStages = await readStages();
       const stages = getCountryStages(allStages, country);
-      sendJson(res, 200, { ok: true, data: { stages, pipelineDocs: finalDocs, visaDocs: allDocs[country].visaDocs || [] } });
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -158,7 +203,7 @@ async function handle(req, res, url) {
 
       const allStages = await readStages();
       const stages = getCountryStages(allStages, country);
-      sendJson(res, 200, { ok: true, data: { stages, pipelineDocs: allDocs[country].pipelineDocs || [], visaDocs: cleaned } });
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }

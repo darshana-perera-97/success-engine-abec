@@ -59,6 +59,12 @@ import {
   loadDismissedNotificationKeys,
   mergeDismissedNotificationKeys
 } from "./notificationPersistence";
+import { resolveCountryDocConfig } from "./countryDocConfigStore";
+import {
+  buildMissingStageDocTasks,
+  buildStageTransitionTasks,
+  resolveStudentStageId,
+} from "./docMappingConfig";
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 const assignmentAlertDedupeKey = (studentId, type) =>
   `assign:${String(studentId || "").trim()}:${String(type || "new").trim()}`;
@@ -1356,12 +1362,96 @@ function App({ initialView = "dashboard" }) {
     if (slaNext !== void 0) {
       payload = { ...payload, slaViolations: slaNext };
     }
-    if (previous && String(previous.status || "") !== String(updatedStudent.status || "")) {
+    const statusChanged = previous && String(previous.status || "") !== String(updatedStudent.status || "");
+    if (statusChanged) {
       payload = { ...payload, stageEnteredAt: new Date().toISOString() };
     }
-    const newTasks = generateTasks(payload);
+    let newTasks = generateTasks(payload);
+    if (statusChanged) {
+      const countryConfig = resolveCountryDocConfig(payload.country);
+      const counselorId = String(payload.counselor || "").trim();
+      const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+      const assigneeIds = [
+        counselorId,
+        String(payload.inquiryCounselorId || "").trim(),
+        actingCounselorId,
+      ].filter((id) => id && id !== "Unassigned");
+      const missingDocTasks = buildMissingStageDocTasks({
+        student: payload,
+        previousStatusLabel: previous.status,
+        countryConfig,
+        existingTasks: tasks,
+        assigneeId: counselorId || actingCounselorId,
+        relatedCounselorIds: assigneeIds,
+      });
+      if (missingDocTasks.length > 0) {
+        newTasks = [...newTasks, ...missingDocTasks];
+        const missingLabels = missingDocTasks.map((t) => t.documentType).filter(Boolean);
+        const openViolations = Array.isArray(payload.slaViolations) ? payload.slaViolations : [];
+        payload = {
+          ...payload,
+          slaViolations: [
+            ...openViolations,
+            {
+              id: `SLA-${Date.now()}`,
+              stage: previous.status,
+              missingItems: missingLabels,
+              timestamp: new Date().toISOString(),
+              resolved: false,
+            },
+          ],
+        };
+      }
+      const stageTasks = buildStageTransitionTasks({
+        student: payload,
+        targetStageLabel: payload.status,
+        countryConfig,
+        existingTasks: tasks,
+        assigneeIds,
+      });
+      if (stageTasks.length > 0) {
+        newTasks = [...newTasks, ...stageTasks];
+      }
+    }
     if (newTasks.length > 0) {
-      await handleAddTasks(newTasks, { suppressTaskSyncNotification: true });
+      const addResult = await handleAddTasks(newTasks, { suppressTaskSyncNotification: true });
+      if (statusChanged) {
+        const stageOnly = newTasks.filter(
+          (t) => String(t.stageSourceKey || "").trim() && !String(t.stageSourceKey).startsWith("missing-doc:")
+        );
+        const missingDocOnly = newTasks.filter((t) =>
+          String(t.stageSourceKey || "").startsWith("missing-doc:")
+        );
+        if (missingDocOnly.length > 0 && addResult?.ok !== false) {
+          const docTitles = missingDocOnly.map((t) => t.task).slice(0, 3).join(", ");
+          const docSuffix = missingDocOnly.length > 3 ? ` (+${missingDocOnly.length - 3} more)` : "";
+          addNotification(
+            "Missing document tasks",
+            `${missingDocOnly.length} task(s) added for incomplete ${previous.status} docs: ${docTitles}${docSuffix} (${payload.name})`,
+            "warning",
+            { view: "tasks", studentId: payload.id, taskId: missingDocOnly[0]?.id },
+            10000,
+            `missing-doc-tasks:${payload.id}:${previous.status}`
+          );
+        }
+        if (stageOnly.length > 0 && addResult?.ok !== false) {
+          const stageId = resolveStudentStageId(payload.status, resolveCountryDocConfig(payload.country)?.stages);
+          const taskTitles = stageOnly.map((t) => t.task).slice(0, 3).join(", ");
+          const suffix = stageOnly.length > 3 ? ` (+${stageOnly.length - 3} more)` : "";
+          addNotification(
+            "Stage tasks assigned",
+            `${stageOnly.length} task(s) for ${payload.status}: ${taskTitles}${suffix} (${payload.name})`,
+            "info",
+            { view: "tasks", studentId: payload.id, taskId: stageOnly[0]?.id },
+            8000,
+            stageId ? `stage-tasks:${payload.id}:${stageId}` : null
+          );
+          tryShowDesktopAssignmentNotice(
+            "Stage tasks assigned",
+            `${stageOnly.length} new task(s) for ${payload.name} — ${payload.status}`
+          );
+        }
+      }
     }
     setStudents((prev) => prev.map((s) => s.id === payload.id ? payload : s));
     if (selectedStudent?.id === payload.id) {
