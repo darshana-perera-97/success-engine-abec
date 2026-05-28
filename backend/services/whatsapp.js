@@ -588,6 +588,7 @@ async function resolveCounselor(userId) {
 }
 
 module.exports = {
+  isSupportedWhatsappMediaMime,
   sanitizeUserIdForPath,
   ensureWhatsappState,
   snapshotWhatsappState,

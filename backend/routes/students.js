@@ -31,7 +31,6 @@ const {
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
 const {
   deliverCounselorMessageToStudentWhatsapp,
-  isSupportedWhatsappMediaMime,
   normalizeSriLankaStudentPhone,
 } = require("../services/whatsapp");
 const {
@@ -46,10 +45,28 @@ const {
   storeStudentCvDataUrl,
   storeStudentPermissionDataUrl,
   safeUnlinkStoredPermissionDoc,
+  isSupportedWhatsappMediaMime,
 } = require("../services/uploads");
 const {
   isApplicationStage,
 } = require("../services/pipeline");
+
+function canSendWhatsappAttachmentMime(mime) {
+  const normalized = String(mime || "").toLowerCase();
+  if (!normalized) return false;
+  if (typeof isSupportedWhatsappMediaMime === "function") {
+    return isSupportedWhatsappMediaMime(normalized);
+  }
+  // Fallback for older runtime bundles where helper export can be missing.
+  return new Set([
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+  ]).has(normalized);
+}
 
 const {
   readCountryDocConfig,
@@ -1002,7 +1019,7 @@ async function handle(req, res, url) {
           letterCount,
         });
         const attachment =
-          entry.url && entry.mime && isSupportedWhatsappMediaMime(entry.mime)
+          entry.url && entry.mime && canSendWhatsappAttachmentMime(entry.mime)
             ? { url: entry.url, mime: entry.mime, name: entry.name }
             : null;
         try {
