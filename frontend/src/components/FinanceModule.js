@@ -181,6 +181,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       }
     }
     setIsCreatingInvoice(true);
+    setIsCreateOpen(false);
     const newInv = {
       id: `INV-${Date.now()}`,
       studentId: student.id,
@@ -219,9 +220,9 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     setIsCreatingInvoice(false);
     if (!result?.ok) {
       setCreateError(result?.error || "Failed to create invoice.");
+      setIsCreateOpen(true);
       return;
     }
-    setIsCreateOpen(false);
     resetCreateForm();
     loadStudentInvoices();
   };
