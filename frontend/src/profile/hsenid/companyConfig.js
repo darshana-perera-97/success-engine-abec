@@ -11,7 +11,7 @@ export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
 export const RESUME_BUILDER_TITLE = "hSenid Resume Builder";
 
-export const API_BASE = resolveApiBase("https://success-engine-dev.electric-vehicle.blog");
+export const API_BASE = resolveApiBase("https://success-engine-dev.iptours.lk");
 export const DEFAULT_USER_AVATAR = companyIcon;
 export const COMPANY_FULL_LOGO = companyFullLogo;
 
