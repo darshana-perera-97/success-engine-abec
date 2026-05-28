@@ -189,6 +189,8 @@ const CounselorDashboard = ({
   }, [inquiryStageStudents, reassignedAlertStudentIds]);
   const priorityActionList = useMemo(() => {
     const items = [];
+    const intakeTasks = [];
+    const otherPendingTasks = [];
     for (const alert of assignmentAlertsForPanel) {
       items.push({ kind: "alert", alert });
     }
@@ -196,10 +198,15 @@ const CounselorDashboard = ({
       items.push({ kind: "inquiry", student });
     }
     for (const task of pendingTasks) {
-      if (!isNewStudentIntakeTask(task)) items.push({ kind: "task", task });
+      if (isNewStudentIntakeTask(task)) {
+        intakeTasks.push({ kind: "task", task });
+      } else {
+        otherPendingTasks.push({ kind: "task", task });
+      }
     }
+    items.push(...intakeTasks, ...otherPendingTasks);
     const total = items.length;
-    const shown = total > PRIORITY_ACTION_ITEMS_LIMIT ? items.slice(-PRIORITY_ACTION_ITEMS_LIMIT) : items;
+    const shown = total > PRIORITY_ACTION_ITEMS_LIMIT ? items.slice(0, PRIORITY_ACTION_ITEMS_LIMIT) : items;
     return { shown, total };
   }, [assignmentAlertsForPanel, inquiryStageStudentsForPanel, pendingTasks]);
   const nowMs = useMemo(() => Date.now(), [clockTick]);

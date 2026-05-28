@@ -31,12 +31,14 @@ const {
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
 const {
   deliverCounselorMessageToStudentWhatsapp,
-  buildCounselorAssignmentWhatsappMessage,
-  buildDocumentDecisionWhatsappMessage,
-  buildUniversityOfferWhatsappMessage,
   isSupportedWhatsappMediaMime,
   normalizeSriLankaStudentPhone,
 } = require("../services/whatsapp");
+const {
+  buildCounselorAssignmentWhatsappMessage,
+  buildDocumentDecisionWhatsappMessage,
+  buildUniversityOfferWhatsappMessage,
+} = require("../services/whatsappMessages");
 const { sendStudentPortalAccountDetails } = require("../services/studentAccountDetails");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {

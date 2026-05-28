@@ -7,8 +7,8 @@ const {
 } = require("./email");
 const {
   deliverCounselorMessageToStudentWhatsapp,
-  buildStudentAccountDetailsWhatsappMessage,
 } = require("./whatsapp");
+const { buildStudentAccountDetailsWhatsappMessage } = require("./whatsappMessages");
 
 /**
  * Send student portal login via email and WhatsApp (counselor's connected WhatsApp).
