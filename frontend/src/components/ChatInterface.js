@@ -104,13 +104,6 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       setSelectedConversationId(firstWithMessages.id);
     }
   }, [selectedConversationId, conversationList, liveMessages, currentRole]);
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-    messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-  }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
   const activeConversationId = selectedConversationId || conversationList[0]?.id;
   const getActiveMessages = () => {
     if (!activeConversationId) return [];
@@ -135,6 +128,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   };
   const activeMessages = getActiveMessages();
   const activeUser = conversationList.find((u) => u.id === activeConversationId);
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
   const getRelevantCounselorId = () => {
     if (isCounselorEquivalentPortalRole(currentRole)) {
       return String(currentUser?.id || "").trim();
@@ -261,6 +261,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   };
   const isGhostMode = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
   const shouldShowSenderNamesInBubbles = isGhostMode || isCounselorEquivalentPortalRole(currentRole);
+  if (!isChatsLoading && conversationList.length === 0) {
+    return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [
+      /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mx-auto mb-4 text-slate-300" }),
+      /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-800", children: currentRole === "Student" ? "No counselors to message yet" : "No conversations yet" }),
+      /* @__PURE__ */ jsx("p", { className: "text-sm mt-2", children: currentRole === "Student" ? "Your counselor team will appear here once assigned. You can still receive messages when they contact you." : "Students in your scope will appear here. Open a student profile or wait for the first message." })
+    ] }) });
+  }
   return /* @__PURE__ */ jsxs("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex overflow-hidden animate-in fade-in duration-500", children: [
     /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-200 bg-white", children: [
@@ -318,7 +325,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     /* @__PURE__ */ jsxs("div", { className: "flex-1 flex flex-col bg-white relative", children: [
       /* @__PURE__ */ jsxs("div", { className: "h-16 border-b border-indigo-100 flex items-center justify-between px-6 bg-gradient-to-r from-indigo-50/70 to-white z-10", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-          /* @__PURE__ */ jsx("div", { className: "w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold overflow-hidden", children: activeUser && "avatar" in activeUser && activeUser.avatar ? /* @__PURE__ */ jsx("img", { src: activeUser.avatar, alt: activeUser.name, className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : activeUser?.name.charAt(0) }),
+          /* @__PURE__ */ jsx("div", { className: "w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold overflow-hidden", children: activeUser && "avatar" in activeUser && activeUser.avatar ? /* @__PURE__ */ jsx("img", { src: activeUser.avatar, alt: activeUser.name, className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : (activeUser?.name || "?").charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: activeUser?.name }),
             activeUser && "country" in activeUser ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 flex items-center gap-1", children: [

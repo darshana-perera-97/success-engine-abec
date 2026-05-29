@@ -688,19 +688,6 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
             event.stopPropagation();
             handlePayClick(inv);
           }, children: "Pay" }) : null,
-          isStaff ? /* @__PURE__ */ jsx(
-            Button,
-            {
-              size: "sm",
-              variant: "outline",
-              onClick: (event) => {
-                event.stopPropagation();
-                handleResendInvoiceWhatsapp(inv);
-              },
-              disabled: resendingInvoiceId === String(inv.id),
-              children: resendingInvoiceId === String(inv.id) ? "Sending…" : "Resend WhatsApp"
-            }
-          ) : null,
           /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: (event) => {
             event.stopPropagation();
             handleOpenDetails(inv);
