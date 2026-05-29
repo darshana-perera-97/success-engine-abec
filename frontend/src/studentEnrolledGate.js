@@ -2,6 +2,8 @@ import { COUNTRY_CHECKLISTS } from "./constants.js";
 import { VISA_WORKFLOWS } from "./visaWorkflows.js";
 import {
   buildFallbackCountryDocConfig,
+  documentTypeMatchesRequirement,
+  isOfferLetterChecklistGroup,
   normalizeVisaWorkflowItem,
   studentHasUploadedDocType,
 } from "./docMappingConfig.js";
@@ -21,6 +23,12 @@ export function collectMissingPipelineDocuments(student, countryConfig) {
   for (const category of cfg.checklist || []) {
     for (const item of category.items || []) {
       if (item.required === false) continue;
+      if (
+        isOfferLetterChecklistGroup(category.stage) &&
+        documentTypeMatchesRequirement(item.docType, "Offer Letter")
+      ) {
+        continue;
+      }
       if (!studentHasUploadedDocType(studentDocs, item.docType)) {
         missing.push({ stage: category.stage, docType: item.docType });
       }

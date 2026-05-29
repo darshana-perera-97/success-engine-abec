@@ -121,29 +121,26 @@ async function readCountryDocConfig(country) {
   };
 }
 
+function isOfferLetterPipelineItem(category, item) {
+  return (
+    OFFER_LETTER_GROUPS.has(String(category?.stage || "").trim()) &&
+    documentTypeMatchesRequirement(item?.docType, "Offer Letter")
+  );
+}
+
 function collectMissingPipelineDocuments(student, countryConfig) {
   if (!countryConfig) return [];
   const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
-  const hasUniversityOfferLetter = (student?.universityOfferLetters || []).some((entry) => {
-    if (!entry || typeof entry !== "object") return false;
-    const hasFile = Boolean(String(entry.url || "").trim());
-    if (!hasFile) return false;
-    const status = String(entry.offerStatus || "").trim().toLowerCase();
-    return status !== "rejected";
-  });
   const missing = [];
   for (const category of countryConfig.checklist || []) {
     for (const item of category.items || []) {
+      if (isOfferLetterPipelineItem(category, item)) continue;
       const hasUploaded = studentDocs.some(
         (d) =>
           documentTypeMatchesRequirement(d?.type, item.docType) &&
           String(d?.status || "").trim() !== "Rejected"
       );
-      const treatedAsOfferLetter =
-        hasUniversityOfferLetter &&
-        OFFER_LETTER_GROUPS.has(String(category?.stage || "").trim()) &&
-        documentTypeMatchesRequirement(item?.docType, "Offer Letter");
-      if (!hasUploaded && !treatedAsOfferLetter) missing.push({ stage: category.stage, docType: item.docType });
+      if (!hasUploaded) missing.push({ stage: category.stage, docType: item.docType });
     }
   }
   return missing;
