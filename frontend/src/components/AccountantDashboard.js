@@ -331,7 +331,7 @@ const AccountantDashboard = ({
       /* @__PURE__ */ jsxs(Button, {
         variant: "outline",
         className: "self-start shrink-0",
-        onClick: () => onNavigate?.("invoices"),
+        onClick: () => onNavigate?.("finance"),
         children: [
           "Review payments",
           /* @__PURE__ */ jsx(ArrowRight, { size: 16, className: "ml-2" })
@@ -363,7 +363,7 @@ const AccountantDashboard = ({
         trend: `${metrics.open.length} unpaid invoice${metrics.open.length === 1 ? "" : "s"}`,
         trendColor: metrics.outstandingLkr > 0 ? "text-amber-600" : "text-emerald-600",
         highlight: metrics.outstandingLkr > 0,
-        onClick: metrics.open.length ? () => onNavigate?.("invoices") : void 0
+        onClick: metrics.open.length ? () => onNavigate?.("finance") : void 0
       }),
       /* @__PURE__ */ jsx(DashboardCard, {
         title: "Collected (all time)",
@@ -381,7 +381,7 @@ const AccountantDashboard = ({
         trend: formatRawLKR(metrics.byStatus.find((s) => s.label === "Pending")?.lkr || 0),
         trendColor: metrics.pending.length ? "text-amber-600" : "text-slate-500",
         highlight: metrics.pending.length > 0,
-        onClick: metrics.pending.length ? () => onNavigate?.("invoices") : void 0
+        onClick: metrics.pending.length ? () => onNavigate?.("finance") : void 0
       }),
       /* @__PURE__ */ jsx(DashboardCard, {
         title: "To approve",
@@ -390,7 +390,7 @@ const AccountantDashboard = ({
         trend: formatRawLKR(metrics.byStatus.find((s) => s.label === "To approve")?.lkr || 0),
         trendColor: metrics.toApprove.length ? "text-blue-600" : "text-slate-500",
         highlight: metrics.toApprove.length > 0,
-        onClick: metrics.toApprove.length ? () => onNavigate?.("invoices") : void 0
+        onClick: metrics.toApprove.length ? () => onNavigate?.("finance") : void 0
       }),
       /* @__PURE__ */ jsx(DashboardCard, {
         title: "Over due",
@@ -399,7 +399,7 @@ const AccountantDashboard = ({
         trend: formatRawLKR(metrics.byStatus.find((s) => s.label === "Over due")?.lkr || 0),
         trendColor: metrics.overdue.length ? "text-rose-600" : "text-emerald-600",
         highlight: metrics.overdue.length > 0,
-        onClick: metrics.overdue.length ? () => onNavigate?.("invoices") : void 0
+        onClick: metrics.overdue.length ? () => onNavigate?.("finance") : void 0
       }),
       /* @__PURE__ */ jsx(DashboardCard, {
         title: "Paid",
@@ -444,7 +444,7 @@ const AccountantDashboard = ({
           size: "sm",
           variant: "ghost",
           className: "text-xs text-indigo-600",
-          onClick: () => onNavigate?.("invoices"),
+          onClick: () => onNavigate?.("finance"),
           children: "View all"
         })
       ] }),

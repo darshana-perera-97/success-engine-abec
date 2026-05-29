@@ -19,6 +19,7 @@ import { UniversityKnowledgeBase } from "./components/UniversityKnowledgeBase";
 import { FinanceModule } from "./components/FinanceModule";
 import { StaffFinanceHub } from "./components/StaffFinanceHub";
 import { AccountantDashboard } from "./components/AccountantDashboard";
+import { AccountantInvoices } from "./components/AccountantInvoices";
 import { CalendarScheduler } from "./components/CalendarScheduler";
 import { CounselorManagement } from "./components/CounselorManagement";
 import { AccountsManagement } from "./components/AccountsManagement";
@@ -2388,6 +2389,16 @@ function App({ initialView = "dashboard" }) {
         return selectedStudent && acctStudents.some((s) => s.id === selectedStudent.id)
           ? /* @__PURE__ */ jsx(StudentProfile, { ...acctProfileProps, student: selectedStudent, userRole: currentRole })
           : /* @__PURE__ */ jsx(StudentList, acctListProps);
+      }
+      if (currentView === "finance") {
+        return /* @__PURE__ */ jsx(AccountantInvoices, {
+          invoices: acctInvoices,
+          invoicesLoading,
+          students: acctStudents,
+          paymentAccounts,
+          onUpdateInvoice: handleUpdateInvoice,
+          onNotify: addNotification
+        });
       }
       return /* @__PURE__ */ jsx(AccountantDashboard, {
         branchLabel: managerDataScope.active ? managerDataScope.branchLabel : "",

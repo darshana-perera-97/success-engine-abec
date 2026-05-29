@@ -6,11 +6,15 @@ import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 
 const INVOICE_TABS = [
-  { id: "to_approve", label: "To approve" },
   { id: "all", label: "All" },
-  { id: "pending", label: "Pending" },
-  { id: "overdue", label: "Over due" }
+  { id: "to_approve", label: "To approve" },
+  { id: "rejected", label: "Rejected" },
+  { id: "pending", label: "Pending" }
 ];
+
+function hasRejectedPaymentEvidence(inv) {
+  return Boolean(String(inv?.paymentRejectionReason || "").trim());
+}
 
 const TABLE_COLUMNS = [
   { key: "student", label: "Student", className: "min-w-[140px]" },
@@ -46,9 +50,9 @@ function transferAccountLabel(inv, paymentAccountsById) {
 
 function invoiceMatchesTab(inv, tabId) {
   const status = String(inv.status || "").trim();
-  if (tabId === "pending") return status === "Pending";
+  if (tabId === "pending") return status === "Pending" && !hasRejectedPaymentEvidence(inv);
   if (tabId === "to_approve") return status === "Verifying";
-  if (tabId === "overdue") return status === "Overdue";
+  if (tabId === "rejected") return status === "Pending" && hasRejectedPaymentEvidence(inv);
   return true;
 }
 
@@ -155,12 +159,12 @@ const AccountantInvoices = ({
   }, [paymentAccounts]);
 
   const tabCounts = useMemo(() => {
-    const counts = { all: 0, pending: 0, to_approve: 0, overdue: 0 };
+    const counts = { all: 0, pending: 0, to_approve: 0, rejected: 0 };
     (invoices || []).forEach((inv) => {
       counts.all += 1;
       if (invoiceMatchesTab(inv, "pending")) counts.pending += 1;
       if (invoiceMatchesTab(inv, "to_approve")) counts.to_approve += 1;
-      if (invoiceMatchesTab(inv, "overdue")) counts.overdue += 1;
+      if (invoiceMatchesTab(inv, "rejected")) counts.rejected += 1;
     });
     return counts;
   }, [invoices]);
@@ -247,13 +251,13 @@ const AccountantInvoices = ({
         className: "text-xl font-bold text-slate-900 flex items-center gap-2",
         children: [
           /* @__PURE__ */ jsx(DollarSign, { size: 22, className: "text-slate-500" }),
-          "Payment evidence review"
+          "Ledger & Payments"
         ]
       }),
       /* @__PURE__ */ jsx("p", {
         className: "text-sm text-slate-500 max-w-2xl",
         children:
-          "You are responsible for checking payment evidence on this branch. Open each submission, then Approve (mark paid) or Reject (return to student with a reason)."
+          "All branch invoices by status. Open payment evidence on the To approve tab, then approve (mark paid) or reject (return to the student with a reason)."
       })
     ] }),
     tabCounts.to_approve > 0 &&
@@ -336,6 +340,10 @@ const AccountantInvoices = ({
                       children:
                         activeTab === "to_approve"
                           ? "No payment evidence waiting for review."
+                          : activeTab === "rejected"
+                          ? "No rejected payment evidence."
+                          : activeTab === "pending"
+                          ? "No pending invoices."
                           : "No invoices in this tab."
                     })
                   })
