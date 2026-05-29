@@ -1144,7 +1144,7 @@ const StudentProfile = ({
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
       if (nextStep === "Enrolled") {
-        const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices);
+        const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices, countryDocConfig);
         if (blockReasons.length > 0) {
           onNotify?.("Cannot move to Enrolled", blockReasons.join("\n\n"), "error");
           return;

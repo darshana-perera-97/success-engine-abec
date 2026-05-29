@@ -128,19 +128,61 @@ function isOfferLetterPipelineItem(category, item) {
   );
 }
 
+function studentHasUniversityOfferLetter(student) {
+  return (student?.universityOfferLetters || []).some((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    if (!String(entry.url || "").trim()) return false;
+    return String(entry.offerStatus || "").trim().toLowerCase() !== "rejected";
+  });
+}
+
 function collectMissingPipelineDocuments(student, countryConfig) {
   if (!countryConfig) return [];
   const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
   const missing = [];
-  for (const category of countryConfig.checklist || []) {
-    for (const item of category.items || []) {
-      if (isOfferLetterPipelineItem(category, item)) continue;
+  const seen = new Set();
+  const pipelineDocs = Array.isArray(countryConfig.pipelineDocs) ? countryConfig.pipelineDocs : [];
+
+  if (pipelineDocs.length > 0) {
+    for (const doc of pipelineDocs) {
+      const name = String(doc?.name || "").trim();
+      if (!name || name === "(placeholder)" || doc.required === false) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (
+        OFFER_LETTER_GROUPS.has(String(doc.group || "").trim()) &&
+        documentTypeMatchesRequirement(name, "Offer Letter") &&
+        studentHasUniversityOfferLetter(student)
+      ) {
+        continue;
+      }
       const hasUploaded = studentDocs.some(
         (d) =>
-          documentTypeMatchesRequirement(d?.type, item.docType) &&
+          documentTypeMatchesRequirement(d?.type, name) &&
           String(d?.status || "").trim() !== "Rejected"
       );
-      if (!hasUploaded) missing.push({ stage: category.stage, docType: item.docType });
+      if (!hasUploaded) {
+        missing.push({ stage: String(doc.group || "").trim() || "Ungrouped", docType: name });
+      }
+    }
+    return missing;
+  }
+
+  for (const category of countryConfig.checklist || []) {
+    for (const item of category.items || []) {
+      if (item.required === false) continue;
+      const docType = item.docType;
+      if (seen.has(docType)) continue;
+      seen.add(docType);
+      if (isOfferLetterPipelineItem(category, item) && studentHasUniversityOfferLetter(student)) {
+        continue;
+      }
+      const hasUploaded = studentDocs.some(
+        (d) =>
+          documentTypeMatchesRequirement(d?.type, docType) &&
+          String(d?.status || "").trim() !== "Rejected"
+      );
+      if (!hasUploaded) missing.push({ stage: category.stage, docType });
     }
   }
   return missing;
@@ -182,12 +224,8 @@ function getEnrolledAdvanceBlockReasons(student, invoices, countryConfig) {
   if (missingPipeline.length > 0) {
     const sample = missingPipeline.slice(0, 8).map((m) => `${m.stage}: ${m.docType}`).join("; ");
     reasons.push(
-      `Pipeline documents incomplete (${missingPipeline.length} missing). ${sample}${missingPipeline.length > 8 ? "…" : ""}`
+      `Required pipeline documents missing (${missingPipeline.length}). ${sample}${missingPipeline.length > 8 ? "…" : ""}`
     );
-  }
-  const visaInc = collectIncompleteVisaItems(student, countryConfig);
-  if (visaInc.length > 0) {
-    reasons.push(`Visa checklist incomplete (${visaInc.length}): ${visaInc.join(", ")}`);
   }
   const sid = String(student?.id || "").trim();
   const unpaid = (invoices || []).filter(
