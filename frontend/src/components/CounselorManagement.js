@@ -182,7 +182,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       const overdueByDate = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
       const overdueTasks = myTasks.filter((t) => t.status === "Overdue").length;
       const criticalTasks = myTasks.filter(
-        (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
+        (t) =>
+          t.status !== "Completed" &&
+          (t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t))
       ).length;
       const slaViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
       const stageSlaBreaches = computePipelineEscalations(myStudents).length;
@@ -274,7 +276,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       });
     }
     const counselorCriticalTasks = counselor.tasks.filter(
-      (t) => t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t)
+      (t) =>
+        t.status !== "Completed" &&
+        (t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t))
     );
     const studentById = new Map(
       (counselor.students || []).map((s) => [String(s.id || "").trim(), s])
