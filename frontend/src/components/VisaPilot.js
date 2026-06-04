@@ -1,5 +1,5 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import {
@@ -51,6 +51,9 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
     resolveStudentStageId(student.status, countryDocConfig?.stages) === "documentation" ||
     normalizePipelineStatus(student.status) === "Documentation";
   const [visaState, setVisaState] = useState(student.visa || {});
+  useEffect(() => {
+    setVisaState(student.visa || {});
+  }, [student.id, student.visa]);
   const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0 });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");

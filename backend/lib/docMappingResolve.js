@@ -188,13 +188,48 @@ function collectMissingPipelineDocuments(student, countryConfig) {
   return missing;
 }
 
+function normalizeVisaWorkflowItem(item) {
+  if (typeof item === "string") {
+    return { name: item, required: true };
+  }
+  const name = String(item?.name || item?.label || "").trim();
+  return { name, required: item?.required !== false };
+}
+
+function isVisaChecklistItemTicked(student, itemName) {
+  const name = String(itemName || "").trim();
+  if (!name) return true;
+  const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
+  return visaState[name] === "Completed";
+}
+
 function collectIncompleteVisaItems(student, countryConfig) {
   if (!countryConfig) return [];
-  const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
   const incomplete = [];
+  const seen = new Set();
+  const visaDocs = Array.isArray(countryConfig.visaDocs) ? countryConfig.visaDocs : [];
+
+  if (visaDocs.length > 0) {
+    for (const doc of visaDocs) {
+      const name = String(doc?.name || "").trim();
+      if (!name || name === "(placeholder)" || doc.required === false) continue;
+      const stageIds = Array.isArray(doc.stageIds)
+        ? doc.stageIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      if (stageIds.length > 0 && !stageIds.includes("visa")) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (!isVisaChecklistItemTicked(student, name)) incomplete.push(name);
+    }
+    return incomplete;
+  }
+
   for (const stage of countryConfig.visaWorkflow || []) {
     for (const item of stage.items || []) {
-      if (visaState[item] !== "Completed") incomplete.push(item);
+      const { name, required } = normalizeVisaWorkflowItem(item);
+      if (!required || !name || seen.has(name)) continue;
+      seen.add(name);
+      if (!isVisaChecklistItemTicked(student, name)) incomplete.push(name);
     }
   }
   return incomplete;
@@ -207,12 +242,14 @@ function collectMissingVisaPilotUploads(student, countryConfig) {
   const missing = [];
   for (const stage of countryConfig.visaWorkflow || []) {
     for (const item of stage.items || []) {
-      if (visaState[item] === "Completed") continue;
-      const docType = `Visa Pilot - ${item}`;
+      const { name, required } = normalizeVisaWorkflowItem(item);
+      if (!required || !name) continue;
+      if (visaState[name] === "Completed") continue;
+      const docType = `Visa Pilot - ${name}`;
       const hasUploaded = studentDocs.some(
         (d) => String(d?.type || "") === docType && String(d?.status || "").trim() !== "Rejected"
       );
-      if (!hasUploaded) missing.push({ item, docType });
+      if (!hasUploaded) missing.push({ item: name, docType });
     }
   }
   return missing;
@@ -225,6 +262,13 @@ function getEnrolledAdvanceBlockReasons(student, invoices, countryConfig) {
     const sample = missingPipeline.slice(0, 8).map((m) => `${m.stage}: ${m.docType}`).join("; ");
     reasons.push(
       `Required pipeline documents missing (${missingPipeline.length}). ${sample}${missingPipeline.length > 8 ? "…" : ""}`
+    );
+  }
+  const incompleteVisa = collectIncompleteVisaItems(student, countryConfig);
+  if (incompleteVisa.length > 0) {
+    const sample = incompleteVisa.slice(0, 8).join(", ");
+    reasons.push(
+      `Visa tab: tick required checklist items (${incompleteVisa.length} pending). ${sample}${incompleteVisa.length > 8 ? "…" : ""}`
     );
   }
   const sid = String(student?.id || "").trim();

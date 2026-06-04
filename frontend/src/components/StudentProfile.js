@@ -56,7 +56,10 @@ import {
 } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { exportStudentDocumentsZip } from "../utils/exportStudentDocumentsZip";
-import { getEnrolledAdvanceBlockReasons } from "../studentEnrolledGate.js";
+import {
+  applyVisaTickForVerifiedDocument,
+  getEnrolledAdvanceBlockReasons
+} from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import {
@@ -1283,8 +1286,9 @@ const StudentProfile = ({
     const updatedDocs =
       localStudent.documents?.map((d) => (String(d.id) === String(doc.id) ? doc : d)) || [];
     const slaNext = reconcileStudentSlaViolationsWithDocuments({ ...localStudent, documents: updatedDocs });
-    const updatedStudent =
+    let updatedStudent =
       slaNext !== void 0 ? { ...localStudent, documents: updatedDocs, slaViolations: slaNext } : { ...localStudent, documents: updatedDocs };
+    updatedStudent = applyVisaTickForVerifiedDocument(updatedStudent, doc);
     setLocalStudent(updatedStudent);
     const persistResult = await onUpdateStudent?.(updatedStudent);
     if (persistResult && persistResult.ok === false) {
@@ -1635,7 +1639,7 @@ const StudentProfile = ({
             nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
               /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Enrolled is blocked until:" }),
               /* @__PURE__ */ jsx("ul", { className: "list-disc pl-4 space-y-1", children: enrolledAdvanceBlockReasons.map((r, i) => /* @__PURE__ */ jsx("li", { className: "whitespace-pre-wrap", children: r }, i)) }),
-              /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: "Complete pipeline documents (all checklist stages), the Visa tab checklist, and pay every invoice (Paid status)." })
+              /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-800", children: "Upload every required pipeline document, tick every required item on the Visa tab, and pay every invoice (Paid status)." })
             ] }),
             missingRequiredDocsBeforeAdvance.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
               /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Required documents are still pending (you can still continue):" }),
