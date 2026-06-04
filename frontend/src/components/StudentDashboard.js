@@ -1,10 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useRef } from "react";
-import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye } from "lucide-react";
+import { useRef, useState } from "react";
+import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye, Plane } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentManager } from "./DocumentManager";
 import { PersonContactCard } from "./PersonContactCard";
-import { getStudentPipelineStepIndex } from "../docMappingConfig";
+import { VisaPilot } from "./VisaPilot";
+import { getStudentPipelineStepIndex, isVisaPilotUnlockedForConfig } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { PIPELINE_STEPS } from "../pipeline";
 import { buildStudentDashboardCounselorRoster } from "../studentContactHelpers";
@@ -22,11 +23,14 @@ const StudentDashboard = ({
   employees = [],
   onUploadDocument,
   onUploadProfileOtherDocument,
-  onUpdateTasks
+  onUpdateTasks,
+  onUpdateStudent
 }) => {
   const pipelineDocsRef = useRef(null);
+  const [docTab, setDocTab] = useState("pipeline");
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
   const { config: countryDocConfig } = useCountryDocConfig(student?.country);
+  const visaPilotUnlocked = isVisaPilotUnlockedForConfig(student.status, countryDocConfig);
 
   const pipelineSteps = countryDocConfig?.pipelineSteps?.length ? countryDocConfig.pipelineSteps : PIPELINE_STEPS;
   const visualIndex = Math.max(0, getStudentPipelineStepIndex(student.status, countryDocConfig?.stages));
@@ -41,6 +45,11 @@ const StudentDashboard = ({
     return 0;
   });
   const scrollToPipelineDocs = () => {
+    setDocTab("pipeline");
+    pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const scrollToVisaPilotDocs = () => {
+    setDocTab("visa-pilot");
     pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [
@@ -208,13 +217,44 @@ const StudentDashboard = ({
                 /* @__PURE__ */ jsx(FileText, { size: 18, className: "text-indigo-600" }),
                 "Your documents"
               ] }),
-              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: "Pipeline requirements for your country and stage. Upload files and track review status — your counselor will approve or request changes." })
+              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: docTab === "pipeline" ? "Pipeline requirements for your country and stage. Upload files and track review status — your counselor will approve or request changes." : "Visa Pilot checklist for your destination country. Upload each required visa document when you reach the Documentation stage." })
             ] }),
-            /* @__PURE__ */ jsx(
+            /* @__PURE__ */ jsxs("div", { className: "flex border-b border-gray-200 mb-6 gap-1", role: "tablist", "aria-label": "Document categories", children: [
+              /* @__PURE__ */ jsxs(
+                "button",
+                {
+                  type: "button",
+                  role: "tab",
+                  "aria-selected": docTab === "pipeline",
+                  onClick: () => setDocTab("pipeline"),
+                  className: `px-4 py-2.5 text-sm font-semibold border-b-2 transition-all flex items-center gap-2 ${docTab === "pipeline" ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"}`,
+                  children: [
+                    /* @__PURE__ */ jsx(FileText, { size: 16 }),
+                    "Pipeline Docs"
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxs(
+                "button",
+                {
+                  type: "button",
+                  role: "tab",
+                  "aria-selected": docTab === "visa-pilot",
+                  onClick: () => setDocTab("visa-pilot"),
+                  className: `px-4 py-2.5 text-sm font-semibold border-b-2 transition-all flex items-center gap-2 ${docTab === "visa-pilot" ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"}`,
+                  children: [
+                    /* @__PURE__ */ jsx(Plane, { size: 16 }),
+                    "Visa Pilot Docs"
+                  ]
+                }
+              )
+            ] }),
+            docTab === "pipeline" ? /* @__PURE__ */ jsx(
               DocumentManager,
               {
                 student,
                 userRole: "Student",
+                countryDocConfig,
                 tasks,
                 onUpdateTasks,
                 onUploadDocument,
@@ -223,7 +263,22 @@ const StudentDashboard = ({
                 showUniversityOfferLettersBlock: true,
                 showProfileOtherDocuments: false
               }
-            )
+            ) : /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
+              !visaPilotUnlocked && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700", children: [
+                /* @__PURE__ */ jsx("p", { className: "font-semibold", children: "Visa Pilot unlocks at the Documentation stage" }),
+                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "You can preview the visa checklist below. Uploads will open once your application reaches Documentation." })
+              ] }),
+              /* @__PURE__ */ jsx(
+                VisaPilot,
+                {
+                  student,
+                  userRole: "Student",
+                  countryDocConfig,
+                  onUploadDocument,
+                  onUpdateStudent
+                }
+              )
+            ] })
           ]
         }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
@@ -245,7 +300,7 @@ const StudentDashboard = ({
                 ] })
               ] })
             ] }),
-            task.documentType ? /* @__PURE__ */ jsx(Button, { size: "sm", className: "w-full sm:w-auto", onClick: scrollToPipelineDocs, children: "Upload Now" }) : /* @__PURE__ */ jsx(Button, { size: "sm", variant: "secondary", className: "w-full sm:w-auto", onClick: () => onNavigate("tasks"), children: "View Task" })
+            task.documentType ? /* @__PURE__ */ jsx(Button, { size: "sm", className: "w-full sm:w-auto", onClick: String(task.documentType || "").startsWith("Visa Pilot - ") ? scrollToVisaPilotDocs : scrollToPipelineDocs, children: "Upload Now" }) : /* @__PURE__ */ jsx(Button, { size: "sm", variant: "secondary", className: "w-full sm:w-auto", onClick: () => onNavigate("tasks"), children: "View Task" })
           ] }, task.id)) : /* @__PURE__ */ jsxs("div", { className: "text-center py-8 text-slate-500 text-sm", children: [
             /* @__PURE__ */ jsx(CheckCircle, { size: 24, className: "mx-auto mb-2 text-emerald-500" }),
             "No pending actions required at this stage."

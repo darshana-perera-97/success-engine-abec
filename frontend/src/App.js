@@ -2298,10 +2298,10 @@ function App({ initialView = "dashboard" }) {
     if (currentRole === "Student") {
       const studentUser = currentUser;
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees, onUploadStudentDocument: handleUploadStudentDocument });
       if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
-      return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument });
+      return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent });
     }
     const openEscalationStudent = (studentId) => {
       const latest = students.find((s) => String(s.id) === String(studentId));

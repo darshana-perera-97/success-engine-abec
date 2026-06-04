@@ -56,8 +56,10 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   const [uploadError, setUploadError] = useState("");
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const visaDocuments = useMemo(() => student.documents?.filter((doc) => String(doc.tier || "").toLowerCase() === "visapilot") || [], [student.documents]);
-  const canUploadVisaDocs = userRole !== "Student" && visaPilotUnlocked;
-  const canDeleteVisaDoc = userRole !== "Student" && typeof onDeleteDocument === "function";
+  const isStudent = userRole === "Student";
+  const canUploadVisaDocs = visaPilotUnlocked;
+  const canToggleVisaItems = !isStudent && visaPilotUnlocked;
+  const canDeleteVisaDoc = !isStudent && typeof onDeleteDocument === "function";
   const buildVisaDocType = (item) => buildVisaPilotDocType(item);
   let currentStageIndex = 0;
   for (let i = 0; i < workflow.length; i++) {
@@ -209,8 +211,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                       /* @__PURE__ */ jsxs(
                         "div",
                         {
-                          className: `flex items-center gap-3 min-w-0 ${!isLocked ? "cursor-pointer" : ""}`,
-                          onClick: () => !isLocked && handleToggleItem(item),
+                          className: `flex items-center gap-3 min-w-0 ${canToggleVisaItems && !isLocked ? "cursor-pointer" : ""}`,
+                          onClick: () => canToggleVisaItems && !isLocked && handleToggleItem(item),
                           children: [
                             /* @__PURE__ */ jsx("div", { className: `flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center ${itemCompleted ? "bg-emerald-500 border-emerald-600" : "border-slate-300 bg-slate-50"}`, children: itemCompleted && /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "text-white" }) }),
                             /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
@@ -220,7 +222,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           ]
                         }
                       ),
-                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
+                      canUploadVisaDocs && (!isStudent || !isLocked) && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
                         /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
                         " Upload"
                       ] })
@@ -262,8 +264,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                     !hasVerifiedVisaDoc && /* @__PURE__ */ jsx("div", { className: `border-2 border-dashed p-3 rounded-lg ${itemDocuments.length > 0 ? "bg-amber-50/80 border-amber-200" : itemRequired ? "bg-slate-50 border-gray-200" : "bg-emerald-50/40 border-emerald-100"}`, children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
                       /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${itemDocuments.length > 0 ? "bg-amber-100 border-amber-200 text-amber-600" : itemRequired ? "bg-white border-gray-200 text-slate-400" : "bg-emerald-50 border-emerald-200 text-emerald-500"}`, children: /* @__PURE__ */ jsx(Hourglass, { size: 18 }) }),
                       /* @__PURE__ */ jsxs("div", { children: [
-                        /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${itemDocuments.length > 0 ? "text-amber-900" : itemRequired ? "text-slate-500" : "text-emerald-800"}`, children: itemDocuments.length > 0 ? "Awaiting approved document" : itemRequired ? "Pending upload" : "Optional — not uploaded" }),
-                        /* @__PURE__ */ jsx("p", { className: `text-xs ${itemDocuments.length > 0 ? "text-amber-800/80" : itemRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: itemDocuments.length > 0 ? "Upload a new file or approve a pending submission for this visa item." : itemRequired ? "No file uploaded yet for this requirement." : "Upload only if needed for this student." })
+                        /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${itemDocuments.length > 0 ? "text-amber-900" : itemRequired ? "text-slate-500" : "text-emerald-800"}`, children: itemDocuments.length > 0 ? (isStudent ? "Awaiting counselor review" : "Awaiting approved document") : itemRequired ? "Pending upload" : "Optional — not uploaded" }),
+                        /* @__PURE__ */ jsx("p", { className: `text-xs ${itemDocuments.length > 0 ? "text-amber-800/80" : itemRequired ? "text-slate-400" : "text-emerald-700/80"}`, children: itemDocuments.length > 0 ? (isStudent ? "Your upload is pending approval. You can upload a new file if needed." : "Upload a new file or approve a pending submission for this visa item.") : itemRequired ? (isStudent ? "Upload the required file for this visa item." : "No file uploaded yet for this requirement.") : (isStudent ? "Upload only if your counselor asks for this document." : "Upload only if needed for this student.") })
                       ] })
                     ] }) })
                     ] })
