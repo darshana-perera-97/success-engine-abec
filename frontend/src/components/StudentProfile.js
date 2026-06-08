@@ -816,7 +816,7 @@ const StudentProfile = ({
       setActiveTab(raw);
       return;
     }
-    setActiveTab("pipeline");
+    setActiveTab(visaPilotUnlocked ? "visa-pilot" : "pipeline");
   }, [searchParams, student?.id, visaPilotUnlocked]);
   const [openInvoiceCreatePending, setOpenInvoiceCreatePending] = useState(false);
   useEffect(() => {
