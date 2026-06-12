@@ -169,6 +169,24 @@ function buildInvoicePaymentDecisionWhatsappMessage({
   return lines.join("\n");
 }
 
+function buildDocumentUploadWhatsappMessage({ studentName, docName, docType, fileName }) {
+  const typeLabel = String(docType || docName || "Document").trim();
+  const friendlyDoc =
+    docName && docName !== docType ? `${String(docName).trim()} (${typeLabel})` : typeLabel;
+  const lines = [
+    `${COMPANY_NAME} — Document shared`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your counselor has uploaded a document for you.",
+    `Document: ${friendlyDoc}`,
+    fileName ? `File: ${String(fileName).trim()}` : "",
+    "",
+    "Log in to your student portal to review your documents.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function buildDocumentDecisionWhatsappMessage({ studentName, docName, docType, decision, rejectionReason }) {
   const friendlyDoc = docType ? `${docName} (${docType})` : docName;
   if (decision === "verified") {
@@ -286,6 +304,7 @@ module.exports = {
   formatPaymentAccountForMessage,
   buildInvoicePaymentDecisionWhatsappMessage,
   buildDocumentDecisionWhatsappMessage,
+  buildDocumentUploadWhatsappMessage,
   buildUniversityOfferWhatsappMessage,
   buildCounselorInvoiceDecisionPortalMessage,
 };

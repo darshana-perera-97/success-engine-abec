@@ -1,10 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import App from "./App";
 import { CountryDocConfigPreloader } from "./components/CountryDocConfigPreloader";
 import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
 import { StudentRegistrationForm } from "./components/StudentRegistrationForm";
+import { PublicWebFormPage } from "./components/EmbeddableWebForm";
 import { applyCompanyBrandingToDocument } from "./companyConfig";
 import "./styles.css";
 
@@ -28,8 +29,14 @@ const ROUTE_VIEWS = [
   { path: "/integration", view: "integration" },
   { path: "/finance", view: "finance" },
   { path: "/settings", view: "settings" },
-  { path: "/maps", view: "maps" }
+  { path: "/maps", view: "maps" },
+  { path: "/web-forms", view: "web-forms" }
 ];
+
+function WebFormEmbedRoute() {
+  const { formId } = useParams();
+  return <PublicWebFormPage formId={formId} />;
+}
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -51,6 +58,7 @@ root.render(
           />
         ))}
         <Route path="/student-reg-form" element={<StudentRegistrationForm />} />
+        <Route path="/web-form/:formId" element={<WebFormEmbedRoute />} />
         <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

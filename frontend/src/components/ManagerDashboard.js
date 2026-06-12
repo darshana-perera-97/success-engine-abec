@@ -17,6 +17,7 @@ import {
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { AlertOctagon, TrendingUp, ArrowRight, Zap, CheckSquare, Banknote, User, FileText } from "lucide-react";
 import { Button } from "./Button";
+import { StudentMilestonesTable } from "./StudentMilestonesTable";
 function getCalendarQuarter(date = new Date()) {
   const month = date.getMonth();
   return { quarter: Math.floor(month / 3) + 1, year: date.getFullYear() };
@@ -44,7 +45,8 @@ const ManagerDashboard = ({
   canApproveInvoicePayments = false,
   onUpdateTasks,
   pipelineStageEscalations = [],
-  onOpenStageEscalationStudent
+  onOpenStageEscalationStudent,
+  studentsScopeLabel = null,
 }) => {
   const [activeTab, setActiveTab] = useState("escalations");
   const [acceptingInvoiceId, setAcceptingInvoiceId] = useState(null);
@@ -446,7 +448,13 @@ const ManagerDashboard = ({
           /* @__PURE__ */ jsx("div", { className: "flex-1 min-h-[250px] overflow-y-auto", children: /* @__PURE__ */ jsx(ActivityFeed, { activities, limit: 5, showRoleBadge: false, showCounselorBadge: false }) })
         ] })
       ] })
-    ] })
+    ] }),
+    /* @__PURE__ */ jsx(StudentMilestonesTable, {
+      students,
+      employees,
+      onSelectStudent,
+      scopeLabel: studentsScopeLabel,
+    })
   ] });
 };
 const DashboardCard = ({ title, value, icon, trend, trendColor, highlight, onClick }) => /* @__PURE__ */ jsxs(

@@ -36,6 +36,7 @@ const {
 const {
   buildCounselorAssignmentWhatsappMessage,
   buildDocumentDecisionWhatsappMessage,
+  buildDocumentUploadWhatsappMessage,
   buildUniversityOfferWhatsappMessage,
 } = require("../services/whatsappMessages");
 const { sendStudentPortalAccountDetails } = require("../services/studentAccountDetails");
@@ -72,6 +73,7 @@ const {
   readCountryDocConfig,
   getEnrolledAdvanceBlockReasons,
   resolveStudentStageId,
+  isDocumentWhatsappNotifyEnabled,
 } = require("../lib/docMappingResolve");
 const { normalizeAccountDetailsStageId } = require("../models/docMapping");
 
@@ -84,6 +86,58 @@ async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent)
   const reasons = getEnrolledAdvanceBlockReasons(mergedStudent, invoices, countryConfig);
   if (!reasons.length) return null;
   return reasons.join(" ");
+}
+
+async function deliverConfiguredDocumentUploadWhatsapp({
+  student,
+  studentId,
+  docType,
+  docName,
+  fileName,
+  attachmentUrl,
+  attachmentMime,
+}) {
+  const countryConfig = await readCountryDocConfig(student?.country);
+  if (!isDocumentWhatsappNotifyEnabled(countryConfig, docType)) {
+    return {
+      attempted: false,
+      status: "skipped",
+      reason: "Document type is not configured for WhatsApp notification.",
+    };
+  }
+  const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+  if (!counselorId || counselorId === "Unassigned") {
+    return { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
+  }
+  const message = buildDocumentUploadWhatsappMessage({
+    studentName: String(student?.name || "").trim(),
+    docName: String(docName || docType || "Document").trim(),
+    docType: String(docType || "").trim(),
+    fileName: String(fileName || "").trim(),
+  });
+  const attachment =
+    attachmentUrl && attachmentMime && canSendWhatsappAttachmentMime(attachmentMime)
+      ? { url: attachmentUrl, mime: attachmentMime, name: String(fileName || docName || docType || "document").trim() }
+      : null;
+  try {
+    const result = await deliverCounselorMessageToStudentWhatsapp({
+      senderId: counselorId,
+      receiverId: studentId,
+      content: message,
+      attachment,
+    });
+    return {
+      attempted: Boolean(result?.attempted),
+      status: String(result?.status || "failed"),
+      reason: String(result?.reason || ""),
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      status: "failed",
+      reason: String(error?.message || "Failed to send WhatsApp message."),
+    };
+  }
 }
 
 async function handle(req, res, url) {
@@ -829,10 +883,20 @@ async function handle(req, res, url) {
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
+      const documentUploadWhatsapp = await deliverConfiguredDocumentUploadWhatsapp({
+        student: merged,
+        studentId,
+        docType,
+        docName: newDocument.name,
+        fileName: newDocument.name,
+        attachmentUrl: newDocument.url,
+        attachmentMime: newDocument.mime,
+      });
       sendJson(res, 200, {
         ok: true,
         data: publicStudentRecord(req, merged),
         document: { ...newDocument, url: publicStudentDocUrl(req, newDocument.url) },
+        documentUploadWhatsapp,
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -1003,7 +1067,21 @@ async function handle(req, res, url) {
       const studentName = String(merged.name || "").trim();
       const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
       const letterCount = newEntries.length;
+      const countryConfig = await readCountryDocConfig(merged.country);
+      const notifyOfferLetters = isDocumentWhatsappNotifyEnabled(countryConfig, "Offer Letter");
       for (const entry of newEntries) {
+        if (!notifyOfferLetters) {
+          offerLetterWhatsappNotifications.push({
+            letterId: entry.id,
+            offerStatus: entry.offerStatus,
+            whatsapp: {
+              attempted: false,
+              status: "skipped",
+              reason: "Offer Letter is not configured for WhatsApp notification in Doc Mapping.",
+            },
+          });
+          continue;
+        }
         if (!counselorId || counselorId === "Unassigned") {
           offerLetterWhatsappNotifications.push({
             letterId: entry.id,

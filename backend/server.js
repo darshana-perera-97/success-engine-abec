@@ -21,6 +21,8 @@ const whatsappRoutes = require("./routes/whatsapp");
 const universityRoutes = require("./routes/university");
 const aiRoutes = require("./routes/ai");
 const docMappingRoutes = require("./routes/docMapping");
+const systemDataRoutes = require("./routes/systemData");
+const webFormsRoutes = require("./routes/webForms");
 const frontendRoutes = require("./routes/frontend");
 
 const fs = require("fs/promises");
@@ -55,6 +57,7 @@ const server = http.createServer(async (req, res) => {
   if (await accountRoutes.handle(req, res, url)) return;
   if (await universityRoutes.handle(req, res, url)) return;
   if (await appointmentRoutes.handle(req, res, url)) return;
+  if (await systemDataRoutes.handle(req, res, url)) return;
   if (await invoiceRoutes.handle(req, res, url)) return;
   if (await taskRoutes.handle(req, res, url)) return;
   if (await studentRoutes.handle(req, res, url)) return;
@@ -62,6 +65,7 @@ const server = http.createServer(async (req, res) => {
   if (await activityRoutes.handle(req, res, url)) return;
   if (await branchRoutes.handle(req, res, url)) return;
   if (await docMappingRoutes.handle(req, res, url)) return;
+  if (await webFormsRoutes.handle(req, res, url)) return;
   if (await aiRoutes.handle(req, res, url)) return;
   if (await frontendRoutes.handle(req, res, url)) return;
 

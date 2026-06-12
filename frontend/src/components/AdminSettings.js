@@ -1,11 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState } from "react";
-import { Globe, Save, Settings, Landmark, Trash2 } from "lucide-react";
+import { Globe, Save, Settings, Landmark, Trash2, Wallet } from "lucide-react";
 import { Button } from "./Button";
-import { createCountry, getCountries, createPaymentAccount, deletePaymentAccount, getPaymentAccounts } from "../authApi";
+import { createCountry, deleteCountry, getCountries, createPaymentAccount, deletePaymentAccount, getPaymentAccounts } from "../authApi";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
 
-const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts = [], onPaymentAccountsChange }) => {
+const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onSaveSystemData, paymentAccounts = [], onPaymentAccountsChange }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const defaultDaySchedules = {
     0: { isOpen: true, startHour: 8, endHour: 17 },
@@ -29,6 +29,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts
   const [countryError, setCountryError] = useState("");
   const [countrySuccess, setCountrySuccess] = useState("");
   const [isSavingCountry, setIsSavingCountry] = useState(false);
+  const [removingCountryName, setRemovingCountryName] = useState("");
   const [localPaymentAccounts, setLocalPaymentAccounts] = useState(paymentAccounts);
   const [paymentAccountsReady, setPaymentAccountsReady] = useState(false);
   const [paymentAccountError, setPaymentAccountError] = useState("");
@@ -44,6 +45,10 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts
     currency: "LKR",
     notes: ""
   });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false });
+  const [financeError, setFinanceError] = useState("");
+  const [financeSuccess, setFinanceSuccess] = useState("");
+  const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
 
   const loadCountries = async () => {
     try {
@@ -84,6 +89,13 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts
       setLocalPaymentAccounts(paymentAccounts);
     }
   }, [paymentAccounts]);
+
+  useEffect(() => {
+    if (!systemData) return;
+    setFinanceForm({
+      counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true
+    });
+  }, [systemData]);
 
   useEffect(() => {
     if (!meetingSettings) return;
@@ -210,10 +222,53 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsx(Wallet, { size: 18, className: "text-slate-600" }),
+        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Finance permissions" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Control whether counselors can approve or reject student payment evidence on invoices." }),
+      financeError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 w-full", children: financeError }) : null,
+      financeSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 w-full", children: financeSuccess }) : null,
+      /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.counselorCanAcceptPayments,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, counselorCanAcceptPayments: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Allow counselors to accept payments" }),
+          "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission."
+        ] })
+      ] }) }),
+      /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
+        type: "button",
+        isLoading: isSavingFinanceSettings,
+        onClick: async () => {
+          setFinanceError("");
+          setFinanceSuccess("");
+          setIsSavingFinanceSettings(true);
+          const result = await onSaveSystemData?.({
+            counselorCanAcceptPayments: financeForm.counselorCanAcceptPayments
+          });
+          setIsSavingFinanceSettings(false);
+          if (!result?.ok) {
+            setFinanceError(result?.error || "Failed to save finance settings.");
+            return;
+          }
+          setFinanceSuccess("Finance permissions saved.");
+        },
+        children: [
+          /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
+          "Save finance settings"
+        ]
+      }) })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
         /* @__PURE__ */ jsx(Globe, { size: 18, className: "text-slate-600" }),
         /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Destination countries" })
       ] }),
-      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Used when creating Country Coordinator accounts. Student records should use the same spelling (e.g. Canada, UK)." }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Used when creating Country Coordinator accounts and student destination options. Remove countries that are no longer offered." }),
       countryError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: countryError }) : null,
       countrySuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: countrySuccess }) : null,
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row gap-2 max-w-xl", children: [
@@ -252,11 +307,31 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, paymentAccounts
       /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden max-w-xl", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
         /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
-          /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: "Count" })
+          /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 5, cols: 2 }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
-          /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right text-slate-500 tabular-nums", children: "—" })
+          /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right", children: /* @__PURE__ */ jsx(Button, {
+            type: "button",
+            variant: "ghost",
+            size: "sm",
+            className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50",
+            isLoading: removingCountryName === c,
+            onClick: async () => {
+              setCountryError("");
+              setCountrySuccess("");
+              setRemovingCountryName(c);
+              const result = await deleteCountry(c);
+              setRemovingCountryName("");
+              if (!result.ok) {
+                setCountryError(result.error || "Failed to remove country.");
+                return;
+              }
+              setCountries(result.data);
+              setCountrySuccess("Country removed.");
+            },
+            children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
+          }) })
         ] }, c)) })
       ] }) }),
       /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: countriesReady ? `${countries.length} countr${countries.length === 1 ? "y" : "ies"} in the list.` : "Loading countries…" })

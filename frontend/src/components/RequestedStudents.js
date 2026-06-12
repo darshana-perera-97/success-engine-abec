@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardList, RefreshCw, UserPlus, X, Eye } from "lucide-react";
-import { getAccounts, getReqStudents } from "../authApi";
+import { ClipboardList, FileUp, RefreshCw, Trash2, UserPlus, X, Eye } from "lucide-react";
+import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { isCounselorEquivalentAccountRole } from "../roles";
+import { mapMetaLeadRow, parseMetaLeadsFile } from "../utils/metaLeadsImport";
+import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 
 function formatSubmittedAt(iso) {
   if (!iso) return "—";
@@ -74,6 +76,9 @@ function buildFullDetailRows(row) {
     if (key === "submittedAt" && raw) {
       display = formatSubmittedAt(raw);
     }
+    if (key === "source") {
+      display = formatRequestedStudentSource(row);
+    }
     out.push({ label, value: display });
   }
   for (const key of Object.keys(row).sort((a, b) => a.localeCompare(b))) {
@@ -111,8 +116,17 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
   const [detailRow, setDetailRow] = useState(null);
   const [pipelinePriority, setPipelinePriority] = useState("Medium");
   const counselorFetchSeq = useRef(0);
+  const importInputRef = useRef(null);
   const onAddFromRequestRef = useRef(onAddFromRequest);
   onAddFromRequestRef.current = onAddFromRequest;
+
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importFileName, setImportFileName] = useState("");
+  const [importRows, setImportRows] = useState([]);
+  const [importError, setImportError] = useState("");
+  const [importSaving, setImportSaving] = useState(false);
+  const [importParseLoading, setImportParseLoading] = useState(false);
+  const [removingId, setRemovingId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -184,6 +198,126 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
     setPipelinePriority("Medium");
   };
 
+  const closeImportPreview = () => {
+    setImportPreviewOpen(false);
+    setImportRows([]);
+    setImportFileName("");
+    setImportError("");
+    setImportSaving(false);
+    setImportParseLoading(false);
+  };
+
+  const handleImportFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setImportParseLoading(true);
+    setImportError("");
+    const parsed = await parseMetaLeadsFile(file);
+    if (!parsed.ok) {
+      setImportParseLoading(false);
+      setImportError(parsed.error || "Could not read the file.");
+      return;
+    }
+
+    const branchesRes = await getBranches();
+    const branchLocations = branchesRes.ok
+      ? (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean)
+      : [];
+
+    const remapped = (parsed.data || []).map((row) =>
+      mapMetaLeadRow(
+        {
+          id: row.metaLeadId,
+          created_time: row.submittedAt,
+          full_name: row.name,
+          phone_number: row.phone,
+          nearest_branch: row.nearestOffice,
+          city: row.city,
+          highest_qualification: row.currentEducationLevel,
+          preferred_intake: row.intendedProgram,
+          campaign_name: row.campaignName,
+          form_name: row.formName,
+          platform: row.platform
+        },
+        { branchLocations }
+      )
+    );
+
+    setImportRows(remapped);
+    setImportFileName(parsed.fileName || file.name);
+    setImportPreviewOpen(true);
+    setImportParseLoading(false);
+  };
+
+  const handleRemoveImportRow = (importKey) => {
+    setImportRows((prev) => prev.filter((row) => row.importKey !== importKey));
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importRows.length) {
+      setImportError("No leads left to import.");
+      return;
+    }
+    setImportSaving(true);
+    setImportError("");
+    const payload = importRows.map((row) => ({
+      metaLeadId: row.metaLeadId || null,
+      submittedAt: row.submittedAt,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      countryToVisit: row.countryToVisit,
+      city: row.city,
+      nearestOffice: row.nearestOffice,
+      livingStatus: row.livingStatus,
+      visaRejectionAnyCountry: row.visaRejectionAnyCountry,
+      currentEducationLevel: row.currentEducationLevel,
+      intendedProgram: row.intendedProgram,
+      message: row.message,
+      source: row.source,
+      platform: row.platform,
+      campaignName: row.campaignName,
+      formName: row.formName
+    }));
+    const result = await bulkImportReqStudents(payload);
+    setImportSaving(false);
+    if (!result.ok) {
+      setImportError(result.error || "Import failed.");
+      return;
+    }
+    const added = Array.isArray(result.data) ? result.data : [];
+    if (added.length) {
+      setRows((prev) => {
+        const existingIds = new Set(prev.map((row) => String(row.id || "")));
+        const merged = [...added.filter((row) => !existingIds.has(String(row.id || ""))), ...prev];
+        return merged.sort(
+          (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+        );
+      });
+    }
+    closeImportPreview();
+    if (result.skipped?.length) {
+      setError(`${added.length} lead(s) imported. ${result.skipped.length} duplicate(s) skipped.`);
+    }
+  };
+
+  const handleRemoveRequestedStudent = async (row) => {
+    const id = String(row?.id || "").trim();
+    if (!id) return;
+    const confirmed = window.confirm(`Remove ${row.name || "this lead"} from Requested Students?`);
+    if (!confirmed) return;
+    setRemovingId(id);
+    const result = await deleteReqStudent(id);
+    setRemovingId("");
+    if (!result.ok) {
+      setError(result.error || "Could not remove lead.");
+      return;
+    }
+    setRows((prev) => prev.filter((entry) => String(entry.id || "") !== id));
+  };
+
   const handleAddToPipeline = async (e) => {
     e.preventDefault();
     if (!pipelineRow || !onAddFromRequest) return;
@@ -230,16 +364,40 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
             <p className="mt-1 max-w-2xl text-sm text-slate-600">{subtitle}</p>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          className="inline-flex items-center gap-2 self-start"
-          onClick={() => load()}
-          disabled={loading}
-        >
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          {userRole === "Admin" ? (
+            <>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="hidden"
+                onChange={handleImportFileChange}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                className="inline-flex items-center gap-2"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importParseLoading}
+                isLoading={importParseLoading}
+              >
+                <FileUp size={16} />
+                Import Meta leads
+              </Button>
+            </>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            className="inline-flex items-center gap-2"
+            onClick={() => load()}
+            disabled={loading}
+          >
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {error ? (
@@ -258,19 +416,17 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-slate-100 bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-3">Submitted</th>
                   <th className="whitespace-nowrap px-4 py-3">Name</th>
                   <th className="whitespace-nowrap px-4 py-3">Email</th>
                   <th className="whitespace-nowrap px-4 py-3">Phone</th>
-                  <th className="whitespace-nowrap px-4 py-3">Country</th>
                   <th className="whitespace-nowrap px-4 py-3">Office</th>
+                  <th className="whitespace-nowrap px-4 py-3">Source</th>
                   <th className="whitespace-nowrap px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-800">
                 {rows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50/60">
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatSubmittedAt(row.submittedAt)}</td>
                     <td className="max-w-[160px] truncate px-4 py-3 font-medium text-slate-900" title={row.name || ""}>
                       {row.name || "—"}
                     </td>
@@ -278,8 +434,13 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                       {row.email || "—"}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.phone || "—"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.countryToVisit || "—"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.nearestOffice || "—"}</td>
+                    <td
+                      className="max-w-[180px] truncate px-4 py-3 text-slate-600"
+                      title={formatRequestedStudentSource(row)}
+                    >
+                      {formatRequestedStudentSource(row)}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <Button
@@ -301,7 +462,21 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                             onClick={() => setPipelineRow(row)}
                           >
                             <UserPlus size={14} />
-                            Add to pipeline
+                            Add to system
+                          </Button>
+                        ) : null}
+                        {userRole === "Admin" ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-700"
+                            onClick={() => handleRemoveRequestedStudent(row)}
+                            disabled={removingId === row.id}
+                            isLoading={removingId === row.id}
+                          >
+                            <Trash2 size={14} />
+                            Remove
                           </Button>
                         ) : null}
                       </div>
@@ -372,9 +547,103 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                   }}
                 >
                   <UserPlus size={14} />
-                  Add to pipeline
+                  Add to system
                 </Button>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {importPreviewOpen ? (
+        <div
+          className="fixed inset-0 z-[150] flex items-start justify-center overflow-y-auto overscroll-contain bg-slate-900/60 px-4 py-10 backdrop-blur-sm"
+          onClick={closeImportPreview}
+        >
+          <div
+            className="my-auto w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Import Meta leads</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {importFileName ? `${importFileName} · ` : ""}
+                  {importRows.length} lead{importRows.length === 1 ? "" : "s"} ready to add to Requested Students.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeImportPreview}
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="max-h-[min(60vh,520px)] overflow-auto px-5 py-4">
+              {importRows.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-500">No leads left in this import.</p>
+              ) : (
+                <table className="min-w-full text-left text-sm">
+                  <thead className="sticky top-0 border-b border-slate-100 bg-white text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="whitespace-nowrap px-3 py-2">Name</th>
+                      <th className="whitespace-nowrap px-3 py-2">Phone</th>
+                      <th className="whitespace-nowrap px-3 py-2">Office</th>
+                      <th className="whitespace-nowrap px-3 py-2">Country</th>
+                      <th className="whitespace-nowrap px-3 py-2">Education</th>
+                      <th className="whitespace-nowrap px-3 py-2">Intake</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-800">
+                    {importRows.map((row) => (
+                      <tr key={row.importKey} className="align-top hover:bg-slate-50/60">
+                        <td className="px-3 py-2.5 font-medium text-slate-900">{row.name || "—"}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-600">{row.phone || "—"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.nearestOffice || "—"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.countryToVisit || "—"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.currentEducationLevel || "—"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.intendedProgram || "—"}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-700"
+                            onClick={() => handleRemoveImportRow(row.importKey)}
+                          >
+                            <Trash2 size={14} />
+                            Remove
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {importError ? (
+              <div className="mx-5 mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                {importError}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3">
+              <Button type="button" variant="secondary" onClick={closeImportPreview} disabled={importSaving}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={importSaving || importRows.length === 0}
+                isLoading={importSaving}
+                onClick={handleConfirmImport}
+              >
+                Add {importRows.length} to Requested Students
+              </Button>
             </div>
           </div>
         </div>
@@ -391,9 +660,9 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
           >
             <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Add to student pipeline</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Add to system</h2>
                 <p className="mt-1 text-xs text-slate-500">
-                  Creates a student record (New Inquiry) and assigns a counselor. A login password is generated automatically.
+                  Creates a student record (Inquiry) and assigns a counselor. A login password is generated automatically.
                 </p>
               </div>
               <button

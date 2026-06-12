@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye, Plane } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentManager } from "./DocumentManager";
@@ -9,6 +9,11 @@ import { getStudentPipelineStepIndex, isVisaPilotUnlockedForConfig } from "../do
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { PIPELINE_STEPS } from "../pipeline";
 import { buildStudentDashboardCounselorRoster } from "../studentContactHelpers";
+import {
+  buildAiCvPdfFileName,
+  downloadFileFromUrl,
+  resolveGeneratedCvPdfDownload,
+} from "../utils/cvPdf";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -28,6 +33,25 @@ const StudentDashboard = ({
 }) => {
   const pipelineDocsRef = useRef(null);
   const [docTab, setDocTab] = useState("pipeline");
+  const [isDownloadingGeneratedCv, setIsDownloadingGeneratedCv] = useState(false);
+  const handleDownloadGeneratedCv = useCallback(async () => {
+    const storedPdf = resolveGeneratedCvPdfDownload(student);
+    if (storedPdf?.url) {
+      setIsDownloadingGeneratedCv(true);
+      try {
+        await downloadFileFromUrl(
+          storedPdf.url,
+          storedPdf.fileName || buildAiCvPdfFileName(student.generatedCV?.name),
+        );
+      } catch {
+        onNavigate("resume");
+      } finally {
+        setIsDownloadingGeneratedCv(false);
+      }
+      return;
+    }
+    onNavigate("resume");
+  }, [student, onNavigate]);
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
   const { config: countryDocConfig } = useCountryDocConfig(student?.country);
   const visaPilotUnlocked = isVisaPilotUnlockedForConfig(student.status, countryDocConfig);
@@ -166,7 +190,7 @@ const StudentDashboard = ({
                 /* @__PURE__ */ jsx(Eye, { size: 14, className: "mr-1" }),
                 " View"
               ] }) }),
-              /* @__PURE__ */ jsx("a", { href: student.cvFile.url, target: "_blank", rel: "noopener noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-emerald-600 hover:bg-emerald-700", children: [
+              /* @__PURE__ */ jsx("a", { href: student.cvFile.url, target: "_blank", rel: "noopener noreferrer", download: student.cvFile.name || "resume.pdf", children: /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-emerald-600 hover:bg-emerald-700", children: [
                 /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1" }),
                 " Download"
               ] }) })
@@ -200,10 +224,19 @@ const StudentDashboard = ({
                 /* @__PURE__ */ jsx(Eye, { size: 14, className: "mr-1" }),
                 " View"
               ] }),
-              /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-indigo-600 hover:bg-indigo-700", children: [
-                /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1" }),
-                " Download"
-              ] })
+              /* @__PURE__ */ jsxs(
+                Button,
+                {
+                  size: "sm",
+                  className: "bg-indigo-600 hover:bg-indigo-700",
+                  disabled: isDownloadingGeneratedCv,
+                  onClick: handleDownloadGeneratedCv,
+                  children: [
+                    /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1" }),
+                    isDownloadingGeneratedCv ? " Downloading…" : " Download"
+                  ]
+                }
+              )
             ] })
           ] })
         ] }),

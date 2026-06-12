@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -29,6 +29,7 @@ import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
 import { DocMapping } from "./components/DocMapping";
+import { WebForms } from "./components/WebForms";
 import { Bell, Clock, X } from "lucide-react";
 import { Button } from "./components/Button";
 import {
@@ -84,7 +85,8 @@ const VIEW_TO_PATH = {
   "student-detail": "/student-detail",
   "requested-students": "/requested-students",
   "stage-escalations": "/stage-escalations",
-  maps: "/maps"
+  maps: "/maps",
+  "web-forms": "/web-forms"
 };
 
 function App({ initialView = "dashboard" }) {
@@ -105,6 +107,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -845,6 +848,14 @@ function App({ initialView = "dashboard" }) {
       setPaymentAccounts(result.data);
     };
     loadPaymentAccounts();
+  }, []);
+  useEffect(() => {
+    const loadSystemData = async () => {
+      const result = await getSystemData();
+      if (!result.ok) return;
+      setSystemData(result.data);
+    };
+    loadSystemData();
   }, []);
   useEffect(() => {
     let cancelled = false;
@@ -2145,7 +2156,7 @@ function App({ initialView = "dashboard" }) {
     if (selectedStudent?.id === updatedStudent.id) {
       setSelectedStudent(updatedStudent);
     }
-    return { ok: true, data: updatedStudent, document: result.document || null };
+    return { ok: true, data: updatedStudent, document: result.document || null, documentUploadWhatsapp: result.documentUploadWhatsapp || null };
   };
   const handleUploadStudentProfileOtherDocument = async ({ studentId, dataUrl, fileName, label, slot, append }) => {
     if (!studentId) return { ok: false, error: "Student account not found." };
@@ -2270,6 +2281,7 @@ function App({ initialView = "dashboard" }) {
       onSendStaffMessage: handleSendMessage,
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
       paymentAccounts,
+      counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
       onCreateInvoice: handleCreateInvoice,
       onUpdateInvoice: handleUpdateInvoice,
       tasks,
@@ -2436,7 +2448,8 @@ function App({ initialView = "dashboard" }) {
         canApproveInvoicePayments: false,
         onUpdateTasks: handleUpdateTasks,
         pipelineStageEscalations: mgrPipelineEscalations,
-        onOpenStageEscalationStudent: openEscalationStudent
+        onOpenStageEscalationStudent: openEscalationStudent,
+        studentsScopeLabel: currentRole === "Manager" && managerDataScope.active ? managerDataScope.branchLabel || null : null,
       };
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
       if (currentView === "counselors") return /* @__PURE__ */ jsx(CounselorManagement, { onNavigate: handleNavigate, students: mgrStudents, employees: mgrEmployees, tasks: mgrTasks, onTransferStudents: handleTransferStudents, onAddActivity: handleAddActivity, onAddCounselor: handleAddCounselor, currentRole, authenticatedUserEmail: authenticatedUser?.email || "", resetSignal: counselorListResetSignal, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
@@ -2529,12 +2542,19 @@ function App({ initialView = "dashboard" }) {
       case "settings":
         return currentRole === "Admin" ? /* @__PURE__ */ jsx(AdminSettings, {
           meetingSettings,
+          systemData,
           paymentAccounts,
           onPaymentAccountsChange: setPaymentAccounts,
           onSaveMeetingSettings: async (payload) => {
             const result = await updateMeetingSettings(payload);
             if (!result.ok) return result;
             setMeetingSettings(result.data);
+            return result;
+          },
+          onSaveSystemData: async (payload) => {
+            const result = await updateSystemData(payload);
+            if (!result.ok) return result;
+            setSystemData(result.data);
             return result;
           }
         }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Settings are available for Admin only." });
@@ -2569,6 +2589,8 @@ function App({ initialView = "dashboard" }) {
         });
       case "maps":
         return /* @__PURE__ */ jsx(DocMapping, {});
+      case "web-forms":
+        return /* @__PURE__ */ jsx(WebForms, {});
       default:
         return /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Under Construction" });
     }

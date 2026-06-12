@@ -261,7 +261,7 @@ export async function uploadStudentDocument(studentId, { dataUrl, fileName, docT
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to upload document." };
     }
-    return { ok: true, data: data.data, document: data.document || null };
+    return { ok: true, data: data.data, document: data.document || null, documentUploadWhatsapp: data.documentUploadWhatsapp || null };
   } catch {
     return { ok: false, error: "Cannot reach student server. Please contact the Support team." };
   }
@@ -404,6 +404,36 @@ export async function getReqStudents(params = {}) {
   }
 }
 
+/** Admin: bulk import Meta leads (or similar) into req-students.json */
+export async function bulkImportReqStudents(entries) {
+  const rows = Array.isArray(entries) ? entries : [];
+  if (!rows.length) {
+    return { ok: false, error: "At least one lead is required." };
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/req-students/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: rows })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return {
+        ok: false,
+        error: data.error || "Failed to import leads.",
+        skipped: Array.isArray(data.skipped) ? data.skipped : []
+      };
+    }
+    return {
+      ok: true,
+      data: Array.isArray(data.data) ? data.data : [],
+      skipped: Array.isArray(data.skipped) ? data.skipped : []
+    };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
 /** Remove one interest-form row from backend/data/req-students.json (e.g. after onboarding to pipeline). */
 export async function deleteReqStudent(requestId) {
   const id = String(requestId || "").trim();
@@ -476,6 +506,25 @@ export async function createCountry(name) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to add country." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach country server. Please contact the Support team." };
+  }
+}
+
+export async function deleteCountry(name) {
+  const countryName = String(name || "").trim();
+  if (!countryName) {
+    return { ok: false, error: "Country name is required." };
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/countries/${encodeURIComponent(countryName)}`, {
+      method: "DELETE"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to remove country." };
     }
     return { ok: true, data: data.data };
   } catch {
@@ -582,6 +631,23 @@ export async function saveDocMappingAccountDetailsStage(country, accountDetailsS
   }
 }
 
+export async function saveDocMappingDocumentNotify(country, documentNotifyDocs) {
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/document-notify`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, documentNotifyDocs })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save document notify settings." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
 export async function getPaymentAccounts() {
   try {
     const res = await fetch(`${API_BASE}/api/payment-accounts`);
@@ -656,6 +722,36 @@ export async function updateMeetingSettings(payload) {
     return { ok: true, data: data.data };
   } catch {
     return { ok: false, error: "Cannot reach meeting settings server. Please contact the Support team." };
+  }
+}
+
+export async function getSystemData() {
+  try {
+    const res = await fetch(`${API_BASE}/api/system-data`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load system settings." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach system settings server. Please contact the Support team." };
+  }
+}
+
+export async function updateSystemData(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/system-data`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to save system settings." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach system settings server. Please contact the Support team." };
   }
 }
 
@@ -1405,6 +1501,87 @@ export async function getBranchManagers(branch = "") {
     return { ok: true, data: data.data };
   } catch {
     return { ok: false, error: "Cannot reach server. Please contact the Support team." };
+  }
+}
+
+export async function getWebForms() {
+  try {
+    const res = await fetch(`${API_BASE}/api/web-forms`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to load web forms." };
+    }
+    return { ok: true, data: data.data || [] };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getWebForm(id) {
+  const formId = String(id || "").trim();
+  if (!formId) return { ok: false, error: "Form id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/web-forms/${encodeURIComponent(formId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to load form." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createWebForm(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/web-forms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to create form." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function updateWebForm(id, payload) {
+  const formId = String(id || "").trim();
+  if (!formId) return { ok: false, error: "Form id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/web-forms/${encodeURIComponent(formId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save form." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function deleteWebForm(id) {
+  const formId = String(id || "").trim();
+  if (!formId) return { ok: false, error: "Form id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/web-forms/${encodeURIComponent(formId)}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to delete form." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
   }
 }
 

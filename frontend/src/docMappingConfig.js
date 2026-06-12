@@ -24,6 +24,7 @@ export function buildCountryDocConfig(apiData) {
   const visaDocs = Array.isArray(apiData?.visaDocs) ? apiData.visaDocs : [];
   const stageTasks = normalizeStageTasksMap(apiData?.stageTasks);
   const accountDetailsStageId = normalizeAccountDetailsStageId(apiData?.accountDetailsStageId, stages);
+  const documentNotifyDocs = normalizeDocumentNotifyDocs(apiData?.documentNotifyDocs);
   return {
     stages,
     pipelineSteps: stages.map((s) => s.label),
@@ -33,7 +34,38 @@ export function buildCountryDocConfig(apiData) {
     visaDocs,
     stageTasks,
     accountDetailsStageId,
+    documentNotifyDocs,
   };
+}
+
+/** @returns {Array<{id:string,docName:string,source:'pipeline'|'visa'}>} */
+export function normalizeDocumentNotifyDocs(raw) {
+  if (!Array.isArray(raw)) {
+    return [{ id: "dn-offer-letter", docName: "Offer Letter", source: "pipeline" }];
+  }
+  const seen = new Set();
+  const out = [];
+  for (const entry of raw) {
+    const docName = String(entry?.docName || entry?.name || "").trim();
+    if (!docName || docName === "(placeholder)") continue;
+    const key = docName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: String(entry?.id || "").trim() || `dn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      docName,
+      source: entry?.source === "visa" ? "visa" : "pipeline",
+    });
+  }
+  return out;
+}
+
+export function isDocumentWhatsappNotifyEnabled(countryConfig, docType) {
+  const list = countryConfig?.documentNotifyDocs || [];
+  if (!list.length) return false;
+  const dt = String(docType || "").trim();
+  if (!dt) return false;
+  return list.some((entry) => documentTypeMatchesRequirement(dt, entry.docName));
 }
 
 export function normalizeAccountDetailsStageId(raw, stages) {
@@ -203,6 +235,7 @@ export function buildFallbackCountryDocConfig(country) {
     visaDocs: [],
     stageTasks: {},
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
+    documentNotifyDocs: normalizeDocumentNotifyDocs(undefined),
   };
 }
 

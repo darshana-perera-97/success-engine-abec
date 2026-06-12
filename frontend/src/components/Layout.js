@@ -24,7 +24,8 @@ import {
   ClipboardList,
   AlertTriangle,
   Plug,
-  MapPin
+  MapPin,
+  FormInput
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
@@ -276,7 +277,8 @@ const Layout = ({
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge },
           { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
-          { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) }
+          { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) },
+          { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) }
         ];
     }
   };

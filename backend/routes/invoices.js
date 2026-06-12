@@ -5,6 +5,16 @@ const { readPaymentAccounts } = require("../models/paymentAccounts");
 const { storeChatAttachmentDataUrl, storePaymentProofDataUrl } = require("../services/uploads");
 const { buildInvoiceWhatsappMessage } = require("../services/whatsappMessages");
 const { deliverInvoicePackageToStudentWhatsapp, notifyInvoicePaymentDecision } = require("../services/notifications");
+const { readSystemData } = require("../models/systemData");
+const { isCounselorRole } = require("../services/roles");
+
+async function actorCanReviewInvoicePayment(actorRole) {
+  const role = String(actorRole || "").trim();
+  if (role === "Admin" || role === "Manager" || role === "Accountant") return true;
+  if (!isCounselorRole(role)) return false;
+  const systemData = await readSystemData();
+  return systemData.counselorCanAcceptPayments === true;
+}
 
 async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/invoices") {
@@ -340,19 +350,18 @@ async function handle(req, res, url) {
       const nextStatus = String(body.status || currentInvoice.status || "");
       const isAcceptingPayment = nextStatus === "Paid" && prevStatus === "Verifying";
       const isRejectingPayment = nextStatus === "Pending" && prevStatus === "Verifying";
-      const canReviewInvoicePayment =
-        actorRole === "Admin" || actorRole === "Manager" || actorRole === "Accountant";
+      const canReviewInvoicePayment = await actorCanReviewInvoicePayment(actorRole);
       if (isAcceptingPayment && !canReviewInvoicePayment) {
         sendJson(res, 403, {
           ok: false,
-          error: "Only Admin, Manager, or Accountant can accept invoice payments.",
+          error: "You do not have permission to accept invoice payments.",
         });
         return true;
       }
       if (isRejectingPayment && !canReviewInvoicePayment) {
         sendJson(res, 403, {
           ok: false,
-          error: "Only Admin, Manager, or Accountant can reject invoice payment evidence.",
+          error: "You do not have permission to reject invoice payment evidence.",
         });
         return true;
       }

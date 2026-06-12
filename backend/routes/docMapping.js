@@ -3,7 +3,8 @@ const { parseBody, sendJson } = require("../lib/httpUtils");
 const {
   readStages, writeStages, getCountryStages,
   readDocMapping, writeDocMapping, emptyDocConfig, ensureDefaultPipelineDocs,
-  normalizeStageTasks, normalizeAccountDetailsStageId, DEFAULT_STAGES
+  normalizeStageTasks, normalizeAccountDetailsStageId, normalizeDocumentNotifyDocs,
+  DEFAULT_STAGES
 } = require("../models/docMapping");
 
 function docMappingPayload(stages, docs) {
@@ -13,6 +14,7 @@ function docMappingPayload(stages, docs) {
     visaDocs: docs.visaDocs || [],
     stageTasks: normalizeStageTasks(docs.stageTasks),
     accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
+    documentNotifyDocs: normalizeDocumentNotifyDocs(docs.documentNotifyDocs),
   };
 }
 
@@ -170,6 +172,26 @@ async function handle(req, res, url) {
       allDocs[country].pipelineDocs = finalDocs;
       await writeDocMapping(allDocs);
 
+      const allStages = await readStages();
+      const stages = getCountryStages(allStages, country);
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  // PUT /api/doc-mapping/document-notify — docs that trigger WhatsApp on upload
+  if (req.method === "PUT" && url.pathname === "/api/doc-mapping/document-notify") {
+    try {
+      const body = await parseBody(req);
+      const country = String(body.country || "").trim();
+      if (!country) { sendJson(res, 400, { ok: false, error: "Country is required." }); return true; }
+      const documentNotifyDocs = normalizeDocumentNotifyDocs(body.documentNotifyDocs);
+      const allDocs = await readDocMapping();
+      if (!allDocs[country]) allDocs[country] = emptyDocConfig();
+      allDocs[country].documentNotifyDocs = documentNotifyDocs;
+      await writeDocMapping(allDocs);
       const allStages = await readStages();
       const stages = getCountryStages(allStages, country);
       sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });

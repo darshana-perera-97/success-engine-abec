@@ -47,13 +47,38 @@ function defaultPipelineDocs() {
 
 const DEFAULT_ACCOUNT_DETAILS_STAGE_ID = "application";
 
+function defaultDocumentNotifyDocs() {
+  return [{ id: "dn-offer-letter", docName: "Offer Letter", source: "pipeline" }];
+}
+
 function emptyDocConfig() {
   return {
     pipelineDocs: defaultPipelineDocs(),
     visaDocs: [],
     stageTasks: {},
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
+    documentNotifyDocs: defaultDocumentNotifyDocs(),
   };
+}
+
+/** @returns {Array<{id:string,docName:string,source:'pipeline'|'visa'}>} */
+function normalizeDocumentNotifyDocs(raw) {
+  if (!Array.isArray(raw)) return defaultDocumentNotifyDocs();
+  const seen = new Set();
+  const out = [];
+  for (const entry of raw) {
+    const docName = String(entry?.docName || entry?.name || "").trim();
+    if (!docName || docName === "(placeholder)") continue;
+    const key = docName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: String(entry?.id || "").trim() || `dn-${crypto.randomUUID().slice(0, 8)}`,
+      docName,
+      source: entry?.source === "visa" ? "visa" : "pipeline",
+    });
+  }
+  return out;
 }
 
 /** Resolve configured stage for sending portal login; defaults to Application. */
@@ -166,6 +191,8 @@ module.exports = {
   defaultStagesCopy,
   defaultPipelineDocs,
   ensureDefaultPipelineDocs,
+  normalizeDocumentNotifyDocs,
+  defaultDocumentNotifyDocs,
   DEFAULT_STAGES,
   DEFAULT_PIPELINE_DOC,
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,

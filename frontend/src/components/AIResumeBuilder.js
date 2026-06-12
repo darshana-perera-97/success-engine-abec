@@ -9,6 +9,7 @@ import {
   ArrowRight,
   Eye,
   ExternalLink,
+  Download,
   RefreshCw,
   User,
   GraduationCap,
@@ -35,6 +36,7 @@ import {
 import { Button } from "./Button";
 import { COMPANY_AI_BRAND, COMPANY_NAME, RESUME_BUILDER_TITLE } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { buildAiCvPdfFileName, captureElementToPdfBlob, triggerBlobDownload } from "../utils/cvPdf";
 function parseNotesForProgramEducation(notes) {
   const n = String(notes || "");
   const programM = n.match(/Program:\s*([^.]+?)(?:\.|\s+Education:|$)/i);
@@ -126,42 +128,12 @@ function buildResumeDataFromStudent(student) {
   }
   return data;
 }
-async function captureElementToPdfBlob(htmlElement) {
-  if (!htmlElement) {
-    throw new Error("Nothing to export.");
-  }
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-    import("html2canvas"),
-    import("jspdf")
-  ]);
-  const canvas = await html2canvas(htmlElement, {
-    scale: 2,
-    backgroundColor: "#ffffff",
-    useCORS: true,
-    logging: false
-  });
-  const imgData = canvas.toDataURL("image/png");
-  const pdf = new jsPDF("p", "mm", "a4");
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pdfHeight = pdf.internal.pageSize.getHeight();
-  const imgHeight = canvas.height * pdfWidth / canvas.width;
-  let heightLeft = imgHeight;
-  let position = 0;
-  pdf.addImage(imgData, "PNG", 0, position, pdfWidth, imgHeight);
-  heightLeft -= pdfHeight;
-  while (heightLeft > 0) {
-    position = heightLeft - imgHeight;
-    pdf.addPage();
-    pdf.addImage(imgData, "PNG", 0, position, pdfWidth, imgHeight);
-    heightLeft -= pdfHeight;
-  }
-  return pdf.output("blob");
-}
 const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudentCv, onUploadStudentDocument, embedMode = false }) => {
   const [step, setStep] = useState("initial");
   const [activeFlow, setActiveFlow] = useState(null);
   const [progress, setProgress] = useState(0);
   const [isOpeningPdfTab, setIsOpeningPdfTab] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadError, setUploadError] = useState("");
   const [finalUploadError, setFinalUploadError] = useState("");
@@ -196,6 +168,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     setFinalUploadError("");
     setIsFinalUploading(false);
     setIsOpeningPdfTab(false);
+    setIsDownloadingPdf(false);
   }, [initialExtractedData]);
   const handleDataChange = (field, value) => {
     setEditableData((prev) => ({ ...prev, [field]: value }));
@@ -413,8 +386,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
           reader.onerror = () => reject(new Error("Failed to read PDF."));
           reader.readAsDataURL(blob);
         });
-        const raw = String(editableData.name || "CV").replace(/[^\w\s.-]/g, "").trim().replace(/\s+/g, "-");
-        const fileName = `${raw.slice(0, 80) || "Generated-CV"}-AI-CV.pdf`;
+        const fileName = buildAiCvPdfFileName(editableData.name);
         if (wantsCvFile) {
           const result = await onUploadStudentCv({
             studentId: currentStudent.id,
@@ -480,6 +452,23 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
       setIsOpeningPdfTab(false);
     }
   }, []);
+  const handleDownloadCvPdf = useCallback(async () => {
+    setFinalUploadError("");
+    const el = cvPdfCaptureRef.current;
+    if (!el) {
+      setFinalUploadError("CV preview is not ready yet.");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    try {
+      const blob = await captureElementToPdfBlob(el);
+      triggerBlobDownload(blob, buildAiCvPdfFileName(editableData.name));
+    } catch (err) {
+      setFinalUploadError(err?.message || "Could not download CV as PDF.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  }, [editableData.name]);
   return /* @__PURE__ */ jsxs("div", { className: "max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500 pb-20", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
@@ -1068,7 +1057,21 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                   Button,
                   {
                     variant: "outline",
-                    disabled: isFinalUploading || isOpeningPdfTab,
+                    disabled: isFinalUploading || isOpeningPdfTab || isDownloadingPdf,
+                    onClick: handleDownloadCvPdf,
+                    className: "w-auto bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50",
+                    children: [
+                      isDownloadingPdf ? /* @__PURE__ */ jsx(Loader2, { size: 16, className: "mr-2 animate-spin" }) : /* @__PURE__ */ jsx(Download, { size: 16, className: "mr-2" }),
+                      " ",
+                      isDownloadingPdf ? "Preparing…" : "Download PDF"
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ jsxs(
+                  Button,
+                  {
+                    variant: "outline",
+                    disabled: isFinalUploading || isOpeningPdfTab || isDownloadingPdf,
                     onClick: handleOpenCvInNewTab,
                     className: "w-auto bg-white border-emerald-200 text-emerald-700 hover:bg-emerald-50",
                     children: [
@@ -1081,7 +1084,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                 /* @__PURE__ */ jsxs(
                   Button,
                   {
-                    disabled: isFinalUploading || isOpeningPdfTab,
+                    disabled: isFinalUploading || isOpeningPdfTab || isDownloadingPdf,
                     onClick: handleFinalUpload,
                     className: "w-auto bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none px-6 disabled:opacity-60",
                     children: [

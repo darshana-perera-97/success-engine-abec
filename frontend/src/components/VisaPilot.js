@@ -1,6 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass } from "lucide-react";
+import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
 import { Button } from "./Button";
 import {
   isVisaPilotUnlockedForConfig,
@@ -39,7 +39,7 @@ function VisaRequirementBadge({ required }) {
   });
 }
 
-const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument, onDeleteDocument, countryDocConfig: countryDocConfigProp = null }) => {
+const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocument, onUpdateDocument, onDeleteDocument, countryDocConfig: countryDocConfigProp = null }) => {
   const { config: loadedCountryConfig } = useCountryDocConfig(countryDocConfigProp ? "" : student?.country);
   const countryDocConfig = countryDocConfigProp || loadedCountryConfig;
   const workflow = useMemo(
@@ -58,8 +58,11 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
+  const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
+  const [rejectionReason, setRejectionReason] = useState("");
   const visaDocuments = useMemo(() => student.documents?.filter((doc) => String(doc.tier || "").toLowerCase() === "visapilot") || [], [student.documents]);
   const isStudent = userRole === "Student";
+  const isStaff = !isStudent;
   const canUploadVisaDocs = visaPilotUnlocked;
   const canToggleVisaItems = !isStudent && visaPilotUnlocked;
   const canDeleteVisaDoc = !isStudent && typeof onDeleteDocument === "function";
@@ -95,6 +98,17 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   const getItemDocuments = (item) => {
     const docType = buildVisaDocType(item);
     return visaDocuments.filter((doc) => doc.type === docType).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  };
+  const handleReview = async (doc, status, reason) => {
+    if (!onUpdateDocument) return;
+    const updatedDoc = { ...doc, status, rejectionReason: status === "Rejected" ? reason : void 0 };
+    setRejectionModal({ isOpen: false, doc: null });
+    setRejectionReason("");
+    const persistResult = await onUpdateDocument(updatedDoc);
+    if (persistResult && persistResult.ok === false) return;
+    if (persistResult?.data && onUpdateStudent) {
+      onUpdateStudent(persistResult.data);
+    }
   };
   const handleUploadFileChange = async (event) => {
     const file = event.target.files?.[0];
@@ -244,6 +258,10 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                         ] }),
                         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200 shrink-0", children: [
                           doc.status && /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${docStatus === "Verified" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : docStatus === "Rejected" ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-amber-50 text-amber-700 border-amber-200"}`, children: docStatus }),
+                          docStatus === "Rejected" && doc.rejectionReason && /* @__PURE__ */ jsxs("div", { className: "relative group/tip", children: [
+                            /* @__PURE__ */ jsx(AlertCircle, { size: 14, className: "text-rose-500 cursor-help" }),
+                            /* @__PURE__ */ jsx("div", { className: "absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg z-10 hidden group-hover/tip:block animate-in fade-in zoom-in-95", children: doc.rejectionReason })
+                          ] }),
                           canDeleteVisaDoc && isDeletableVisaDocumentStatus(docStatus) && /* @__PURE__ */ jsxs(
                             "button",
                             {
@@ -260,6 +278,11 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           doc.url && /* @__PURE__ */ jsxs(Fragment, { children: [
                             /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
                             /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                          ] }),
+                          isStaff && onUpdateDocument && (docStatus === "Pending" || docStatus === "Reviewing") && /* @__PURE__ */ jsxs(Fragment, { children: [
+                            /* @__PURE__ */ jsx("div", { className: "w-px h-5 bg-gray-200" }),
+                            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => handleReview(doc, "Verified"), title: "Approve", className: "p-1.5 rounded bg-emerald-50 text-emerald-600 hover:bg-emerald-100", children: /* @__PURE__ */ jsx(Check, { size: 16 }) }),
+                            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => setRejectionModal({ isOpen: true, doc }), title: "Reject", className: "p-1.5 rounded bg-rose-50 text-rose-600 hover:bg-rose-100", children: /* @__PURE__ */ jsx(X, { size: 16 }) })
                           ] })
                         ] })
                       ] }, doc.id || `${doc.name}-${doc.uploadedAt}`);
@@ -286,6 +309,32 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
         stage.name
       );
     }) }),
+    rejectionModal.isOpen && rejectionModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+      /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
+        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-rose-900", children: "Rejection Reason" }),
+        /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+          'Provide a clear reason for rejecting "',
+          rejectionModal.doc.name,
+          '". This will be visible to the student.'
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
+        /* @__PURE__ */ jsx(
+          "textarea",
+          {
+            value: rejectionReason,
+            onChange: (e) => setRejectionReason(e.target.value),
+            rows: 3,
+            className: "w-full p-2 text-sm border border-gray-200 rounded-md focus:ring-1 focus:ring-rose-300 outline-none",
+            placeholder: "e.g., 'Document is blurry', 'Passport is expired'..."
+          }
+        ),
+        /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2", children: [
+          /* @__PURE__ */ jsx(Button, { variant: "ghost", onClick: () => { setRejectionModal({ isOpen: false, doc: null }); setRejectionReason(""); }, children: "Cancel" }),
+          /* @__PURE__ */ jsx(Button, { variant: "danger", disabled: !rejectionReason.trim(), onClick: () => handleReview(rejectionModal.doc, "Rejected", rejectionReason), children: "Confirm Rejection" })
+        ] })
+      ] })
+    ] }) }),
     deleteDocumentModal.isOpen && deleteDocumentModal.doc && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: deleteDocumentModal.doc.status === "Verified" ? "Delete approved visa document?" : "Delete rejected visa document?" }),

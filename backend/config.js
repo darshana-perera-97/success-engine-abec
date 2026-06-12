@@ -28,12 +28,14 @@ const CHATS_FILE = path.join(DATA_DIR, "chats.json");
 const ADMIN_CHATS_FILE = path.join(DATA_DIR, "adminChats.json");
 const ACTIVITIES_FILE = path.join(DATA_DIR, "activities.json");
 const MEETING_DATA_FILE = path.join(DATA_DIR, "meetingData.json");
+const SYSTEM_DATA_FILE = path.join(DATA_DIR, "systemData.json");
 const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
 const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
 const DOC_MAPPING_FILE = path.join(DATA_DIR, "docMapping.json");
+const WEB_FORMS_FILE = path.join(DATA_DIR, "webForms.json");
 const STAGES_FILE = path.join(DATA_DIR, "stages.json");
 const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
 const WHATSAPP_INCOMING_FILE = path.join(DATA_DIR, "whatsapp-incoming.json");
@@ -68,6 +70,9 @@ const DEFAULT_MEETING_SETTINGS = {
     5: { ...DEFAULT_DAY_SCHEDULE },
     6: { ...DEFAULT_DAY_SCHEDULE },
   },
+};
+const DEFAULT_SYSTEM_DATA = {
+  counselorCanAcceptPayments: false,
 };
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
@@ -169,12 +174,15 @@ module.exports = {
   ADMIN_CHATS_FILE,
   ACTIVITIES_FILE,
   MEETING_DATA_FILE,
+  SYSTEM_DATA_FILE,
+  DEFAULT_SYSTEM_DATA,
   BOOKINGS_FILE,
   APPOINTMENTS_FILE,
   INVOICES_FILE,
   TASKS_FILE,
   REQ_STUDENTS_FILE,
   DOC_MAPPING_FILE,
+  WEB_FORMS_FILE,
   STAGES_FILE,
   WHATSAPP_CONNECTIONS_DIR,
   WHATSAPP_INCOMING_FILE,

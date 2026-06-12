@@ -17,8 +17,12 @@ export const LIVING_STATUSES = ["Married", "Single"];
 
 export const BUDGET_CURRENCIES = [
   { value: "LKR", label: "LKR" },
+  { value: "USD", label: "USD" },
+  { value: "GBP", label: "GBP" },
+  { value: "CAD", label: "CAD" },
   { value: "AUD", label: "AUD" },
-  { value: "USD", label: "$" }
+  { value: "EUR", label: "EUR" },
+  { value: "NZD", label: "NZD" }
 ];
 
 export const YES_NO_OPTIONS = ["Yes", "No"];

@@ -2,9 +2,10 @@ const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readBranches } = require("../models/branches");
 const { readCountries, writeCountries } = require("../models/countries");
-const { readReqStudents, appendReqStudent, removeReqStudentById } = require("../models/reqStudents");
+const { readReqStudents, appendReqStudent, appendReqStudentsBulk, removeReqStudentById } = require("../models/reqStudents");
 const { readPaymentAccounts, writePaymentAccounts, normalizePaymentAccount } = require("../models/paymentAccounts");
 const { readUniversityPrograms, writeUniversityPrograms } = require("../models/universityPrograms");
+const { getWebFormById } = require("../models/webForms");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -45,9 +46,20 @@ async function handle(req, res, url) {
       const nearestOfficeRaw = String(body.nearestOffice || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
-      const message = String(body.message || "").trim();
+      let message = String(body.message || "").trim();
+      const webFormId = String(body.webFormId || "").trim();
       const livingStatus = String(body.livingStatus || "").trim();
       const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim();
+
+      let webFormName = null;
+      if (webFormId) {
+        const webForm = await getWebFormById(webFormId);
+        if (webForm?.name) {
+          webFormName = String(webForm.name).trim();
+          const formTag = `Form: ${webFormName}`;
+          message = message ? `${formTag}\n\n${message}` : formTag;
+        }
+      }
 
       if (!name || !email || !phone || !countryToVisitRaw) {
         sendJson(res, 400, {
@@ -130,7 +142,9 @@ async function handle(req, res, url) {
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
         message: message || null,
-        source: "student-reg-form",
+        webFormId: webFormId || null,
+        webFormName: webFormName || null,
+        source: webFormId ? "web-form" : "student-reg-form",
       };
 
       await appendReqStudent(entry);
@@ -144,6 +158,74 @@ async function handle(req, res, url) {
         return true;
       }
       sendJson(res, 500, { ok: false, error: "Could not save your registration. Please try again later." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/req-students/bulk") {
+    try {
+      const body = await parseBody(req);
+      const rows = Array.isArray(body.entries) ? body.entries : Array.isArray(body.data) ? body.data : [];
+      if (!rows.length) {
+        sendJson(res, 400, { ok: false, error: "At least one lead entry is required." });
+        return true;
+      }
+
+      const branchesList = await readBranches();
+      const branchLocations = branchesList
+        .map((b) => String(b?.location || "").trim())
+        .filter(Boolean);
+
+      const normalized = rows
+        .map((row) => {
+          const name = String(row.name || "").trim();
+          const phone = String(row.phone || "").trim();
+          const metaLeadId = String(row.metaLeadId || "").trim();
+          let nearestOffice = String(row.nearestOffice || "").trim() || null;
+          if (nearestOffice && branchLocations.length) {
+            const matched = branchLocations.find(
+              (loc) => loc.toLowerCase() === nearestOffice.toLowerCase()
+            ) || branchLocations.find((loc) => {
+              const key = nearestOffice.toLowerCase();
+              const normalizedLoc = loc.toLowerCase();
+              return normalizedLoc.includes(key) || key.includes(normalizedLoc);
+            });
+            if (matched) nearestOffice = matched;
+          }
+          return {
+            ...row,
+            name,
+            phone,
+            metaLeadId,
+            email: normalizeEmail(row.email),
+            countryToVisit: String(row.countryToVisit || "").trim() || "UAE",
+            nearestOffice,
+            source: String(row.source || "meta-leads-import").trim() || "meta-leads-import",
+          };
+        })
+        .filter((row) => row.name || row.phone);
+
+      if (!normalized.length) {
+        sendJson(res, 400, { ok: false, error: "No valid leads to import." });
+        return true;
+      }
+
+      const result = await appendReqStudentsBulk(normalized);
+      if (!result.ok) {
+        sendJson(res, 400, { ok: false, error: result.error || "Import failed.", skipped: result.skipped || [] });
+        return true;
+      }
+      sendJson(res, 201, {
+        ok: true,
+        data: result.data || [],
+        skipped: result.skipped || [],
+      });
+    } catch (e) {
+      if (e && e.message === "Invalid JSON") {
+        sendJson(res, 400, { ok: false, error: "Invalid request body." });
+        return true;
+      }
+      sendJson(res, 500, { ok: false, error: "Failed to import leads." });
     }
     return true;
   }
@@ -208,6 +290,28 @@ async function handle(req, res, url) {
       sendJson(res, 201, { ok: true, data: next });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/countries/")) {
+    try {
+      const countryName = decodeURIComponent(url.pathname.replace("/api/countries/", "").trim()).replace(/\/+$/, "");
+      if (!countryName) {
+        sendJson(res, 400, { ok: false, error: "Country name is required." });
+        return true;
+      }
+      const existing = await readCountries();
+      const key = countryName.toLowerCase();
+      const next = existing.filter((c) => String(c).trim().toLowerCase() !== key);
+      if (next.length === existing.length) {
+        sendJson(res, 404, { ok: false, error: "Country not found." });
+        return true;
+      }
+      await writeCountries(next);
+      sendJson(res, 200, { ok: true, data: next });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to remove country." });
     }
     return true;
   }

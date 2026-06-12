@@ -5,6 +5,7 @@ const {
   ensureDefaultPipelineDocs,
   normalizeStageTasks,
   normalizeAccountDetailsStageId,
+  normalizeDocumentNotifyDocs,
   getCountryStages,
   DEFAULT_STAGES,
 } = require("../models/docMapping");
@@ -118,7 +119,16 @@ async function readCountryDocConfig(country) {
     visaDocs: docs.visaDocs || [],
     stageTasks: normalizeStageTasks(docs.stageTasks),
     accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
+    documentNotifyDocs: normalizeDocumentNotifyDocs(docs.documentNotifyDocs),
   };
+}
+
+function isDocumentWhatsappNotifyEnabled(countryConfig, docType) {
+  const list = countryConfig?.documentNotifyDocs || [];
+  if (!list.length) return false;
+  const dt = String(docType || "").trim();
+  if (!dt) return false;
+  return list.some((entry) => documentTypeMatchesRequirement(dt, entry.docName));
 }
 
 function isOfferLetterPipelineItem(category, item) {
@@ -288,6 +298,8 @@ module.exports = {
   getRequiredDocTypesBeforeAdvance,
   getEnrolledAdvanceBlockReasons,
   resolveStudentStageId,
+  isDocumentWhatsappNotifyEnabled,
+  documentTypeMatchesRequirement,
   OFFER_LETTER_GROUPS,
   DEFAULT_STAGE_ROWS,
   normalizeAccountDetailsStageId,

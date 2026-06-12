@@ -23,6 +23,7 @@ import { askAdminAi, getAdminAiStatus, getAdminAiChats, saveAdminAiChats, clearA
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { normalizePipelineStatus, countOpenSlaRequirementViolations } from "../pipeline";
 import { buildUniversityOfferLetterRows, offerStatusBadgeClass } from "../utils/universityOfferLetters";
+import { StudentMilestonesTable } from "./StudentMilestonesTable";
 import { Button } from "./Button";
 
 const SUGGESTED_PROMPTS = [
@@ -719,6 +720,12 @@ const AdminDashboard = ({
         ] }),
       ] }),
     ] }),
+    /* @__PURE__ */ jsx(StudentMilestonesTable, {
+      students,
+      employees,
+      onSelectStudent,
+      scopeLabel: studentsScopeLabel,
+    }),
     isFullscreen && /* @__PURE__ */ jsx(
       "div",
       {

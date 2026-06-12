@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { REQ_STUDENTS_FILE } = require("../config");
@@ -35,8 +36,79 @@ async function removeReqStudentById(requestId) {
   });
 }
 
+async function appendReqStudentsBulk(entries) {
+  const incoming = Array.isArray(entries) ? entries : [];
+  if (!incoming.length) {
+    return { ok: false, error: "At least one lead is required." };
+  }
+  return withFileLock(REQ_STUDENTS_FILE, async () => {
+    const list = await readReqStudents();
+    const existingMetaIds = new Set(
+      list.map((entry) => String(entry.metaLeadId || "").trim()).filter(Boolean)
+    );
+    const existingPhones = new Set(
+      list.map((entry) => String(entry.phone || "").replace(/\D/g, "")).filter(Boolean)
+    );
+    const added = [];
+    const skipped = [];
+
+    for (const raw of incoming) {
+      const name = String(raw.name || "").trim();
+      const phone = String(raw.phone || "").trim();
+      const metaLeadId = String(raw.metaLeadId || "").trim();
+      if (!name && !phone) {
+        skipped.push({ reason: "missing_name_phone", metaLeadId, name });
+        continue;
+      }
+      const phoneDigits = phone.replace(/\D/g, "");
+      if (metaLeadId && existingMetaIds.has(metaLeadId)) {
+        skipped.push({ reason: "duplicate_meta_id", metaLeadId, name });
+        continue;
+      }
+      if (phoneDigits && existingPhones.has(phoneDigits)) {
+        skipped.push({ reason: "duplicate_phone", metaLeadId, name, phone });
+        continue;
+      }
+
+      const entry = {
+        id: raw.id || `REQ-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        submittedAt: raw.submittedAt || new Date().toISOString(),
+        name,
+        email: String(raw.email || "").trim().toLowerCase(),
+        phone,
+        countryToVisit: String(raw.countryToVisit || "").trim() || "UAE",
+        city: raw.city || null,
+        nearestOffice: raw.nearestOffice || null,
+        livingStatus: raw.livingStatus || null,
+        visaRejectionAnyCountry: raw.visaRejectionAnyCountry || "No",
+        currentEducationLevel: raw.currentEducationLevel || null,
+        intendedProgram: raw.intendedProgram || null,
+        message: raw.message || null,
+        source: raw.source || "meta-leads-import",
+        metaLeadId: metaLeadId || null,
+        platform: raw.platform || null,
+        campaignName: raw.campaignName || null,
+        formName: raw.formName || null,
+      };
+
+      list.push(entry);
+      added.push(entry);
+      if (metaLeadId) existingMetaIds.add(metaLeadId);
+      if (phoneDigits) existingPhones.add(phoneDigits);
+    }
+
+    if (!added.length) {
+      return { ok: false, error: "No new leads were added.", skipped };
+    }
+
+    await atomicWriteFile(REQ_STUDENTS_FILE, JSON.stringify(list, null, 2));
+    return { ok: true, data: added, skipped };
+  });
+}
+
 module.exports = {
   readReqStudents,
   appendReqStudent,
+  appendReqStudentsBulk,
   removeReqStudentById,
 };

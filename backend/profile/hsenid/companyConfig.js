@@ -1,8 +1,8 @@
 // hSenid company branding for backend emails, WhatsApp, and AI prompts.
 module.exports = {
-  COMPANY_NAME: "hSenid",
-  COMPANY_SHORT_NAME: "hSenid",
+  COMPANY_NAME: "hms",
+  COMPANY_SHORT_NAME: "hms",
   PRODUCT_TAGLINE: "The Success Engine",
-  COMPANY_AI_BRAND: "hSenid AI Assist",
-  DEFAULT_SMTP_FROM_NAME: "hSenid",
+  COMPANY_AI_BRAND: "hms AI Assist",
+  DEFAULT_SMTP_FROM_NAME: "hms",
 };

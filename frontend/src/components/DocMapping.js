@@ -1,18 +1,19 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Plus, X, MapPin, ChevronDown, ChevronRight, GripVertical,
-  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail
+  Plus, X, MapPin, GripVertical,
+  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil
 } from "lucide-react";
 import {
   getCountries, createCountry, getDocMapping, saveDocMappingStages,
   saveDocMappingPipelineDocs, saveDocMappingVisaDocs, saveDocMappingStageTasks,
-  saveDocMappingAccountDetailsStage
+  saveDocMappingAccountDetailsStage, saveDocMappingDocumentNotify
 } from "../authApi";
 import { invalidateCountryDocConfigCache } from "../countryDocConfigStore";
 import {
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
-  normalizeAccountDetailsStageId
+  normalizeAccountDetailsStageId,
+  normalizeDocumentNotifyDocs
 } from "../docMappingConfig";
 import { Button } from "./Button";
 
@@ -22,8 +23,26 @@ function genId(prefix = "dm") {
 
 const DEFAULT_STAGE_IDS = new Set(["inquiry", "registration", "application", "documentation", "visa", "enrolled"]);
 
-function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId) {
-  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId });
+function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs) {
+  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs });
+}
+
+function collectAvailableDocOptions(pipelineDocs, visaDocs) {
+  const options = [];
+  const seen = new Set();
+  for (const doc of pipelineDocs || []) {
+    const name = String(doc?.name || "").trim();
+    if (!name || name === "(placeholder)" || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    options.push({ docName: name, source: "pipeline", group: String(doc?.group || "").trim() || "Ungrouped" });
+  }
+  for (const doc of visaDocs || []) {
+    const name = String(doc?.name || "").trim();
+    if (!name || name === "(placeholder)" || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    options.push({ docName: name, source: "visa", group: String(doc?.group || "").trim() || "Ungrouped" });
+  }
+  return options.sort((a, b) => a.docName.localeCompare(b.docName));
 }
 
 // ─── Stage Manager (horizontal stepper) ─────────────────────────
@@ -221,7 +240,7 @@ function addBetweenBtn(idx, showAddAt, setShowAddAt, newLabel, setNewLabel, hand
 }
 
 // ─── Shared doc group body (renders group cards + add-doc modal) ─
-function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, removeGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages }) {
+function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, removeGroup, onEditGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages }) {
   const stageById = useMemo(() => new Map((stages || []).map((s) => [s.id, s.label])), [stages]);
 
   return jsxs(Fragment, { children: [
@@ -245,6 +264,13 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
                     onClick: () => { setShowDocModal(groupName); setNewDocName(""); setNewDocRequired(true); },
                     className: "inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded hover:bg-indigo-50 transition-colors",
                     children: jsxs(Fragment, { children: [jsx(Plus, { size: 12 }), "Add Document"] })
+                  }),
+                  !isLocked && onEditGroup && jsx("button", {
+                    type: "button",
+                    onClick: () => onEditGroup(groupName, groupDocs),
+                    className: "p-1 text-slate-400 hover:text-indigo-600 transition-colors",
+                    title: "Edit group",
+                    children: jsx(Pencil, { size: 13 })
                   }),
                   !isLocked && jsx("button", {
                     type: "button",
@@ -343,6 +369,7 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
 // ─── Pipeline Documents Section (with stage visibility picker) ──
 function PipelineDocSection({ stages, docs, onChange }) {
   const [showGroupModal, setShowGroupModal] = useState(false);
+  const [editingGroupName, setEditingGroupName] = useState(null);
   const [newGroupName, setNewGroupName] = useState("");
   const defaultStartStageId = stages[0]?.id || "";
   const defaultCheckingStageId = stages[1]?.id || stages[0]?.id || "";
@@ -371,19 +398,51 @@ function PipelineDocSection({ stages, docs, onChange }) {
     }
   }, [stages, startVisibleStageId, checkingStageId, defaultStartStageId, defaultCheckingStageId]);
 
-  const addGroup = () => {
+  const closeGroupModal = () => {
+    setShowGroupModal(false);
+    setEditingGroupName(null);
+    setNewGroupName("");
+    setStartVisibleStageId(defaultStartStageId);
+    setCheckingStageId(defaultCheckingStageId);
+  };
+
+  const openAddGroupModal = () => {
+    setEditingGroupName(null);
+    setNewGroupName("");
+    setStartVisibleStageId(defaultStartStageId);
+    setCheckingStageId(defaultCheckingStageId);
+    setShowGroupModal(true);
+  };
+
+  const openEditGroupModal = (groupName, groupDocs) => {
+    const first = groupDocs.find((d) => d.group === groupName) || groupDocs[0];
+    setEditingGroupName(groupName);
+    setNewGroupName(groupName);
+    setStartVisibleStageId(first?.visibleFrom || defaultStartStageId);
+    setCheckingStageId(first?.completeBy || defaultCheckingStageId);
+    setShowGroupModal(true);
+  };
+
+  const saveGroup = () => {
     const name = newGroupName.trim();
     if (!name) return;
-    if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
     const visibleFrom = startVisibleStageId || defaultStartStageId;
     const completeBy = checkingStageId || visibleFrom || defaultCheckingStageId;
     const showUntilStageId = getEnrolledStageId(stages);
     const stageIds = getStageRangeIds(stages, visibleFrom, showUntilStageId);
-    onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds, visibleFrom, completeBy }]);
-    setNewGroupName("");
-    setStartVisibleStageId(defaultStartStageId);
-    setCheckingStageId(defaultCheckingStageId);
-    setShowGroupModal(false);
+
+    if (editingGroupName) {
+      if (name.toLowerCase() !== editingGroupName.toLowerCase() && groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
+      onChange(docs.map((d) =>
+        d.group === editingGroupName
+          ? { ...d, group: name, visibleFrom, completeBy, stageIds }
+          : d
+      ));
+    } else {
+      if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
+      onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds, visibleFrom, completeBy }]);
+    }
+    closeGroupModal();
   };
 
   const addDoc = (group) => {
@@ -417,25 +476,25 @@ function PipelineDocSection({ stages, docs, onChange }) {
         jsx(FileText, { size: 16, className: "text-blue-500" }),
         jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Pipeline Documents" })
       ] }),
-      jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); setStartVisibleStageId(defaultStartStageId); setCheckingStageId(defaultCheckingStageId); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
+      jsx(Button, { size: "sm", variant: "secondary", onClick: openAddGroupModal, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
     ] }),
     jsx("div", { className: "p-4 space-y-4", children:
-      jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages })
+      jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, onEditGroup: openEditGroupModal, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages })
     }),
 
     showGroupModal && jsx("div", {
       className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200",
-      onClick: () => setShowGroupModal(false),
+      onClick: closeGroupModal,
       children: jsxs("div", {
         className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 overflow-hidden my-auto",
         onClick: (e) => e.stopPropagation(),
         children: [
           jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
             jsxs("div", { children: [
-              jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "New Document Group" }),
+              jsx("h3", { className: "text-sm font-semibold text-slate-900", children: editingGroupName ? "Edit Document Group" : "New Document Group" }),
               jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Select when this group starts and where it must be checked." })
             ] }),
-            jsx("button", { type: "button", onClick: () => setShowGroupModal(false), className: "text-slate-400 hover:text-slate-700 p-1", children: jsx(X, { size: 18 }) })
+            jsx("button", { type: "button", onClick: closeGroupModal, className: "text-slate-400 hover:text-slate-700 p-1", children: jsx(X, { size: 18 }) })
           ] }),
           jsxs("div", { className: "p-5 space-y-4", children: [
             jsxs("div", { children: [
@@ -446,7 +505,8 @@ function PipelineDocSection({ stages, docs, onChange }) {
                 className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all placeholder:text-slate-400",
                 placeholder: "e.g. Academic Documents",
                 value: newGroupName,
-                onChange: (e) => setNewGroupName(e.target.value)
+                onChange: (e) => setNewGroupName(e.target.value),
+                onKeyDown: (e) => { if (e.key === "Enter") saveGroup(); }
               })
             ] }),
             jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3", children: [
@@ -470,8 +530,8 @@ function PipelineDocSection({ stages, docs, onChange }) {
               ] })
             ] }),
             jsxs("div", { className: "flex justify-end gap-2 pt-1", children: [
-              jsx(Button, { variant: "secondary", size: "sm", onClick: () => setShowGroupModal(false), children: "Cancel" }),
-              jsx(Button, { size: "sm", onClick: addGroup, children: "Create Group" })
+              jsx(Button, { variant: "secondary", size: "sm", onClick: closeGroupModal, children: "Cancel" }),
+              jsx(Button, { size: "sm", onClick: saveGroup, children: editingGroupName ? "Save Changes" : "Create Group" })
             ] })
           ] })
         ]
@@ -483,6 +543,7 @@ function PipelineDocSection({ stages, docs, onChange }) {
 // ─── Visa Documents Section (fixed: Documentation stage & after) ─
 function VisaDocSection({ stages, docs, onChange }) {
   const [showGroupModal, setShowGroupModal] = useState(false);
+  const [editingGroupName, setEditingGroupName] = useState(null);
   const [newGroupName, setNewGroupName] = useState("");
   const [showDocModal, setShowDocModal] = useState(null);
   const [newDocName, setNewDocName] = useState("");
@@ -505,13 +566,36 @@ function VisaDocSection({ stages, docs, onChange }) {
     return Array.from(map.entries());
   }, [docs]);
 
-  const addGroup = () => {
+  const closeGroupModal = () => {
+    setShowGroupModal(false);
+    setEditingGroupName(null);
+    setNewGroupName("");
+  };
+
+  const openAddGroupModal = () => {
+    setEditingGroupName(null);
+    setNewGroupName("");
+    setShowGroupModal(true);
+  };
+
+  const openEditGroupModal = (groupName) => {
+    setEditingGroupName(groupName);
+    setNewGroupName(groupName);
+    setShowGroupModal(true);
+  };
+
+  const saveGroup = () => {
     const name = newGroupName.trim();
     if (!name) return;
-    if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
-    onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds: visibleStageIds }]);
-    setNewGroupName("");
-    setShowGroupModal(false);
+
+    if (editingGroupName) {
+      if (name.toLowerCase() !== editingGroupName.toLowerCase() && groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
+      onChange(docs.map((d) => d.group === editingGroupName ? { ...d, group: name } : d));
+    } else {
+      if (groups.some(([g]) => g.toLowerCase() === name.toLowerCase())) return;
+      onChange([...docs, { id: genId("doc"), group: name, name: "(placeholder)", required: true, stageIds: visibleStageIds }]);
+    }
+    closeGroupModal();
   };
 
   const addDoc = (group) => {
@@ -533,7 +617,7 @@ function VisaDocSection({ stages, docs, onChange }) {
         jsx(ShieldCheck, { size: 16, className: "text-emerald-500" }),
         jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Visa Documents" })
       ] }),
-      jsx(Button, { size: "sm", variant: "secondary", onClick: () => { setShowGroupModal(true); setNewGroupName(""); }, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
+      jsx(Button, { size: "sm", variant: "secondary", onClick: openAddGroupModal, children: jsxs(Fragment, { children: [jsx(FolderOpen, { size: 14, className: "mr-1.5" }), "Add Group"] }) })
     ] }),
     jsxs("div", { className: "p-4 space-y-4", children: [
       jsx("div", { className: "flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500", children:
@@ -542,22 +626,22 @@ function VisaDocSection({ stages, docs, onChange }) {
           ...visibleStageLabels.map((l) => jsx("span", { className: "px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-medium", children: l }, l))
         ] })
       }),
-      jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup: null, stages })
+      jsx(DocGroupBody, { docs, groups, onChange, removeDoc, toggleRequired, removeGroup, onEditGroup: openEditGroupModal, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup: null, stages })
     ] }),
 
     showGroupModal && jsx("div", {
       className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200",
-      onClick: () => setShowGroupModal(false),
+      onClick: closeGroupModal,
       children: jsxs("div", {
         className: "bg-white rounded-xl shadow-2xl w-full max-w-sm border border-gray-100 overflow-hidden my-auto",
         onClick: (e) => e.stopPropagation(),
         children: [
           jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
             jsxs("div", { children: [
-              jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "New Visa Document Group" }),
+              jsx("h3", { className: "text-sm font-semibold text-slate-900", children: editingGroupName ? "Edit Visa Document Group" : "New Visa Document Group" }),
               jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: "Visible from Documentation stage onwards." })
             ] }),
-            jsx("button", { type: "button", onClick: () => setShowGroupModal(false), className: "text-slate-400 hover:text-slate-700 p-1", children: jsx(X, { size: 18 }) })
+            jsx("button", { type: "button", onClick: closeGroupModal, className: "text-slate-400 hover:text-slate-700 p-1", children: jsx(X, { size: 18 }) })
           ] }),
           jsxs("div", { className: "p-5 space-y-4", children: [
             jsxs("div", { children: [
@@ -569,12 +653,12 @@ function VisaDocSection({ stages, docs, onChange }) {
                 placeholder: "e.g. Visa Application Forms",
                 value: newGroupName,
                 onChange: (e) => setNewGroupName(e.target.value),
-                onKeyDown: (e) => { if (e.key === "Enter") addGroup(); }
+                onKeyDown: (e) => { if (e.key === "Enter") saveGroup(); }
               })
             ] }),
             jsxs("div", { className: "flex justify-end gap-2", children: [
-              jsx(Button, { variant: "secondary", size: "sm", onClick: () => setShowGroupModal(false), children: "Cancel" }),
-              jsx(Button, { size: "sm", onClick: addGroup, children: "Create Group" })
+              jsx(Button, { variant: "secondary", size: "sm", onClick: closeGroupModal, children: "Cancel" }),
+              jsx(Button, { size: "sm", onClick: saveGroup, children: editingGroupName ? "Save Changes" : "Create Group" })
             ] })
           ] })
         ]
@@ -639,7 +723,6 @@ function getEnrolledStageId(stages) {
 
 // ─── Stage counselor tasks: add task + assign stage dropdown ───
 function StageTasksSection({ stages, stageTasks, onChange }) {
-  const [expanded, setExpanded] = useState(true);
   const defaultStageId = stages[0]?.id || "";
   const [draftTitle, setDraftTitle] = useState("");
   const [draftStageId, setDraftStageId] = useState(defaultStageId);
@@ -683,11 +766,9 @@ function StageTasksSection({ stages, stageTasks, onChange }) {
 
   return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
     jsxs("div", {
-      className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100 cursor-pointer select-none",
-      onClick: () => setExpanded(!expanded),
+      className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100",
       children: [
         jsxs("div", { className: "flex items-center gap-2", children: [
-          jsx(expanded ? ChevronDown : ChevronRight, { size: 16, className: "text-indigo-500" }),
           jsx(ListChecks, { size: 16, className: "text-violet-500" }),
           jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Stage Counselor Tasks" }),
           jsx("span", { className: "text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100", children: taskRows.length })
@@ -695,7 +776,7 @@ function StageTasksSection({ stages, stageTasks, onChange }) {
         jsx("p", { className: "text-[10px] text-slate-400 max-w-xs text-right hidden sm:block", children: "Assigned to counselors when a student enters the selected stage" })
       ]
     }),
-    expanded && jsx("div", { className: "p-4 space-y-4", children:
+    jsx("div", { className: "p-4 space-y-4", children:
       stages.length === 0
         ? jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "Add pipeline stages first." })
         : jsxs(Fragment, { children: [
@@ -861,6 +942,116 @@ function AccountDetailsStageSection({ stages, accountDetailsStageId, onChange })
   });
 }
 
+// ─── Document Notify (WhatsApp on upload) ───────────────────────
+function DocumentNotifySection({ pipelineDocs, visaDocs, documentNotifyDocs, onChange }) {
+  const [draftDocName, setDraftDocName] = useState("");
+  const availableOptions = useMemo(
+    () => collectAvailableDocOptions(pipelineDocs, visaDocs),
+    [pipelineDocs, visaDocs]
+  );
+  const selectedKeys = useMemo(
+    () => new Set((documentNotifyDocs || []).map((d) => String(d.docName || "").trim().toLowerCase())),
+    [documentNotifyDocs]
+  );
+  const addableOptions = useMemo(
+    () => availableOptions.filter((opt) => !selectedKeys.has(opt.docName.toLowerCase())),
+    [availableOptions, selectedKeys]
+  );
+
+  useEffect(() => {
+    if (draftDocName && !addableOptions.some((o) => o.docName === draftDocName)) {
+      setDraftDocName(addableOptions[0]?.docName || "");
+    } else if (!draftDocName && addableOptions.length > 0) {
+      setDraftDocName(addableOptions[0].docName);
+    }
+  }, [addableOptions, draftDocName]);
+
+  const addDoc = () => {
+    const option = addableOptions.find((o) => o.docName === draftDocName);
+    if (!option) return;
+    onChange([
+      ...(documentNotifyDocs || []),
+      { id: genId("dn"), docName: option.docName, source: option.source },
+    ]);
+    setDraftDocName("");
+  };
+
+  const removeDoc = (id) => {
+    onChange((documentNotifyDocs || []).filter((d) => d.id !== id));
+  };
+
+  return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
+    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
+      jsxs("div", { className: "flex items-center gap-2", children: [
+        jsx(MessageCircle, { size: 16, className: "text-emerald-600" }),
+        jsxs("div", { children: [
+          jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Document Notify" }),
+          jsx("p", { className: "text-[10px] text-slate-400 mt-0.5", children: "Students receive a WhatsApp message (with attachment when supported) when these documents are uploaded by their counselor." })
+        ] })
+      ] }),
+      jsx("span", { className: "text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100", children: `${(documentNotifyDocs || []).length} selected` })
+    ] }),
+    jsx("div", { className: "p-4 space-y-4", children:
+      availableOptions.length === 0
+        ? jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "Add pipeline or visa documents first, then select which ones trigger WhatsApp notifications." })
+        : jsxs(Fragment, { children: [
+            (documentNotifyDocs || []).length === 0
+              ? jsx("p", { className: "text-sm text-slate-400 text-center py-2", children: "No documents selected for WhatsApp notification." })
+              : jsx("div", { className: "space-y-2", children:
+                  (documentNotifyDocs || []).map((entry) => {
+                    const meta = availableOptions.find((o) => o.docName.toLowerCase() === entry.docName.toLowerCase());
+                    return jsxs("div", {
+                      key: entry.id,
+                      className: "flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-100 bg-slate-50/50",
+                      children: [
+                        jsx(FileText, { size: 14, className: "text-emerald-500 shrink-0" }),
+                        jsxs("div", { className: "flex-1 min-w-0", children: [
+                          jsx("p", { className: "text-sm font-medium text-slate-700 truncate", children: entry.docName }),
+                          meta && jsx("p", { className: "text-[10px] text-slate-400 truncate", children: `${meta.source === "visa" ? "Visa" : "Pipeline"} · ${meta.group}` })
+                        ] }),
+                        jsx("button", {
+                          type: "button",
+                          onClick: () => removeDoc(entry.id),
+                          className: "p-1.5 text-slate-400 hover:text-rose-500 shrink-0",
+                          title: "Remove from notify list",
+                          children: jsx(Trash2, { size: 14 })
+                        })
+                      ]
+                    }, entry.id);
+                  })
+                }),
+            addableOptions.length > 0 && jsxs("div", {
+              className: "p-3 rounded-lg border border-emerald-100 bg-emerald-50/40 space-y-3",
+              children: [
+                jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Add document to notify" }),
+                jsxs("div", { className: "flex flex-col sm:flex-row sm:items-end gap-2", children: [
+                  jsxs("div", { className: "flex-1 min-w-0 space-y-1", children: [
+                    jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Document" }),
+                    jsx("select", {
+                      className: "w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white",
+                      value: draftDocName,
+                      onChange: (e) => setDraftDocName(e.target.value),
+                      children: addableOptions.map((opt) =>
+                        jsx("option", { value: opt.docName, children: `${opt.docName} (${opt.source === "visa" ? "Visa" : "Pipeline"})` }, `${opt.source}-${opt.docName}`)
+                      )
+                    })
+                  ] }),
+                  jsx(Button, {
+                    type: "button",
+                    size: "sm",
+                    className: "shrink-0",
+                    onClick: addDoc,
+                    disabled: !draftDocName,
+                    children: jsxs(Fragment, { children: [jsx(Plus, { size: 14, className: "mr-1" }), "Add"] })
+                  })
+                ] })
+              ]
+            })
+          ] })
+    })
+  ] });
+}
+
 // ─── Main DocMapping Page ───────────────────────────────────────
 export function DocMapping() {
   const [countries, setCountries] = useState([]);
@@ -876,6 +1067,7 @@ export function DocMapping() {
   const [visaDocs, setVisaDocs] = useState([]);
   const [stageTasks, setStageTasks] = useState({});
   const [accountDetailsStageId, setAccountDetailsStageId] = useState(DEFAULT_ACCOUNT_DETAILS_STAGE_ID);
+  const [documentNotifyDocs, setDocumentNotifyDocs] = useState([]);
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -911,17 +1103,20 @@ export function DocMapping() {
         result.data.accountDetailsStageId,
         nextStages
       );
+      const nextDocumentNotifyDocs = normalizeDocumentNotifyDocs(result.data.documentNotifyDocs);
       setStages(nextStages);
       setPipelineDocs(nextPipelineDocs);
       setVisaDocs(nextVisaDocs);
       setStageTasks(nextStageTasks);
       setAccountDetailsStageId(nextAccountDetailsStageId);
+      setDocumentNotifyDocs(nextDocumentNotifyDocs);
       setSavedSnapshot(buildDocMappingSnapshot(
         nextStages,
         nextPipelineDocs,
         nextVisaDocs,
         nextStageTasks,
-        nextAccountDetailsStageId
+        nextAccountDetailsStageId,
+        nextDocumentNotifyDocs
       ));
     } else {
       setConfigError(result.error);
@@ -940,9 +1135,10 @@ export function DocMapping() {
       pipelineDocs,
       visaDocs,
       stageTasks,
-      accountDetailsStageId
+      accountDetailsStageId,
+      documentNotifyDocs
     ) !== savedSnapshot;
-  }, [stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, savedSnapshot, selectedCountry, configLoading]);
+  }, [stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs, savedSnapshot, selectedCountry, configLoading]);
 
   const handleSaveAll = async () => {
     if (!selectedCountry || !isDirty) return;
@@ -976,9 +1172,18 @@ export function DocMapping() {
       selectedCountry,
       accountDetailsStageId
     );
-    setSaving(false);
     if (!accountDetailsResult.ok) {
       setConfigError(accountDetailsResult.error);
+      setSaving(false);
+      return;
+    }
+    const documentNotifyResult = await saveDocMappingDocumentNotify(
+      selectedCountry,
+      documentNotifyDocs
+    );
+    setSaving(false);
+    if (!documentNotifyResult.ok) {
+      setConfigError(documentNotifyResult.error);
       return;
     }
     const nextStages = stagesResult.data.stages;
@@ -989,17 +1194,22 @@ export function DocMapping() {
       accountDetailsResult.data.accountDetailsStageId,
       nextStages
     );
+    const nextDocumentNotifyDocs = normalizeDocumentNotifyDocs(
+      documentNotifyResult.data.documentNotifyDocs
+    );
     setStages(nextStages);
     setPipelineDocs(nextPipelineDocs);
     setVisaDocs(nextVisaDocs);
     setStageTasks(nextStageTasks);
     setAccountDetailsStageId(nextAccountDetailsStageId);
+    setDocumentNotifyDocs(nextDocumentNotifyDocs);
     setSavedSnapshot(buildDocMappingSnapshot(
       nextStages,
       nextPipelineDocs,
       nextVisaDocs,
       nextStageTasks,
-      nextAccountDetailsStageId
+      nextAccountDetailsStageId,
+      nextDocumentNotifyDocs
     ));
     invalidateCountryDocConfigCache(selectedCountry);
     flash("All changes saved");
@@ -1087,6 +1297,12 @@ export function DocMapping() {
                 onChange: setVisaDocs
               })
             ] }),
+            jsx(DocumentNotifySection, {
+              pipelineDocs,
+              visaDocs,
+              documentNotifyDocs,
+              onChange: setDocumentNotifyDocs
+            }),
             jsx(StageTasksSection, { stages, stageTasks, onChange: setStageTasks })
           ] }),
 

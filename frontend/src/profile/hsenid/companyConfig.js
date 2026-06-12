@@ -1,5 +1,5 @@
-import companyIcon from "../nexgenai/assets/companyIcon.png";
-import companyFullLogo from "../nexgenai/assets/company-full-logo.png";
+import companyIcon from "./assets/companyIcon.png";
+import companyFullLogo from "./assets/company-full-logo.png";
 import { resolveApiBase } from "../../resolveApiBase";
 
 // hSenid company branding and API configuration.
@@ -11,7 +11,7 @@ export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
 export const RESUME_BUILDER_TITLE = "hSenid Resume Builder";
 
-export const API_BASE = resolveApiBase("https://success-engine-dev.iptours.lk");
+export const API_BASE = resolveApiBase("https://success-engine-dev.nexgenai.lk");
 export const DEFAULT_USER_AVATAR = companyIcon;
 export const COMPANY_FULL_LOGO = companyFullLogo;
 

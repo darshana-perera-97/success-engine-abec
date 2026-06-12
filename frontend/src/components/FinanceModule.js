@@ -91,7 +91,7 @@ const INVOICE_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ]);
 
-const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice }) => {
+const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice, counselorCanAcceptPayments = false }) => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAmount, setNewAmount] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -456,7 +456,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     }
   }, [openCreateInvoice, isStaff]);
   const canAcceptPayment =
-    roleNorm === "admin" || roleNorm === "manager" || roleNorm === "accountant";
+    roleNorm === "admin" ||
+    roleNorm === "manager" ||
+    roleNorm === "accountant" ||
+    (isCounselorStaff && counselorCanAcceptPayments);
   const canUploadEvidence = roleNorm === "student" || roleNorm === "country coordinator" || isCounselorStaff;
   const isStudentView = roleNorm === "student";
   const invoiceHasDeliveryDetails = (inv) => Boolean(

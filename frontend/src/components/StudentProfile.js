@@ -24,7 +24,11 @@ import {
   Eye,
   Pencil,
   Trash2,
-  X
+  X,
+  GraduationCap,
+  Search,
+  Loader2,
+  Plus
 } from "lucide-react";
 import { DocumentManager } from "./DocumentManager";
 import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
@@ -60,7 +64,7 @@ import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
-import { getInvoicesByStudentId } from "../authApi";
+import { getInvoicesByStudentId, getUniversityPrograms } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import {
   isCounselorEquivalentAccountRole,
@@ -151,7 +155,76 @@ function buildLegacyMetricsSubtitleLine(student) {
   if (isMeaningfulIeltsDisplay(ielts)) segments.push(`IELTS: ${ielts}`);
   return segments.length ? segments.join("\u2022") : null;
 }
-const KeyDetails = ({ student, canEditContact = false, onEditContact, canSetBudget = false, onSetBudget }) => {
+function normalizePreferredCourses(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, idx) => {
+    if (!item || typeof item !== "object") return null;
+    const programId = String(item.programId || "").trim() || null;
+    const university = String(item.university || "").trim();
+    const programName = String(item.programName || item.courseName || item.name || "").trim();
+    if (!university && !programName) return null;
+    const entryId = String(item.entryId || item._id || `${programId || "course"}-${idx}-${programName}`).trim();
+    return {
+      entryId,
+      programId,
+      university,
+      programName,
+      country: String(item.country || "").trim() || null,
+      intake: String(item.intake || "").trim() || null,
+      isManual: item.isManual === true || !programId
+    };
+  }).filter(Boolean);
+}
+function courseSelectionKey(course) {
+  return `${String(course?.programName || "").trim().toLowerCase()}::${String(course?.university || "").trim().toLowerCase()}`;
+}
+function formatCourseLabel(course) {
+  const uni = String(course?.university || "").trim();
+  const prog = String(course?.programName || "").trim();
+  if (uni && prog) return `${prog} — ${uni}`;
+  return uni || prog || "Course";
+}
+function courseFromProgram(program) {
+  if (!program || typeof program !== "object") return null;
+  const programId = String(program.id || "").trim();
+  const university = String(program.university || "").trim();
+  const programName = String(program.programName || "").trim();
+  if (!programId || !university || !programName) return null;
+  return {
+    entryId: `pc-${programId}-${Date.now()}`,
+    programId,
+    university,
+    programName,
+    country: String(program.country || "").trim() || null,
+    intake: String(program.intake || "").trim() || null,
+    isManual: false
+  };
+}
+function courseFromManualInput(programName, university) {
+  const programNameTrimmed = String(programName || "").trim();
+  const universityTrimmed = String(university || "").trim();
+  if (!programNameTrimmed || !universityTrimmed) return null;
+  return {
+    entryId: `pc-manual-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+    programId: null,
+    university: universityTrimmed,
+    programName: programNameTrimmed,
+    country: null,
+    intake: null,
+    isManual: true
+  };
+}
+const KeyDetails = ({
+  student,
+  preferredCourses = [],
+  canEditContact = false,
+  onEditContact,
+  canSetBudget = false,
+  onSetBudget,
+  canManageCourses = false,
+  onAddCourses,
+  onRemoveCourse
+}) => {
   const budgetUnset = !hasStudentAnnualBudget(student);
   const details = [
     { icon: MapPin, label: "Branch", value: student.branch || "—" },
@@ -187,7 +260,24 @@ const KeyDetails = ({ student, canEditContact = false, onEditContact, canSetBudg
           ] }) : /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value })
         ] })
       ] }, item.label);
-    }) })
+    }) }),
+    /* @__PURE__ */ jsxs("div", { className: "pt-4 mt-1 border-t border-gray-100", children: [
+      /* @__PURE__ */ jsxs("div", { className: "mb-3 flex items-center justify-between gap-2", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Courses" }),
+        canManageCourses && onAddCourses && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px] shrink-0", onClick: onAddCourses, children: [
+          /* @__PURE__ */ jsx(Plus, { size: 13, strokeWidth: 1.75, className: "mr-1.5" }),
+          "Add"
+        ] })
+      ] }),
+      preferredCourses.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No courses added yet." }) : /* @__PURE__ */ jsx("div", { className: "space-y-2", children: preferredCourses.map((course) => /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 group", children: [
+        /* @__PURE__ */ jsx(GraduationCap, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
+        /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-800 [overflow-wrap:anywhere]", children: formatCourseLabel(course) }),
+          (course.country || course.intake) && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-0.5", children: [course.country, course.intake].filter(Boolean).join(" • ") })
+        ] }),
+        canManageCourses && onRemoveCourse && /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-opacity shrink-0", onClick: () => onRemoveCourse(course.entryId), title: "Remove course", children: /* @__PURE__ */ jsx(X, { size: 14 }) })
+      ] }, course.entryId)) })
+    ] })
   ] });
 };
 const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onNavigateToTask }) => {
@@ -662,6 +752,7 @@ const StudentProfile = ({
   onUpdateTasks,
   activities = [],
   paymentAccounts = [],
+  counselorCanAcceptPayments = false,
   onUpdateInvoice,
   onCreateInvoice,
   onUploadStudentDocument,
@@ -698,6 +789,17 @@ const StudentProfile = ({
     open: false,
     budget: "",
     budgetCurrency: "LKR"
+  });
+  const [coursesDialog, setCoursesDialog] = useState({
+    open: false,
+    search: "",
+    selected: [],
+    programs: [],
+    loading: false,
+    error: "",
+    manualProgramName: "",
+    manualUniversity: "",
+    manualError: ""
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
   useEffect(() => {
@@ -777,7 +879,7 @@ const StudentProfile = ({
       const partialNote = result.warning ? ` ${result.warning}` : "";
       onNotify?.(
         result.partial ? "Export partial" : "Export ready",
-        `Downloaded zip with ${docPart}, student-data.csv, and student-data.json${skipped}.${partialNote}`,
+        `Downloaded zip with ${docPart} (pipeline & visa folders by stage/group, plus profile other, offer letters, and CV when present), student-data.csv, and student-data.json${skipped}.${partialNote}`,
         tone
       );
     } catch {
@@ -1014,6 +1116,11 @@ const StudentProfile = ({
   };
   const canManagerEditContact = userRole === "Manager";
   const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
+  const canManagePreferredCourses = userRole !== "Student" && userRole !== "Accountant";
+  const preferredCourses = useMemo(
+    () => normalizePreferredCourses(localStudent?.preferredCourses),
+    [localStudent?.preferredCourses]
+  );
   const showCounselorsRosterSection =
     ["Admin", "Manager", "Team Lead", "Country Coordinator"].includes(userRole) ||
     isCounselorEquivalentPortalRole(userRole);
@@ -1143,6 +1250,170 @@ const StudentProfile = ({
       studentId: localStudent.id
     });
     closeContactDialog();
+  };
+  const openCoursesDialog = async () => {
+    if (!canManagePreferredCourses) return;
+    setCoursesDialog({
+      open: true,
+      search: "",
+      selected: [],
+      programs: [],
+      loading: true,
+      error: "",
+      manualProgramName: "",
+      manualUniversity: "",
+      manualError: ""
+    });
+    const result = await getUniversityPrograms();
+    if (!result.ok) {
+      setCoursesDialog((prev) => ({
+        ...prev,
+        loading: false,
+        error: result.error || "Failed to load courses."
+      }));
+      return;
+    }
+    setCoursesDialog((prev) => ({
+      ...prev,
+      loading: false,
+      programs: result.data || [],
+      error: ""
+    }));
+  };
+  const closeCoursesDialog = () => {
+    setCoursesDialog((prev) => ({ ...prev, open: false }));
+  };
+  const existingProgramIds = useMemo(() => {
+    const ids = new Set();
+    for (const course of preferredCourses) {
+      const pid = String(course.programId || "").trim();
+      if (pid) ids.add(pid);
+    }
+    return ids;
+  }, [preferredCourses]);
+  const existingCourseKeys = useMemo(() => {
+    const keys = new Set();
+    for (const course of preferredCourses) {
+      const key = courseSelectionKey(course);
+      if (key !== "::") keys.add(key);
+    }
+    for (const course of coursesDialog.selected || []) {
+      const key = courseSelectionKey(course);
+      if (key !== "::") keys.add(key);
+    }
+    return keys;
+  }, [preferredCourses, coursesDialog.selected]);
+  const filteredCoursePrograms = useMemo(() => {
+    const q = String(coursesDialog.search || "").trim().toLowerCase();
+    const studentCountry = String(localStudent.country || "").trim().toLowerCase();
+    return (coursesDialog.programs || []).filter((program) => {
+      const programId = String(program.id || "").trim();
+      if (programId && existingProgramIds.has(programId)) return false;
+      if (!q) return true;
+      const haystack = [
+        program.university,
+        program.programName,
+        program.country,
+        program.intake
+      ].map((v) => String(v || "").toLowerCase()).join(" ");
+      return haystack.includes(q);
+    }).sort((a, b) => {
+      const aCountry = String(a.country || "").trim().toLowerCase();
+      const bCountry = String(b.country || "").trim().toLowerCase();
+      if (studentCountry) {
+        if (aCountry === studentCountry && bCountry !== studentCountry) return -1;
+        if (bCountry === studentCountry && aCountry !== studentCountry) return 1;
+      }
+      return String(a.programName || "").localeCompare(String(b.programName || ""));
+    });
+  }, [coursesDialog.programs, coursesDialog.search, coursesDialog.selected, existingProgramIds, localStudent.country]);
+  const addManualCourseToSelection = () => {
+    const nextCourse = courseFromManualInput(coursesDialog.manualProgramName, coursesDialog.manualUniversity);
+    if (!nextCourse) {
+      setCoursesDialog((prev) => ({
+        ...prev,
+        manualError: "Programme and University are required."
+      }));
+      return;
+    }
+    const key = courseSelectionKey(nextCourse);
+    if (existingCourseKeys.has(key)) {
+      setCoursesDialog((prev) => ({
+        ...prev,
+        manualError: "This programme and university combination is already added."
+      }));
+      return;
+    }
+    setCoursesDialog((prev) => ({
+      ...prev,
+      selected: [...(prev.selected || []), nextCourse],
+      manualProgramName: "",
+      manualUniversity: "",
+      manualError: ""
+    }));
+  };
+  const toggleCourseSelection = (program) => {
+    const nextCourse = courseFromProgram(program);
+    if (!nextCourse) return;
+    setCoursesDialog((prev) => {
+      const programId = String(program.id || "").trim();
+      const alreadySelected = (prev.selected || []).some((c) => String(c.programId || "").trim() === programId);
+      if (alreadySelected) {
+        return {
+          ...prev,
+          selected: (prev.selected || []).filter((c) => String(c.programId || "").trim() !== programId)
+        };
+      }
+      return {
+        ...prev,
+        selected: [...(prev.selected || []), nextCourse]
+      };
+    });
+  };
+  const handleSavePreferredCourses = () => {
+    if (!canManagePreferredCourses) return;
+    const toAdd = (coursesDialog.selected || []).filter(Boolean);
+    if (toAdd.length === 0) return;
+    const merged = [...preferredCourses, ...toAdd];
+    const updated = {
+      ...localStudent,
+      preferredCourses: merged
+    };
+    handleUpdateStudentLocal(updated);
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "added preferred courses",
+      target: `${localStudent.name} (${toAdd.map((c) => formatCourseLabel(c)).join("; ")})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    closeCoursesDialog();
+    onNotify?.("Courses saved", `Added ${toAdd.length} course${toAdd.length === 1 ? "" : "s"} to Key Details.`, "success");
+  };
+  const handleRemovePreferredCourse = (entryId) => {
+    if (!canManagePreferredCourses) return;
+    const targetId = String(entryId || "").trim();
+    if (!targetId) return;
+    const removed = preferredCourses.find((c) => c.entryId === targetId);
+    const nextCourses = preferredCourses.filter((c) => c.entryId !== targetId);
+    const updated = {
+      ...localStudent,
+      preferredCourses: nextCourses
+    };
+    handleUpdateStudentLocal(updated);
+    if (removed) {
+      onAddActivity?.({
+        user: userRole,
+        role: userRole,
+        action: "removed preferred course",
+        target: `${localStudent.name} (${formatCourseLabel(removed)})`,
+        type: "system",
+        studentName: localStudent.name,
+        studentId: localStudent.id
+      });
+    }
   };
   const handleConfirmAdvancePipeline = () => {
     if (nextStep) {
@@ -1361,13 +1632,14 @@ const StudentProfile = ({
         return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal });
       case "visa-pilot":
         return /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, countryDocConfig, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onDeleteDocument: handleDeleteStudentDocument }),
+          /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, countryDocConfig, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument }),
           /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, countryDocConfig, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters, showPipelineChecklist: false, showUniversityOfferLettersBlock: false, showProfileOtherDocuments: true })
         ] });
       case "ledger":
         return /* @__PURE__ */ jsx(FinanceModule, {
           student: localStudent,
           paymentAccounts,
+          counselorCanAcceptPayments,
           userRole,
           onUpdateInvoice,
           onCreateInvoice,
@@ -1425,7 +1697,7 @@ const StudentProfile = ({
               onClick: handleExportDocuments,
               size: "sm",
               disabled: exportingDocuments,
-              title: "Download pipeline & visa documents, student CSV, and full JSON export",
+              title: "Download all student files (pipeline & visa docs by stage/group, profile other, offer letters, CV) plus CSV and JSON",
               children: [
                 /* @__PURE__ */ jsx(Archive, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
                 exportingDocuments ? " Exporting…" : " Export"
@@ -1579,7 +1851,7 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
 
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole, highlightTaskId, onNavigateToTask }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, { student: localStudent, employees }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
@@ -1604,6 +1876,80 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeContactDialog, children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: !String(contactDialog.email || "").trim() || !String(contactDialog.phone || "").trim(), children: "Save changes" })
+          ] })
+        ] }) }),
+        coursesDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCoursesDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80 shrink-0", children: [
+            /* @__PURE__ */ jsxs("div", { children: [
+              /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Add courses" }),
+              /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-0.5", children: "Pick from the knowledge base or enter programme details manually." })
+            ] }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeCoursesDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3 overflow-y-auto flex-1 min-h-0", children: [
+            /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-[11px] font-semibold text-slate-700", children: "Enter manually" }),
+              /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Programme" }),
+                /* @__PURE__ */ jsx("input", { type: "text", value: coursesDialog.manualProgramName, onChange: (e) => setCoursesDialog((prev) => ({ ...prev, manualProgramName: e.target.value, manualError: "" })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", placeholder: "e.g. MSc Computer Science" })
+              ] }),
+              /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "University" }),
+                /* @__PURE__ */ jsx("input", { type: "text", value: coursesDialog.manualUniversity, onChange: (e) => setCoursesDialog((prev) => ({ ...prev, manualUniversity: e.target.value, manualError: "" })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", placeholder: "e.g. University of Toronto", onKeyDown: (e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addManualCourseToSelection();
+                  }
+                } })
+              ] }),
+              coursesDialog.manualError && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-rose-600", children: coursesDialog.manualError }),
+              /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "w-full", onClick: addManualCourseToSelection, disabled: !String(coursesDialog.manualProgramName || "").trim() || !String(coursesDialog.manualUniversity || "").trim(), children: [
+                /* @__PURE__ */ jsx(Plus, { size: 14, className: "mr-1.5" }),
+                "Add to list"
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+              /* @__PURE__ */ jsx("div", { className: "h-px flex-1 bg-gray-200" }),
+              /* @__PURE__ */ jsx("span", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400", children: "Or browse knowledge base" }),
+              /* @__PURE__ */ jsx("div", { className: "h-px flex-1 bg-gray-200" })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+              /* @__PURE__ */ jsx(Search, { size: 16, className: "absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" }),
+              /* @__PURE__ */ jsx("input", { type: "search", value: coursesDialog.search, onChange: (e) => setCoursesDialog((prev) => ({ ...prev, search: e.target.value })), className: "w-full text-sm border border-gray-200 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "Search university or program…" })
+            ] }),
+            (coursesDialog.selected || []).length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-indigo-100 bg-indigo-50/60 p-3", children: [
+              /* @__PURE__ */ jsxs("p", { className: "text-[11px] font-semibold text-indigo-800 mb-2", children: [
+                "Selected (",
+                coursesDialog.selected.length,
+                ")"
+              ] }),
+              /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-1.5", children: coursesDialog.selected.map((course) => /* @__PURE__ */ jsxs("button", { type: "button", onClick: () => setCoursesDialog((prev) => ({
+                ...prev,
+                selected: (prev.selected || []).filter((c) => c.entryId !== course.entryId)
+              })), className: "inline-flex items-center gap-1 max-w-full rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-[11px] text-indigo-900 hover:bg-indigo-100/70", children: [
+                /* @__PURE__ */ jsx("span", { className: "truncate", children: formatCourseLabel(course) }),
+                /* @__PURE__ */ jsx(X, { size: 12, className: "shrink-0" })
+              ] }, course.entryId)) })
+            ] }),
+            coursesDialog.loading ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-center gap-2 py-10 text-sm text-slate-500", children: [
+              /* @__PURE__ */ jsx(Loader2, { size: 18, className: "animate-spin" }),
+              "Loading courses…"
+            ] }) : coursesDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-sm text-rose-600 py-6 text-center", children: coursesDialog.error }) : filteredCoursePrograms.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 italic py-6 text-center", children: coursesDialog.search ? "No matching courses found." : "All available courses are already on this student." }) : /* @__PURE__ */ jsx("div", { className: "space-y-2 max-h-64 overflow-y-auto pr-1", children: filteredCoursePrograms.map((program) => {
+              const programId = String(program.id || "").trim();
+              const isSelected = (coursesDialog.selected || []).some((c) => String(c.programId || "").trim() === programId);
+              return /* @__PURE__ */ jsxs("button", { type: "button", onClick: () => toggleCourseSelection(program), className: `w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${isSelected ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200" : "border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-white"}`, children: [
+                /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-800 [overflow-wrap:anywhere]", children: program.programName }),
+                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-0.5 [overflow-wrap:anywhere]", children: program.university }),
+                /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
+                  [program.country, program.intake].filter(Boolean).join(" • "),
+                  program.tuition ? ` • ${Number(program.tuition).toLocaleString()} ${String(program.currency || "").trim()}` : ""
+                ] })
+              ] }, program.id);
+            }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2 shrink-0", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeCoursesDialog, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSavePreferredCourses, disabled: !(coursesDialog.selected || []).length, children: (coursesDialog.selected || []).length > 1 ? `Add ${coursesDialog.selected.length} courses` : "Add course" })
           ] })
         ] }) }),
         budgetDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeBudgetDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [

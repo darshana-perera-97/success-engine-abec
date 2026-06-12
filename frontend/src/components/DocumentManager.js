@@ -200,7 +200,16 @@ const DocumentManager = ({
       }
     }
     setUploadModal({ isOpen: false, docType: null });
-    showWhatsappNotification(`Document "${uploadModal.docType}" uploaded successfully.`);
+    const wa = result?.documentUploadWhatsapp;
+    const docLabel = uploadModal.docType;
+    if (wa?.status === "sent") {
+      showWhatsappNotification(`Document "${docLabel}" uploaded. WhatsApp sent to the student from your counselor account.`);
+    } else if (wa?.status === "failed" || wa?.status === "skipped") {
+      const reason = wa?.reason ? ` ${wa.reason}` : "";
+      showWhatsappNotification(`Document "${docLabel}" uploaded. WhatsApp was not sent.${reason}`);
+    } else {
+      showWhatsappNotification(`Document "${docLabel}" uploaded successfully.`);
+    }
   };
   const handleProfileOtherFileChange = async (event) => {
     const file = event.target.files?.[0];

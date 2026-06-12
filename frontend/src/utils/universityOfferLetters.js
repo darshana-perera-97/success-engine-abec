@@ -42,4 +42,4 @@ function buildUniversityOfferLetterRows(students, employees) {
   return rows;
 }
 
-export { offerStatusBadgeClass, buildUniversityOfferLetterRows };
+export { offerStatusBadgeClass, buildUniversityOfferLetterRows, normalizeOfferStatus };
