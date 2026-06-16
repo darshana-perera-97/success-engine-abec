@@ -4,6 +4,7 @@ import { AlertTriangle, Clock, User, ArrowRight, Check, ListTodo } from "lucide-
 import { Button } from "./Button";
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 
 const EscalationDesk = ({ tasks, onReassign, students = [], employees = [], variant = "escalations" }) => {
   const [stageSlaNow, setStageSlaNow] = useState(() => Date.now());
@@ -73,7 +74,7 @@ const EscalationDesk = ({ tasks, onReassign, students = [], employees = [], vari
     const studentLabel = stu?.name || sid || "—";
     const counselorLabel = getPrimaryCounselorLabelForTask(task);
     const stageSla =
-      variant === "tasks" && stu ? getCurrentStageSlaDisplay(stu, { now: stageSlaNow }) : null;
+      variant === "tasks" && stu ? getCurrentStageSlaDisplay(stu, { now: stageSlaNow, resolveCountryConfig: resolveCountryDocConfig }) : null;
     const stageSlaClass =
       stageSla == null
         ? ""

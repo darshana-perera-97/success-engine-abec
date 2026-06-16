@@ -3,7 +3,7 @@ const { parseBody, sendJson } = require("../lib/httpUtils");
 const {
   readStages, writeStages, getCountryStages,
   readDocMapping, writeDocMapping, emptyDocConfig, ensureDefaultPipelineDocs,
-  normalizeStageTasks, normalizeAccountDetailsStageId, normalizeDocumentNotifyDocs,
+  normalizeStageTasks, normalizeStageDeadlines, normalizeAccountDetailsStageId, normalizeDocumentNotifyDocs,
   DEFAULT_STAGES
 } = require("../models/docMapping");
 
@@ -13,6 +13,7 @@ function docMappingPayload(stages, docs) {
     pipelineDocs: ensureDefaultPipelineDocs(docs.pipelineDocs || []),
     visaDocs: docs.visaDocs || [],
     stageTasks: normalizeStageTasks(docs.stageTasks),
+    stageDeadlines: normalizeStageDeadlines(docs.stageDeadlines, stages),
     accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
     documentNotifyDocs: normalizeDocumentNotifyDocs(docs.documentNotifyDocs),
   };
@@ -117,6 +118,26 @@ async function handle(req, res, url) {
       const allDocs = await readDocMapping();
       if (!allDocs[country]) allDocs[country] = emptyDocConfig();
       allDocs[country].accountDetailsStageId = accountDetailsStageId;
+      await writeDocMapping(allDocs);
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  // PUT /api/doc-mapping/stage-deadlines — per-stage SLA deadlines
+  if (req.method === "PUT" && url.pathname === "/api/doc-mapping/stage-deadlines") {
+    try {
+      const body = await parseBody(req);
+      const country = String(body.country || "").trim();
+      if (!country) { sendJson(res, 400, { ok: false, error: "Country is required." }); return true; }
+      const allStages = await readStages();
+      const stages = getCountryStages(allStages, country);
+      const stageDeadlines = normalizeStageDeadlines(body.stageDeadlines, stages);
+      const allDocs = await readDocMapping();
+      if (!allDocs[country]) allDocs[country] = emptyDocConfig();
+      allDocs[country].stageDeadlines = stageDeadlines;
       await writeDocMapping(allDocs);
       sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
     } catch {

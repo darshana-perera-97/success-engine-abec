@@ -2,18 +2,20 @@ import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, X, MapPin, GripVertical,
-  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil
+  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil, Clock
 } from "lucide-react";
 import {
   getCountries, createCountry, getDocMapping, saveDocMappingStages,
   saveDocMappingPipelineDocs, saveDocMappingVisaDocs, saveDocMappingStageTasks,
-  saveDocMappingAccountDetailsStage, saveDocMappingDocumentNotify
+  saveDocMappingAccountDetailsStage, saveDocMappingDocumentNotify, saveDocMappingStageDeadlines
 } from "../authApi";
 import { invalidateCountryDocConfigCache } from "../countryDocConfigStore";
 import {
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
   normalizeAccountDetailsStageId,
-  normalizeDocumentNotifyDocs
+  normalizeDocumentNotifyDocs,
+  normalizeStageDeadlinesMap,
+  formatStageDeadlineLabel
 } from "../docMappingConfig";
 import { Button } from "./Button";
 
@@ -23,8 +25,8 @@ function genId(prefix = "dm") {
 
 const DEFAULT_STAGE_IDS = new Set(["inquiry", "registration", "application", "documentation", "visa", "enrolled"]);
 
-function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs) {
-  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs });
+function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs) {
+  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs });
 }
 
 function collectAvailableDocOptions(pipelineDocs, visaDocs) {
@@ -893,6 +895,127 @@ function StageTasksSection({ stages, stageTasks, onChange }) {
 }
 
 // ─── Student portal account details (email + WhatsApp) ──────────
+// ─── Stage SLA deadlines (per pipeline stage) ───────────────────
+function StageDeadlinesSection({ stages, stageDeadlines, onChange }) {
+  const rows = useMemo(() => {
+    const normalized = normalizeStageDeadlinesMap(stageDeadlines, stages);
+    return (stages || []).map((stage) => ({
+      stage,
+      deadline: normalized[stage.id] ?? null,
+    }));
+  }, [stages, stageDeadlines]);
+
+  const updateStageDeadline = (stageId, patch) => {
+    const normalized = normalizeStageDeadlinesMap(stageDeadlines, stages);
+    const current = normalized[stageId] ?? null;
+    if (patch === null) {
+      onChange({ ...normalized, [stageId]: null });
+      return;
+    }
+    const next = current && typeof current === "object" ? { ...current, ...patch } : { value: 1, unit: "hours", ...patch };
+    onChange({ ...normalized, [stageId]: next });
+  };
+
+  return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
+    jsxs("div", {
+      className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100",
+      children: [
+        jsxs("div", { className: "flex items-center gap-2", children: [
+          jsx(Clock, { size: 16, className: "text-sky-600 shrink-0" }),
+          jsxs("div", { children: [
+            jsx("p", {
+              className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600",
+              children: "Stage Deadlines"
+            }),
+            jsx("p", {
+              className: "text-xs text-slate-400 mt-0.5",
+              children: "SLA timers shown on student profiles, lists, and escalation views. Defaults load from product spec; leave blank for no deadline."
+            })
+          ] })
+        ] }),
+        jsx("span", {
+          className: "text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100",
+          children: `${rows.filter((r) => r.deadline).length} active`
+        })
+      ]
+    }),
+    jsx("div", { className: "p-4 overflow-x-auto", children:
+      stages.length === 0
+        ? jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "Add pipeline stages first." })
+        : jsx("table", { className: "w-full min-w-[520px] text-sm", children:
+            jsxs(Fragment, { children: [
+              jsx("thead", { children:
+                jsx("tr", { className: "text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-b border-gray-100", children: [
+                  jsx("th", { className: "pb-2 pr-3 font-semibold", children: "Stage" }),
+                  jsx("th", { className: "pb-2 pr-3 font-semibold w-28", children: "Deadline" }),
+                  jsx("th", { className: "pb-2 pr-3 font-semibold w-28", children: "Unit" }),
+                  jsx("th", { className: "pb-2 font-semibold w-32", children: "Summary" }),
+                  jsx("th", { className: "pb-2 font-semibold w-28 text-right", children: "No deadline" })
+                ] })
+              }),
+              jsx("tbody", { className: "divide-y divide-gray-50", children:
+                rows.map(({ stage, deadline }) => {
+                  const hasDeadline = Boolean(deadline && deadline.value);
+                  const summary = hasDeadline ? formatStageDeadlineLabel(deadline) : "—";
+                  return jsx("tr", { key: stage.id, className: "align-middle", children: [
+                    jsxs("td", { className: "py-2.5 pr-3", children: [
+                      jsx("span", { className: "font-medium text-slate-800", children: stage.label }),
+                      stage.locked && jsx(Lock, { size: 11, className: "inline ml-1.5 text-slate-400" })
+                    ] }),
+                    jsx("td", { className: "py-2.5 pr-3", children:
+                      jsx("input", {
+                        type: "number",
+                        min: 1,
+                        max: deadline?.unit === "days" ? 365 : 8760,
+                        disabled: !hasDeadline,
+                        className: "w-full max-w-[7rem] px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white disabled:bg-slate-50 disabled:text-slate-400",
+                        value: hasDeadline ? deadline.value : "",
+                        placeholder: "—",
+                        onChange: (e) => {
+                          const value = Math.max(1, Number(e.target.value) || 1);
+                          updateStageDeadline(stage.id, { value });
+                        }
+                      })
+                    }),
+                    jsx("td", { className: "py-2.5 pr-3", children:
+                      jsx("select", {
+                        disabled: !hasDeadline,
+                        className: "w-full max-w-[7rem] px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white disabled:bg-slate-50 disabled:text-slate-400",
+                        value: hasDeadline ? (deadline.unit || "hours") : "hours",
+                        onChange: (e) => updateStageDeadline(stage.id, { unit: e.target.value }),
+                        children: [
+                          jsx("option", { value: "hours", children: "Hours" }),
+                          jsx("option", { value: "days", children: "Days" })
+                        ]
+                      })
+                    }),
+                    jsx("td", { className: "py-2.5 pr-3 text-xs text-slate-500 tabular-nums", children: summary }),
+                    jsx("td", { className: "py-2.5 text-right", children:
+                      jsx("label", { className: "inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer", children: [
+                        jsx("input", {
+                          type: "checkbox",
+                          className: "rounded border-gray-300 text-indigo-600 focus:ring-indigo-500/30",
+                          checked: !hasDeadline,
+                          onChange: (e) => {
+                            if (e.target.checked) {
+                              updateStageDeadline(stage.id, null);
+                            } else {
+                              updateStageDeadline(stage.id, { value: 1, unit: "hours" });
+                            }
+                          }
+                        }),
+                        jsx("span", { children: "None" })
+                      ] })
+                    })
+                  ] }, stage.id);
+                })
+              })
+            ] })
+          })
+    })
+  ] });
+}
+
 function AccountDetailsStageSection({ stages, accountDetailsStageId, onChange }) {
   const resolvedId = normalizeAccountDetailsStageId(accountDetailsStageId, stages);
   const selectedStage = stages.find((s) => s.id === resolvedId);
@@ -1066,6 +1189,7 @@ export function DocMapping() {
   const [pipelineDocs, setPipelineDocs] = useState([]);
   const [visaDocs, setVisaDocs] = useState([]);
   const [stageTasks, setStageTasks] = useState({});
+  const [stageDeadlines, setStageDeadlines] = useState({});
   const [accountDetailsStageId, setAccountDetailsStageId] = useState(DEFAULT_ACCOUNT_DETAILS_STAGE_ID);
   const [documentNotifyDocs, setDocumentNotifyDocs] = useState([]);
   const [configLoading, setConfigLoading] = useState(false);
@@ -1099,6 +1223,7 @@ export function DocMapping() {
       const nextPipelineDocs = result.data.pipelineDocs || [];
       const nextVisaDocs = result.data.visaDocs || [];
       const nextStageTasks = result.data.stageTasks || {};
+      const nextStageDeadlines = normalizeStageDeadlinesMap(result.data.stageDeadlines, nextStages);
       const nextAccountDetailsStageId = normalizeAccountDetailsStageId(
         result.data.accountDetailsStageId,
         nextStages
@@ -1108,6 +1233,7 @@ export function DocMapping() {
       setPipelineDocs(nextPipelineDocs);
       setVisaDocs(nextVisaDocs);
       setStageTasks(nextStageTasks);
+      setStageDeadlines(nextStageDeadlines);
       setAccountDetailsStageId(nextAccountDetailsStageId);
       setDocumentNotifyDocs(nextDocumentNotifyDocs);
       setSavedSnapshot(buildDocMappingSnapshot(
@@ -1115,6 +1241,7 @@ export function DocMapping() {
         nextPipelineDocs,
         nextVisaDocs,
         nextStageTasks,
+        nextStageDeadlines,
         nextAccountDetailsStageId,
         nextDocumentNotifyDocs
       ));
@@ -1128,6 +1255,11 @@ export function DocMapping() {
 
   const flash = (msg) => { setSaveMsg(msg); setTimeout(() => setSaveMsg(""), 2500); };
 
+  useEffect(() => {
+    if (!stages.length) return;
+    setStageDeadlines((prev) => normalizeStageDeadlinesMap(prev, stages));
+  }, [stages]);
+
   const isDirty = useMemo(() => {
     if (!savedSnapshot || !selectedCountry || configLoading) return false;
     return buildDocMappingSnapshot(
@@ -1135,10 +1267,11 @@ export function DocMapping() {
       pipelineDocs,
       visaDocs,
       stageTasks,
+      stageDeadlines,
       accountDetailsStageId,
       documentNotifyDocs
     ) !== savedSnapshot;
-  }, [stages, pipelineDocs, visaDocs, stageTasks, accountDetailsStageId, documentNotifyDocs, savedSnapshot, selectedCountry, configLoading]);
+  }, [stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs, savedSnapshot, selectedCountry, configLoading]);
 
   const handleSaveAll = async () => {
     if (!selectedCountry || !isDirty) return;
@@ -1168,6 +1301,12 @@ export function DocMapping() {
       setSaving(false);
       return;
     }
+    const stageDeadlinesResult = await saveDocMappingStageDeadlines(selectedCountry, stageDeadlines);
+    if (!stageDeadlinesResult.ok) {
+      setConfigError(stageDeadlinesResult.error);
+      setSaving(false);
+      return;
+    }
     const accountDetailsResult = await saveDocMappingAccountDetailsStage(
       selectedCountry,
       accountDetailsStageId
@@ -1190,6 +1329,7 @@ export function DocMapping() {
     const nextPipelineDocs = pipelineResult.data.pipelineDocs;
     const nextVisaDocs = visaResult.data.visaDocs;
     const nextStageTasks = stageTasksResult.data.stageTasks || {};
+    const nextStageDeadlines = normalizeStageDeadlinesMap(stageDeadlinesResult.data.stageDeadlines, nextStages);
     const nextAccountDetailsStageId = normalizeAccountDetailsStageId(
       accountDetailsResult.data.accountDetailsStageId,
       nextStages
@@ -1201,6 +1341,7 @@ export function DocMapping() {
     setPipelineDocs(nextPipelineDocs);
     setVisaDocs(nextVisaDocs);
     setStageTasks(nextStageTasks);
+    setStageDeadlines(nextStageDeadlines);
     setAccountDetailsStageId(nextAccountDetailsStageId);
     setDocumentNotifyDocs(nextDocumentNotifyDocs);
     setSavedSnapshot(buildDocMappingSnapshot(
@@ -1208,6 +1349,7 @@ export function DocMapping() {
       nextPipelineDocs,
       nextVisaDocs,
       nextStageTasks,
+      nextStageDeadlines,
       nextAccountDetailsStageId,
       nextDocumentNotifyDocs
     ));
@@ -1280,6 +1422,7 @@ export function DocMapping() {
         ? jsx("div", { className: "flex items-center justify-center py-24 text-sm text-slate-400", children: "Loading configuration…" })
         : jsxs("div", { className: "space-y-6", children: [
             jsx(StageManager, { stages, onChange: setStages }),
+            jsx(StageDeadlinesSection, { stages, stageDeadlines, onChange: setStageDeadlines }),
             jsx(AccountDetailsStageSection, {
               stages,
               accountDetailsStageId,

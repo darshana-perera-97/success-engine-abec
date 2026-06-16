@@ -5,6 +5,7 @@ import { Button } from "./Button";
 import { MultiSelect } from "./MultiSelect";
 import { DatePicker } from "./DatePicker";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { getRoleDisplayName } from "../roleDisplay";
 const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, userRole, students = [], employees = [] }) => {
   const [description, setDescription] = useState("");
   const [studentId, setStudentId] = useState(student?.id || "");
@@ -76,7 +77,7 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
   const employeeOptions = employees.map((e) => ({
     value: e.id,
     label: e.name,
-    subLabel: `${e.role} \u2022 ${e.branch}`
+    subLabel: `${getRoleDisplayName(e.role)} \u2022 ${e.branch}`
   }));
   const showAssignTo = userRole === "Manager" || userRole === "Admin";
   const showRelatedStudent = !student;

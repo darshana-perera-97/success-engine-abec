@@ -1,6 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle, AlertCircle, Lock, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
+import { CheckCircle, AlertCircle, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
 import { Button } from "./Button";
 import {
   isVisaPilotUnlockedForConfig,
@@ -188,29 +188,37 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-800 mt-1", children: "Upload each required visa document before advancing to the Visa stage." })
     ] }),
     /* @__PURE__ */ jsx("div", { className: "flex flex-col gap-6", children: workflow.map((stage, index) => {
-      const isLocked = index > currentStageIndex;
       const isActive = index === currentStageIndex;
       const isCompleted = index < currentStageIndex || (index === workflow.length - 1 && stage.items.every((rawItem) => {
         const { name, required } = normalizeVisaWorkflowItem(rawItem);
         if (!required) return true;
         return visaState[name] === "Completed";
       }));
+      const stageCardClass = isCompleted
+        ? "bg-emerald-50/30 border-emerald-200"
+        : isActive
+          ? "bg-white border-nexgenai-navy shadow-md ring-1 ring-nexgenai-navy/20"
+          : "bg-white border-slate-200";
+      const stageBadgeClass = isCompleted
+        ? "bg-emerald-100 text-emerald-700"
+        : isActive
+          ? "bg-indigo-100 text-indigo-700"
+          : "bg-slate-100 text-slate-600";
       return /* @__PURE__ */ jsxs(
         "div",
         {
-          className: `relative rounded-xl border p-5 transition-all ${isLocked ? "bg-slate-50 border-slate-200 opacity-60" : isActive ? "bg-white border-nexgenai-navy shadow-md ring-1 ring-nexgenai-navy/20" : "bg-emerald-50/30 border-emerald-200"}`,
+          className: `relative rounded-xl border p-5 transition-all ${stageCardClass}`,
           children: [
             /* @__PURE__ */ jsx("div", { className: "flex items-start justify-between mb-4", children: /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mb-1", children: [
-                /* @__PURE__ */ jsxs("span", { className: `text-xs font-bold px-2 py-0.5 rounded-full ${isLocked ? "bg-slate-200 text-slate-500" : isActive ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"}`, children: [
+                /* @__PURE__ */ jsxs("span", { className: `text-xs font-bold px-2 py-0.5 rounded-full ${stageBadgeClass}`, children: [
                   "STAGE ",
                   index + 1
                 ] }),
-                isLocked && /* @__PURE__ */ jsx(Lock, { size: 14, className: "text-slate-400" }),
                 isActive && /* @__PURE__ */ jsx(Unlock, { size: 14, className: "text-indigo-500" }),
                 isCompleted && /* @__PURE__ */ jsx(CheckCircle, { size: 14, className: "text-emerald-500" })
               ] }),
-              /* @__PURE__ */ jsx("h3", { className: `font-bold ${isLocked ? "text-slate-500" : "text-slate-800"}`, children: stage.name }),
+              /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-800", children: stage.name }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: stage.description })
             ] }) }),
             /* @__PURE__ */ jsx("div", { className: "space-y-3 mt-6", children: stage.items.map((rawItem) => {
@@ -222,14 +230,14 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
               return /* @__PURE__ */ jsx(
                 "div",
                 {
-                  className: `space-y-3 p-3 rounded-lg border ${isLocked ? "border-slate-200 bg-slate-100/50" : itemCompleted ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white"}`,
+                  className: `space-y-3 p-3 rounded-lg border ${itemCompleted ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white"}`,
                   children: [
                     /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
                       /* @__PURE__ */ jsxs(
                         "div",
                         {
-                          className: `flex items-center gap-3 min-w-0 ${canToggleVisaItems && !isLocked ? "cursor-pointer" : ""}`,
-                          onClick: () => canToggleVisaItems && !isLocked && handleToggleItem(item),
+                          className: `flex items-center gap-3 min-w-0 ${canToggleVisaItems ? "cursor-pointer" : ""}`,
+                          onClick: () => canToggleVisaItems && handleToggleItem(item),
                           children: [
                             /* @__PURE__ */ jsx("div", { className: `flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center ${itemCompleted ? "bg-emerald-500 border-emerald-600" : "border-slate-300 bg-slate-50"}`, children: itemCompleted && /* @__PURE__ */ jsx(CheckCircle, { size: 12, className: "text-white" }) }),
                             /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
@@ -239,7 +247,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           ]
                         }
                       ),
-                      canUploadVisaDocs && (!isStudent || !isLocked) && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
+                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
                         /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
                         " Upload"
                       ] })

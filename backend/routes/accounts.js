@@ -17,6 +17,7 @@ const {
   isStaffWelcomeEmailRole,
   staffWelcomeEmailCopy,
 } = require("../services/roles");
+const { isTeamLeadAssignableAccountRole } = require("../services/roleDisplay");
 const {
   getSmtpConfigError,
   sendCounselorWelcomeEmail,
@@ -111,7 +112,9 @@ async function handle(req, res, url) {
       }
       let linkedTeamLead = null;
       if (isCounselorRole(role) && teamLeadId) {
-        linkedTeamLead = users.find((u) => String(u.id || "") === teamLeadId && String(u.role || "") === "Team Lead");
+        linkedTeamLead = users.find(
+          (u) => String(u.id || "") === teamLeadId && isTeamLeadAssignableAccountRole(u.role)
+        );
         if (!linkedTeamLead) {
           sendJson(res, 400, { ok: false, error: "Selected Team Lead is invalid." });
           return true;
@@ -227,7 +230,9 @@ async function handle(req, res, url) {
         return true;
       }
 
-      const teamLead = users.find((u) => String(u.id || "") === teamLeadId && String(u.role || "") === "Team Lead");
+      const teamLead = users.find(
+        (u) => String(u.id || "") === teamLeadId && isTeamLeadAssignableAccountRole(u.role)
+      );
       if (!teamLead) {
         sendJson(res, 400, { ok: false, error: "Selected Team Lead is invalid." });
         return true;

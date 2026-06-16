@@ -1,5 +1,8 @@
 // DS company branding for backend emails, WhatsApp, and AI prompts.
 module.exports = {
+  ROLE_DISPLAY_NAMES: {
+    Manager: "Team Lead",
+  },
   COMPANY_NAME: "DS",
   COMPANY_SHORT_NAME: "DS",
   PRODUCT_TAGLINE: "The Success Engine",

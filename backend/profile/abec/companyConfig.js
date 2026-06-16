@@ -1,5 +1,8 @@
 // ABEC Premier company branding for backend emails, WhatsApp, and AI prompts.
 module.exports = {
+  ROLE_DISPLAY_NAMES: {
+    Manager: "Manager Level",
+  },
   COMPANY_NAME: "ABEC Premier",
   COMPANY_SHORT_NAME: "ABEC",
   PRODUCT_TAGLINE: "The Success Engine",

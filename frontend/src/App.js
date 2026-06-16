@@ -43,6 +43,7 @@ import {
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "./roles";
+import { getRoleDisplayName } from "./roleDisplay";
 import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "./apiConfig";
 import {
   buildBranchCounselorIdentitySet,
@@ -107,7 +108,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
-  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false });
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -333,7 +334,7 @@ function App({ initialView = "dashboard" }) {
       };
     } else {
       return {
-        id: authenticatedUser?.id || "ADMIN",
+        id: authenticatedUser?.id || "ADM001",
         name: authenticatedUser?.username || toDisplayName(authenticatedUser?.email || "Admin"),
         role: "Admin",
         branch: authenticatedUser?.branch || "",
@@ -343,6 +344,7 @@ function App({ initialView = "dashboard" }) {
     }
   };
   const currentUser = getCurrentUserObject();
+  const adminChatEnabled = systemData.adminChatEnabled === true;
   const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
   /** Match pipeline scope: primary counselor, else inquiry counselor (legacy rows may only set one). */
   const effectiveAssignedCounselorKey = (student) => {
@@ -670,7 +672,10 @@ function App({ initialView = "dashboard" }) {
     addNotification,
     tryShowDesktopAssignmentNotice
   ]);
-  const pipelineEscalationsAll = useMemo(() => computePipelineEscalations(students), [students]);
+  const pipelineEscalationsAll = useMemo(
+    () => computePipelineEscalations(students, { resolveCountryConfig: resolveCountryDocConfig }),
+    [students]
+  );
   const managerScopedEscalations = useMemo(() => {
     if (currentRole !== "Manager" && currentRole !== "Admin") return [];
     if (!managerDataScope.active || !managerDataScope.branchLabel) return pipelineEscalationsAll;
@@ -1126,8 +1131,9 @@ function App({ initialView = "dashboard" }) {
   useEffect(() => {
     let cancelled = false;
     const isCounselor = isCounselorEquivalentPortalRole(currentRole);
+    const isAdminMessenger = currentRole === "Admin" && adminChatEnabled;
     const userId = String(currentUser?.id || "").trim();
-    if (!isCounselor || !userId) {
+    if ((!isCounselor && !isAdminMessenger) || !userId) {
       whatsappPollUserIdRef.current = "";
       setWhatsappConnectionStatus("disconnected");
       return;
@@ -1158,9 +1164,11 @@ function App({ initialView = "dashboard" }) {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [currentRole, currentUser?.id]);
+  }, [currentRole, currentUser?.id, adminChatEnabled]);
   useEffect(() => {
-    if (!isCounselorEquivalentPortalRole(currentRole)) return;
+    const isCounselor = isCounselorEquivalentPortalRole(currentRole);
+    const isAdminMessenger = currentRole === "Admin" && adminChatEnabled;
+    if (!isCounselor && !isAdminMessenger) return;
     const userId = String(currentUser?.id || "").trim();
     if (!userId) return;
     const tick = () => {
@@ -1185,7 +1193,7 @@ function App({ initialView = "dashboard" }) {
     tick();
     const intervalId = setInterval(tick, 4000);
     return () => clearInterval(intervalId);
-  }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification]);
+  }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification, adminChatEnabled]);
   const handleNavigate = (view, options = {}) => {
     if (view === "counselors" && currentView === "counselors") {
       setCounselorListResetSignal((prev) => prev + 1);
@@ -2214,6 +2222,11 @@ function App({ initialView = "dashboard" }) {
     setCreateTaskModalOpen(false);
   };
   const renderContent = () => {
+    if (currentView === "integration") {
+      if (isCounselorEquivalentPortalRole(currentRole) || (currentRole === "Admin" && adminChatEnabled)) {
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
+      }
+    }
     if (currentView === "messages") {
       const chatStudents =
         isCounselorEquivalentPortalRole(currentRole)
@@ -2223,7 +2236,7 @@ function App({ initialView = "dashboard" }) {
             : (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active
               ? managerScopedStudents
               : students;
-      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId });
+      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled });
     }
     if (currentView === "resume") {
       return /* @__PURE__ */ jsx(AIResumeBuilder, {
@@ -2529,7 +2542,7 @@ function App({ initialView = "dashboard" }) {
           onAccountCreated: (row) =>
             addNotification(
               "Account created",
-              `${row.role} account created for ${row.email}.`,
+              `${getRoleDisplayName(row.role)} account created for ${row.email}.`,
               "success"
             ),
           onResetPassword: (row) =>
@@ -2584,11 +2597,13 @@ function App({ initialView = "dashboard" }) {
               variant: "admin",
               onOpenStudent: openEscalationStudent
             }),
-            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate })
+            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate, wrapClassName: "mt-8" })
           ]
         });
       case "maps":
         return /* @__PURE__ */ jsx(DocMapping, {});
+      case "integration":
+        return adminChatEnabled ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable admin messaging in Settings to use Integrations." });
       case "web-forms":
         return /* @__PURE__ */ jsx(WebForms, {});
       default:
@@ -2653,8 +2668,9 @@ function App({ initialView = "dashboard" }) {
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
         pageLoading: !appDataLoaded,
-        showWhatsappNavIndicator: isCounselorEquivalentPortalRole(currentRole),
+        showWhatsappNavIndicator: isCounselorEquivalentPortalRole(currentRole) || (currentRole === "Admin" && adminChatEnabled),
         whatsappConnectionStatus,
+        adminChatEnabled,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);

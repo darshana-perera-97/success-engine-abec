@@ -15,6 +15,7 @@ import {
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "../roles";
+import { getRoleDisplayName } from "../roleDisplay";
 
 function generateTempPassword() {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -29,10 +30,11 @@ function generateTempPassword() {
 }
 
 function roleBadgeClass(role) {
-  switch (role) {
+  switch (getRoleDisplayName(role)) {
     case "Admin":
       return "bg-slate-900 text-white border-slate-800";
     case "Manager":
+    case "Manager Level":
       return "bg-indigo-50 text-indigo-800 border-indigo-200";
     case "Team Lead":
       return "bg-violet-50 text-violet-800 border-violet-200";
@@ -320,7 +322,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                             className: "px-4 py-3",
                             children: /* @__PURE__ */ jsx("span", {
                               className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${roleBadgeClass(row.role)}`,
-                              children: row.role
+                              children: getRoleDisplayName(row.role)
                             })
                           }),
                           /* @__PURE__ */ jsx("td", {
@@ -499,7 +501,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                       }),
                       children: [
                         /* @__PURE__ */ jsx("option", { value: "Admin", children: "Admin" }),
-                        /* @__PURE__ */ jsx("option", { value: "Manager", children: "Manager" }),
+                        /* @__PURE__ */ jsx("option", { value: "Manager", children: getRoleDisplayName("Manager") }),
                         /* @__PURE__ */ jsx("option", { value: "Accountant", children: "Accountant" }),
                         /* @__PURE__ */ jsx("option", { value: "Counselor", children: "Counselor" }),
                         /* @__PURE__ */ jsx("option", { value: VISA_OFFICER_ROLE, children: VISA_OFFICER_ROLE }),

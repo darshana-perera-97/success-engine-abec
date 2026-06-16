@@ -6,7 +6,7 @@ import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers"
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null }) => {
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -136,6 +136,9 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
   const getRelevantCounselorId = () => {
+    if (currentRole === "Admin" && adminChatEnabled) {
+      return String(currentUser?.id || "").trim();
+    }
     if (isCounselorEquivalentPortalRole(currentRole)) {
       return String(currentUser?.id || "").trim();
     }
@@ -259,7 +262,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       });
     }
   };
-  const isGhostMode = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
+  const isGhostMode =
+    currentRole === "Manager" ||
+    currentRole === "Team Lead" ||
+    currentRole === "Country Coordinator" ||
+    (currentRole === "Admin" && !adminChatEnabled);
   const shouldShowSenderNamesInBubbles = isGhostMode || isCounselorEquivalentPortalRole(currentRole);
   if (!isChatsLoading && conversationList.length === 0) {
     return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [

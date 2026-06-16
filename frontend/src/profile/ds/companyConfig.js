@@ -3,6 +3,10 @@ import companyFullLogo from "./assets/company-full-logo.png";
 import { resolveApiBase } from "../../resolveApiBase";
 
 // DS company branding and API configuration.
+export const ROLE_DISPLAY_NAMES = {
+  Manager: "Team Lead",
+};
+
 export const COMPANY_NAME = "DS";
 export const COMPANY_SHORT_NAME = "DS";
 export const PRODUCT_TAGLINE = "The Success Engine";

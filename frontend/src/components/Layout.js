@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { COMPANY_LOGO_ALT, COMPANY_NAME } from "../companyConfig";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { getRoleDisplayName } from "../roleDisplay";
 import {
   Users,
   LayoutDashboard,
@@ -80,7 +81,8 @@ const Layout = ({
   counselorStudentsBadge = "",
   pageLoading = false,
   showWhatsappNavIndicator = false,
-  whatsappConnectionStatus = "disconnected"
+  whatsappConnectionStatus = "disconnected",
+  adminChatEnabled = false
 }) => {
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -265,8 +267,8 @@ const Layout = ({
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
         ];
       case "Admin":
-      default:
-        return [
+      default: {
+        const adminNavItems = [
           { id: "dashboard", label: "Global Overview", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
@@ -280,6 +282,17 @@ const Layout = ({
           { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) },
           { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) }
         ];
+        if (adminChatEnabled) {
+          const messagesIndex = adminNavItems.findIndex((item) => item.id === "messages");
+          const integrationItem = { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) };
+          if (messagesIndex >= 0) {
+            adminNavItems.splice(messagesIndex, 0, integrationItem);
+          } else {
+            adminNavItems.push(integrationItem);
+          }
+        }
+        return adminNavItems;
+      }
     }
   };
   const navItems = getNavItems();
@@ -521,7 +534,7 @@ const Layout = ({
                 }
               ) }),
               /* @__PURE__ */ jsxs("div", { className: "text-left hidden md:block", children: [
-                /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-900 leading-tight", children: currentRole }),
+                /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-900 leading-tight", children: getRoleDisplayName(currentRole) }),
                 /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 leading-tight", children: userName || "Switch View" })
               ] })
             ] }) })
@@ -552,7 +565,7 @@ const Layout = ({
         profileError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: profileError }) : null,
         /* @__PURE__ */ jsxs("div", { className: "space-y-2 text-sm", children: [
           /* @__PURE__ */ jsxs("p", { className: "text-slate-700", children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-900", children: "Name: " }), userName || "-" ] }),
-          /* @__PURE__ */ jsxs("p", { className: "text-slate-700", children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-900", children: "Role: " }), currentRole || "-" ] }),
+          /* @__PURE__ */ jsxs("p", { className: "text-slate-700", children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-900", children: "Role: " }), getRoleDisplayName(currentRole) || "-" ] }),
           isCounselorEquivalentPortalRole(currentRole) ? /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Email" }),

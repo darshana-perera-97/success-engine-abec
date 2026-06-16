@@ -1,9 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts, searchStudents } from "../authApi";
-import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock } from "lucide-react";
+import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
+import { buildStudentCounselorRemovalPatch } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
@@ -48,7 +50,10 @@ function studentTimeMs(student) {
 }
 
 function StageSlaCell({ student, now }) {
-  const display = useMemo(() => getCurrentStageSlaDisplay(student, { now }), [student, now]);
+  const display = useMemo(
+    () => getCurrentStageSlaDisplay(student, { now, resolveCountryConfig: resolveCountryDocConfig }),
+    [student, now]
+  );
   if (!display) {
     return /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "—" });
   }
@@ -234,6 +239,7 @@ const StudentList = ({
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized === "" || normalized === "unassigned" || normalized === "none" || normalized === "null";
   };
+  const canManageCounselors = userRole === "Admin" || userRole === "Manager";
   const handleAddStudent = async (newStudent) => {
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);
@@ -249,13 +255,28 @@ const StudentList = ({
     if (!onUpdateStudent) return;
     onUpdateStudent({ ...student, counselor: counselorId, counselorName: counselorName || student.counselorName || "" });
   };
-  const openManagerAssignMenu = (student) => {
+  const openCounselorManageMenu = (student) => {
     setAssigningStudentId(student.id);
     setManagerTargetCounselorId("");
   };
-  const confirmManagerAssign = (student) => {
+  const confirmCounselorAssign = (student) => {
     if (!managerTargetCounselorId) return;
     assignStudentToCounselor(student, managerTargetCounselorId);
+    setAssigningStudentId(null);
+    setManagerTargetCounselorId("");
+  };
+  const removeCounselorFromStudent = async (student) => {
+    const counselorId = String(student?.counselor || "").trim();
+    if (!counselorId || isUnassignedCounselor(counselorId)) return;
+    const counselor = counselorOptions.find((item) => String(item.id || "") === counselorId);
+    const counselorName = counselor?.name || student.counselorName || counselorId;
+    const patch = buildStudentCounselorRemovalPatch(student, counselorId);
+    if (!patch) return;
+    const confirmed = window.confirm(`Remove ${counselorName} from ${student.name || "this student"}?`);
+    if (!confirmed) return;
+    if (!onUpdateStudent) return;
+    const result = await onUpdateStudent({ ...student, ...patch });
+    if (result?.ok === false) return;
     setAssigningStudentId(null);
     setManagerTargetCounselorId("");
   };
@@ -461,13 +482,13 @@ const StudentList = ({
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(student.status)}`, children: student.status }) }),
               /* @__PURE__ */ jsxs("td", { className: "px-6 py-3 text-slate-600", children: [
                 isUnassignedCounselor(student.counselor) ? /* @__PURE__ */ jsxs("div", { className: "relative inline-block", children: [
-                  userRole === "Manager" ? /* @__PURE__ */ jsx(
+                  canManageCounselors ? /* @__PURE__ */ jsx(
                     "button",
                     {
                       type: "button",
                       onClick: (e) => {
                         e.stopPropagation();
-                        openManagerAssignMenu(student);
+                        openCounselorManageMenu(student);
                       },
                       className: "text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full text-xs font-semibold hover:bg-amber-100",
                       children: "Unassigned"
@@ -475,7 +496,19 @@ const StudentList = ({
                   ) : /* @__PURE__ */ jsx("span", { className: "text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full text-xs font-semibold", children: "Unassigned" })
                 ] }) : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
                   getCounselor(student.counselor)?.avatar ? /* @__PURE__ */ jsx("img", { src: getCounselor(student.counselor)?.avatar, alt: getCounselor(student.counselor)?.name, className: "w-5 h-5 rounded-full object-cover", referrerPolicy: "no-referrer" }) : /* @__PURE__ */ jsx("div", { className: "w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold", children: (getCounselor(student.counselor)?.name || student.counselor).charAt(0) }),
-                  getCounselor(student.counselor)?.name || student.counselor
+                  canManageCounselors ? /* @__PURE__ */ jsx(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        openCounselorManageMenu(student);
+                      },
+                      className: "text-left hover:text-indigo-700 hover:underline",
+                      title: "Manage counselor",
+                      children: getCounselor(student.counselor)?.name || student.counselor
+                    }
+                  ) : /* @__PURE__ */ jsx("span", { children: getCounselor(student.counselor)?.name || student.counselor })
                 ] })
               ] }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-right", children: /* @__PURE__ */ jsx(StageSlaCell, { student, now: stageSlaNow }) })
@@ -513,15 +546,19 @@ const StudentList = ({
     ),
     assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 bg-slate-50", children: [
-        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Assign Counselor" }),
+        /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign Counselor" : "Manage Counselor" }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
           "Student: ",
           assigningStudent.name
-        ] })
+        ] }),
+        !isUnassignedCounselor(assigningStudent.counselor) ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-600 mt-2", children: [
+          "Current: ",
+          getCounselor(assigningStudent.counselor)?.name || assigningStudent.counselorName || assigningStudent.counselor
+        ] }) : null
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
-        userRole === "Manager" ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
-          /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: "Select Counselor" }),
+        canManageCounselors ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: isUnassignedCounselor(assigningStudent.counselor) ? "Select Counselor" : "Reassign to" }),
           /* @__PURE__ */ jsxs(
             "select",
             {
@@ -530,14 +567,20 @@ const StudentList = ({
               className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:border-indigo-500",
               children: [
                 /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
-                ...counselorOptions.map((item) => /* @__PURE__ */ jsx("option", { value: item.id, children: item.name }, item.id))
+                ...counselorOptions
+                  .filter((item) => String(item.id || "") !== String(assigningStudent.counselor || ""))
+                  .map((item) => /* @__PURE__ */ jsx("option", { value: item.id, children: item.name }, item.id))
               ]
             }
           )
         ] }) : null,
         /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-2", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: () => setAssigningStudentId(null), children: "Cancel" }),
-          userRole === "Manager" ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId, onClick: () => confirmManagerAssign(assigningStudent), children: "Assign" }) : null
+          !isUnassignedCounselor(assigningStudent.counselor) && canManageCounselors ? /* @__PURE__ */ jsxs(Button, { type: "button", variant: "ghost", className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50", onClick: () => removeCounselorFromStudent(assigningStudent), children: [
+            /* @__PURE__ */ jsx(X, { size: 14, className: "mr-1.5" }),
+            "Remove"
+          ] }) : null,
+          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId, onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : "Reassign" }) : null
         ] })
       ] })
     ] }) }) : null

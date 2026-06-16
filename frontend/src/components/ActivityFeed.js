@@ -1,6 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Upload, CheckCircle, XCircle, AlertTriangle, Shield, Clock } from "lucide-react";
 import { VISA_OFFICER_COUNSELOR_ROLE, VISA_OFFICER_ROLE } from "../roles";
+import { getRoleDisplayName } from "../roleDisplay";
 
 const ActivityFeed = ({ activities, limit, showRoleBadge = true, showCounselorBadge = true, metaTimestampOnly = false }) => {
   const displayActivities = limit ? activities.slice(0, limit) : activities;
@@ -10,6 +11,7 @@ const ActivityFeed = ({ activities, limit, showRoleBadge = true, showCounselorBa
     VISA_OFFICER_COUNSELOR_ROLE,
     "Country Coordinator",
     "Manager",
+    getRoleDisplayName("Manager"),
     "Team Lead",
     "Admin",
     "Student",
@@ -76,7 +78,7 @@ const ActivityFeed = ({ activities, limit, showRoleBadge = true, showCounselorBa
         /* @__PURE__ */ jsx("div", {
             className: "flex items-center gap-2 mt-1",
             children: metaTimestampOnly ? /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: formatActivityTime(act) }) : [
-              showRoleBadge ? /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-medium", children: act.role }) : null,
+              showRoleBadge ? /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-medium", children: getRoleDisplayName(act.role) }) : null,
               showCounselorBadge && resolveCounselorName(act) ? /* @__PURE__ */ jsxs("span", {
                 className: "text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded uppercase tracking-wide font-semibold",
                 children: [resolveCounselorName(act)]

@@ -10,6 +10,7 @@ const {
   WHATSAPP_RECONNECT_INTERVAL_MS,
 } = require("../config");
 const { readUsers } = require("../models/users");
+const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
 const { readChats, writeChats } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
@@ -19,6 +20,33 @@ const { appendWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
+const ADMIN_WHATSAPP_USER_ID = "ADM001";
+
+async function resolveCounselor(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  const users = await readUsers();
+  const matched = users.find((user) => String(user.id || "") === id);
+  if (!matched) return null;
+  if (!isCounselorRole(matched.role)) return null;
+  return matched;
+}
+
+async function isAdminWhatsappMessenger(userId) {
+  const id = String(userId || "").trim();
+  if (id !== ADMIN_WHATSAPP_USER_ID) return false;
+  const systemData = await readSystemData();
+  return systemData.adminChatEnabled === true;
+}
+
+async function resolveWhatsappMessenger(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  if (await isAdminWhatsappMessenger(id)) {
+    return { id: ADMIN_WHATSAPP_USER_ID, role: "Admin" };
+  }
+  return resolveCounselor(userId);
+}
 
 function sanitizeUserIdForPath(userId) {
   return String(userId || "")
@@ -252,6 +280,12 @@ async function initializeWhatsappSessionsOnStartup() {
       if (!hasSavedSession) continue;
       await startWhatsappSession(counselorId);
     }
+    if (await isAdminWhatsappMessenger(ADMIN_WHATSAPP_USER_ID)) {
+      const hasAdminSession = await userHasSavedWhatsappSession(ADMIN_WHATSAPP_USER_ID);
+      if (hasAdminSession) {
+        await startWhatsappSession(ADMIN_WHATSAPP_USER_ID);
+      }
+    }
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);
   }
@@ -464,9 +498,9 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
 }
 
 async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content, attachment = null }) {
-  const sender = await resolveCounselor(senderId);
+  const sender = await resolveWhatsappMessenger(senderId);
   if (!sender) {
-    return { attempted: false, status: "skipped", reason: "Sender is not a counselor account." };
+    return { attempted: false, status: "skipped", reason: "Sender is not authorized for WhatsApp messaging." };
   }
   const studentId = String(receiverId || "").trim();
   if (!studentId) {
@@ -516,13 +550,13 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
 
   const senderState = ensureWhatsappState(sender.id);
   if (!senderState.client || (senderState.status !== "connected" && senderState.status !== "authenticated")) {
-    return { attempted: true, status: "failed", reason: "Counselor WhatsApp is not connected." };
+    return { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
   }
 
   const performSend = async () => {
     const live = ensureWhatsappState(sender.id);
     if (!live.client || (live.status !== "connected" && live.status !== "authenticated")) {
-      throw new Error("Counselor WhatsApp is not connected.");
+      throw new Error("WhatsApp is not connected.");
     }
     if (preparedMedia) {
       await live.client.sendMessage(chatId, preparedMedia, messageText ? { caption: messageText } : {});
@@ -577,16 +611,6 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
   }
 }
 
-async function resolveCounselor(userId) {
-  const id = String(userId || "").trim();
-  if (!id) return null;
-  const users = await readUsers();
-  const matched = users.find((user) => String(user.id || "") === id);
-  if (!matched) return null;
-  if (!isCounselorRole(matched.role)) return null;
-  return matched;
-}
-
 module.exports = {
   isSupportedWhatsappMediaMime,
   sanitizeUserIdForPath,
@@ -608,4 +632,7 @@ module.exports = {
   persistIncomingWhatsappMessage,
   deliverCounselorMessageToStudentWhatsapp,
   resolveCounselor,
+  resolveWhatsappMessenger,
+  isAdminWhatsappMessenger,
+  ADMIN_WHATSAPP_USER_ID,
 };

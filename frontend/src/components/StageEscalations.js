@@ -117,14 +117,25 @@ const StageEscalations = ({
                                 className: "px-4 py-3",
                                 children: /* @__PURE__ */ jsxs("div", {
                                   children: [
-                                    /* @__PURE__ */ jsx("p", {
-                                      className: "font-medium text-slate-900",
-                                      children: row.studentName
-                                    }),
-                                    /* @__PURE__ */ jsxs("p", {
-                                      className: "text-[11px] text-slate-400 font-mono",
-                                      children: [row.studentId]
-                                    })
+                                    typeof onOpenStudent === "function"
+                                      ? /* @__PURE__ */ jsx("button", {
+                                          type: "button",
+                                          onClick: () => onOpenStudent(row.studentId),
+                                          className:
+                                            "font-medium text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 text-left",
+                                          title: `Open ${row.studentName || row.studentId}`,
+                                          children: row.studentName || row.studentId || "—"
+                                        })
+                                      : /* @__PURE__ */ jsx("p", {
+                                          className: "font-medium text-slate-900",
+                                          children: row.studentName || row.studentId || "—"
+                                        }),
+                                    row.studentId && row.studentName && row.studentName !== row.studentId
+                                      ? /* @__PURE__ */ jsx("p", {
+                                          className: "text-[11px] text-slate-400 font-mono mt-0.5",
+                                          children: row.studentId
+                                        })
+                                      : null
                                   ]
                                 })
                               }),

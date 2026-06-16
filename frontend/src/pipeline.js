@@ -74,6 +74,130 @@ export const STAGE_CONFIG = {
 /** First-contact SLA for Inquiry (matches counselor priority list / STAGE_CONFIG.Inquiry). */
 export const INQUIRY_INTAKE_SLA_MS = 60 * 60 * 1000;
 
+/** Maximum window for scheduling a deferred inquiry call from the summary popup. */
+export const INQUIRY_SCHEDULE_CALL_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function getInquiryScheduledCallAt(student) {
+  const raw = String(student?.inquiryScheduledCallAt || "").trim();
+  return raw || null;
+}
+
+export function parseInquiryScheduledCallMs(student) {
+  const raw = getInquiryScheduledCallAt(student);
+  if (!raw) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Inquiry is deferred until the scheduled call time (no SLA countdown while on hold). */
+export function isInquiryCallOnHold(student, nowMs = Date.now()) {
+  const schedMs = parseInquiryScheduledCallMs(student);
+  if (schedMs == null) return false;
+  return schedMs > nowMs;
+}
+
+/** Scheduled call time has arrived — show on priority action items. */
+export function isInquiryScheduledCallDue(student, nowMs = Date.now()) {
+  const schedMs = parseInquiryScheduledCallMs(student);
+  if (schedMs == null) return false;
+  return schedMs <= nowMs;
+}
+
+export function formatInquiryScheduledCallLabel(iso, options = {}) {
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  const dateStyle = options.dateStyle || "medium";
+  const timeStyle = options.timeStyle || "short";
+  return new Date(ms).toLocaleString(undefined, { dateStyle, timeStyle });
+}
+
+function resolveOptionsCountryConfig(student, options = {}) {
+  if (options.countryConfig) return options.countryConfig;
+  const resolver = options.resolveCountryConfig;
+  if (typeof resolver === "function") {
+    const country = String(student?.country || "").trim();
+    if (country) return resolver(country) || null;
+  }
+  return null;
+}
+
+function findStageIdForCanonicalStage(canonicalStage, stages) {
+  if (!canonicalStage || !Array.isArray(stages) || stages.length === 0) return null;
+  const lower = String(canonicalStage).toLowerCase();
+  const exact = stages.find((s) => s.label === canonicalStage);
+  if (exact) return exact.id;
+  const caseInsensitive = stages.find(
+    (s) => String(s.label || "").toLowerCase() === lower || String(s.id || "").toLowerCase() === lower
+  );
+  if (caseInsensitive) return caseInsensitive.id;
+  const fuzzy = stages.find((s) => {
+    const label = String(s.label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const id = String(s.id || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const target = lower.replace(/[^a-z0-9]+/g, " ").trim();
+    return label === target || id === target || label.includes(target) || target.includes(label);
+  });
+  return fuzzy?.id || null;
+}
+
+function deadlineEntryToSlaMs(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const value = Number(entry.value);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  if (entry.unit === "days") return value * 24 * 60 * 60 * 1000;
+  if (entry.unit === "hours") return value * 60 * 60 * 1000;
+  return null;
+}
+
+function formatDeadlineEntryLabel(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const value = Number(entry.value);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (entry.unit === "days") return value === 1 ? "1 day" : `${value} days`;
+  return value === 1 ? "1 hour" : `${value} hours`;
+}
+
+/** Effective SLA config for a canonical pipeline stage (doc-mapping overrides STAGE_CONFIG). */
+export function getEffectiveStageSlaConfig(canonicalStage, countryConfig) {
+  const stage = String(canonicalStage || "").trim();
+  if (!stage) return null;
+  const stages = countryConfig?.stages;
+  const deadlines = countryConfig?.stageDeadlines;
+  if (Array.isArray(stages) && deadlines && typeof deadlines === "object") {
+    const stageId = findStageIdForCanonicalStage(stage, stages);
+    if (stageId && Object.prototype.hasOwnProperty.call(deadlines, stageId)) {
+      const entry = deadlines[stageId];
+      if (entry === null) return null;
+      const slaMs = deadlineEntryToSlaMs(entry);
+      if (slaMs) {
+        const fallback = STAGE_CONFIG[stage] || {};
+        return {
+          slaMs,
+          slaLabel: formatDeadlineEntryLabel(entry),
+          owners: fallback.owners || "Counsellor",
+          detail: fallback.detail || "",
+        };
+      }
+      return null;
+    }
+  }
+  const cfg = STAGE_CONFIG[stage];
+  return cfg?.slaMs ? cfg : null;
+}
+
+/**
+ * SLA anchor for inquiry intake: paused while call is scheduled in the future;
+ * after the scheduled time, the 1-hour SLA restarts from that moment.
+ */
+export function getInquiryIntakeSlaAnchor(student, nowMs = Date.now()) {
+  const schedMs = parseInquiryScheduledCallMs(student);
+  if (schedMs != null) {
+    if (schedMs > nowMs) return null;
+    return new Date(schedMs).toISOString();
+  }
+  const enteredAt = student?.stageEnteredAt || student?.createdAt;
+  return enteredAt || null;
+}
+
 /**
  * Remaining time until the 1-hour inquiry intake deadline (same wording as counselor dashboard).
  * @param {number} remainingMs deadline - now
@@ -103,9 +227,18 @@ export function formatInquiryIntakeRemainingMs(remainingMs) {
 /**
  * @param {string|number|Date|undefined|null} enteredAtIso stageEnteredAt or createdAt
  * @param {number} [nowMs]
+ * @param {string|number|Date|undefined|null} [scheduledCallAtIso] inquiryScheduledCallAt
  * @returns {{ text: string, tone: string, remainingMs: number } | null}
  */
-export function getInquiryIntakeSlaRemainingParts(enteredAtIso, nowMs = Date.now()) {
+export function getInquiryIntakeSlaRemainingParts(enteredAtIso, nowMs = Date.now(), scheduledCallAtIso = null) {
+  const schedRaw = scheduledCallAtIso != null ? String(scheduledCallAtIso).trim() : "";
+  if (schedRaw) {
+    const schedMs = new Date(schedRaw).getTime();
+    if (!Number.isNaN(schedMs)) {
+      if (schedMs > nowMs) return null;
+      enteredAtIso = schedRaw;
+    }
+  }
   if (!enteredAtIso) return null;
   const start = new Date(enteredAtIso).getTime();
   if (Number.isNaN(start)) return null;
@@ -428,9 +561,14 @@ export function getCurrentStageSlaDisplay(student, options = {}) {
   const now = typeof options.now === "number" ? options.now : Date.now();
   const stage = normalizePipelineStatus(student?.status);
   if (!PIPELINE_STEPS.includes(stage)) return null;
-  const cfg = STAGE_CONFIG[stage];
+  const countryConfig = resolveOptionsCountryConfig(student, options);
+  const cfg = getEffectiveStageSlaConfig(stage, countryConfig);
   if (!cfg?.slaMs) return null;
-  const enteredRaw = student?.stageEnteredAt || student?.createdAt;
+  if (stage === "Inquiry" && isInquiryCallOnHold(student, now)) return null;
+  const enteredRaw =
+    stage === "Inquiry"
+      ? getInquiryIntakeSlaAnchor(student, now)
+      : student?.stageEnteredAt || student?.createdAt;
   if (!enteredRaw) return null;
   const start = new Date(enteredRaw).getTime();
   if (Number.isNaN(start)) return null;
@@ -463,11 +601,12 @@ export function getNextStageSlaProjection(student, options = {}) {
   const stage = normalizePipelineStatus(student?.status);
   const idx = PIPELINE_STEPS.indexOf(stage);
   if (idx < 0 || idx >= PIPELINE_STEPS.length - 1) return null;
+  const countryConfig = resolveOptionsCountryConfig(student, options);
   let nextStage = null;
   let nextCfg = null;
   for (let i = idx + 1; i < PIPELINE_STEPS.length; i++) {
     const candidate = PIPELINE_STEPS[i];
-    const cfg = STAGE_CONFIG[candidate];
+    const cfg = getEffectiveStageSlaConfig(candidate, countryConfig);
     if (cfg?.slaMs) {
       nextStage = candidate;
       nextCfg = cfg;
@@ -475,7 +614,7 @@ export function getNextStageSlaProjection(student, options = {}) {
     }
   }
   if (!nextStage || !nextCfg) return null;
-  const curCfg = STAGE_CONFIG[stage];
+  const curCfg = getEffectiveStageSlaConfig(stage, countryConfig);
   const enteredRaw = student?.stageEnteredAt || student?.createdAt;
   if (!enteredRaw) return null;
   const start = new Date(enteredRaw).getTime();
@@ -623,9 +762,14 @@ export function computePipelineEscalations(students = [], options = {}) {
   for (const student of list) {
     const stage = normalizePipelineStatus(student.status);
     if (!PIPELINE_STEPS.includes(stage)) continue;
-    const cfg = STAGE_CONFIG[stage];
+    const countryConfig = resolveOptionsCountryConfig(student, options);
+    const cfg = getEffectiveStageSlaConfig(stage, countryConfig);
     if (!cfg || !cfg.slaMs) continue;
-    const enteredRaw = student.stageEnteredAt || student.createdAt;
+    if (stage === "Inquiry" && isInquiryCallOnHold(student, now)) continue;
+    const enteredRaw =
+      stage === "Inquiry"
+        ? getInquiryIntakeSlaAnchor(student, now)
+        : student.stageEnteredAt || student.createdAt;
     if (!enteredRaw) continue;
     const start = new Date(enteredRaw).getTime();
     if (Number.isNaN(start)) continue;

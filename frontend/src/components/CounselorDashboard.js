@@ -12,8 +12,13 @@ import {
   normalizePipelineStatus,
   computePipelineEscalations,
   computePipelineStageCounts,
-  countOpenSlaRequirementViolations
+  countOpenSlaRequirementViolations,
+  formatInquiryScheduledCallLabel,
+  getInquiryScheduledCallAt,
+  isInquiryCallOnHold,
+  isInquiryScheduledCallDue
 } from "../pipeline";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 const DAY_MS = 86400000;
 function localDayStartMs(ts) {
   const d = new Date(ts);
@@ -86,7 +91,10 @@ const CounselorDashboard = ({
     };
   }, [currentUser?.id]);
   const myStudents = students;
-  const stageEscalations = useMemo(() => computePipelineEscalations(myStudents || []), [myStudents]);
+  const stageEscalations = useMemo(
+    () => computePipelineEscalations(myStudents || [], { resolveCountryConfig: resolveCountryDocConfig }),
+    [myStudents]
+  );
   const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents, counselorIdentitySet);
   const overdueTasksCount = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
   const totalUnresolvedViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
@@ -170,6 +178,7 @@ const CounselorDashboard = ({
     }
     return set;
   }, [assignmentAlerts]);
+  const nowMs = useMemo(() => Date.now(), [clockTick]);
   const assignmentAlertsForPanel = useMemo(() => {
     const inquiryIds = new Set(
       inquiryStageStudents.map((s) => String(s.id || "").trim()).filter(Boolean)
@@ -178,15 +187,19 @@ const CounselorDashboard = ({
       const sid = String(a.studentId || "").trim();
       if (!sid) return true;
       if (a.type === "new" && inquiryIds.has(sid)) return false;
+      const sourceStudent = studentById.get(sid);
+      if (sourceStudent && isInquiryCallOnHold(sourceStudent, nowMs)) return false;
       return true;
     });
-  }, [assignmentAlerts, inquiryStageStudents]);
+  }, [assignmentAlerts, inquiryStageStudents, studentById, nowMs]);
   const inquiryStageStudentsForPanel = useMemo(() => {
     return inquiryStageStudents.filter((s) => {
       const sid = String(s.id || "").trim();
-      return !reassignedAlertStudentIds.has(sid);
+      if (reassignedAlertStudentIds.has(sid)) return false;
+      if (isInquiryCallOnHold(s, nowMs)) return false;
+      return true;
     });
-  }, [inquiryStageStudents, reassignedAlertStudentIds]);
+  }, [inquiryStageStudents, reassignedAlertStudentIds, nowMs]);
   const priorityActionList = useMemo(() => {
     const items = [];
     const intakeTasks = [];
@@ -209,7 +222,6 @@ const CounselorDashboard = ({
     const shown = total > PRIORITY_ACTION_ITEMS_LIMIT ? items.slice(0, PRIORITY_ACTION_ITEMS_LIMIT) : items;
     return { shown, total };
   }, [assignmentAlertsForPanel, inquiryStageStudentsForPanel, pendingTasks]);
-  const nowMs = useMemo(() => Date.now(), [clockTick]);
   const openInquiryPopup = (alert) => {
     const studentId = String(alert?.studentId || "").trim();
     if (!studentId) return;
@@ -424,10 +436,15 @@ const CounselorDashboard = ({
                 const sid = String(alert.studentId || "").trim();
                 const sourceStudent = sid ? studentById.get(sid) : null;
                 const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
+                const scheduledCallAt = getInquiryScheduledCallAt(sourceStudent);
+                const scheduledCallDue = sourceStudent && isInquiryScheduledCallDue(sourceStudent, nowMs);
                 const titleLine =
                   alert.type === "reassigned"
                     ? `${alert.studentName || "Student"} was reassigned to you`
                     : `${alert.studentName || "Student"} is in Inquiry stage`;
+                const subtitle = scheduledCallDue
+                  ? `Scheduled inquiry call is due${scheduledCallAt ? ` (${formatInquiryScheduledCallLabel(scheduledCallAt)})` : ""}.`
+                  : "Initiate first counselor meeting and capture inquiry details.";
                 return /* @__PURE__ */ jsxs(
                   "div",
                   {
@@ -439,10 +456,14 @@ const CounselorDashboard = ({
                         /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
                           /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-amber-900", children: titleLine }),
                           /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
-                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
-                            inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: subtitle }),
+                            !scheduledCallDue && inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
                               "Inquiry SLA ",
-                              /* @__PURE__ */ jsx(InquirySlaBadge, { startedAt: inquiryStartedAt, nowMs })
+                              /* @__PURE__ */ jsx(InquirySlaBadge, {
+                                startedAt: inquiryStartedAt,
+                                scheduledCallAt,
+                                nowMs
+                              })
                             ] })
                           ] })
                         ] })
@@ -473,6 +494,11 @@ const CounselorDashboard = ({
                 const sid = String(student.id || "").trim();
                 const sourceStudent = sid ? studentById.get(sid) || student : student;
                 const inquiryStartedAt = sourceStudent?.stageEnteredAt || sourceStudent?.createdAt;
+                const scheduledCallAt = getInquiryScheduledCallAt(sourceStudent);
+                const scheduledCallDue = isInquiryScheduledCallDue(sourceStudent, nowMs);
+                const subtitle = scheduledCallDue
+                  ? `Scheduled inquiry call is due${scheduledCallAt ? ` (${formatInquiryScheduledCallLabel(scheduledCallAt)})` : ""}.`
+                  : "Initiate first counselor meeting and capture inquiry details.";
                 return /* @__PURE__ */ jsxs(
                   "div",
                   {
@@ -487,10 +513,14 @@ const CounselorDashboard = ({
                             " is in Inquiry stage"
                           ] }),
                           /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
-                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
-                            inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                            /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: subtitle }),
+                            !scheduledCallDue && inquiryStartedAt && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
                               "Inquiry SLA ",
-                              /* @__PURE__ */ jsx(InquirySlaBadge, { startedAt: inquiryStartedAt, nowMs })
+                              /* @__PURE__ */ jsx(InquirySlaBadge, {
+                                startedAt: inquiryStartedAt,
+                                scheduledCallAt,
+                                nowMs
+                              })
                             ] })
                           ] })
                         ] })

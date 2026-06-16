@@ -24,6 +24,7 @@ export const APP_TITLE = config.APP_TITLE;
 export const COMPANY_AI_BRAND = config.COMPANY_AI_BRAND;
 export const COMPANY_LOGO_ALT = config.COMPANY_LOGO_ALT;
 export const RESUME_BUILDER_TITLE = config.RESUME_BUILDER_TITLE;
+export const ROLE_DISPLAY_NAMES = config.ROLE_DISPLAY_NAMES || {};
 export const API_BASE = config.API_BASE;
 export const DEFAULT_USER_AVATAR = config.DEFAULT_USER_AVATAR;
 export const COMPANY_FULL_LOGO = config.COMPANY_FULL_LOGO;

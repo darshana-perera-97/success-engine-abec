@@ -648,6 +648,23 @@ export async function saveDocMappingDocumentNotify(country, documentNotifyDocs) 
   }
 }
 
+export async function saveDocMappingStageDeadlines(country, stageDeadlines) {
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/stage-deadlines`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, stageDeadlines })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save stage deadlines." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
 export async function getPaymentAccounts() {
   try {
     const res = await fetch(`${API_BASE}/api/payment-accounts`);

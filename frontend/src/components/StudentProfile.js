@@ -48,24 +48,30 @@ import {
   getOpenSlaViolationsForCurrentStage,
   hasOpenSlaViolationsForCurrentStage,
   reconcileStudentSlaViolationsWithDocuments,
+  formatInquiryScheduledCallLabel,
+  getInquiryScheduledCallAt,
+  isInquiryCallOnHold,
+  isInquiryScheduledCallDue
 } from "../pipeline";
 import {
   getNextPipelineStepLabel,
   getPipelineStagesForConfig,
   collectMissingDocTypesForStage,
+  getCurrentStageCompletionSummary,
   getStudentPipelineStepIndex,
   isVisaPilotUnlockedForConfig,
   resolveStudentStageId,
   stageLabelsEquivalent,
 } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { exportStudentDocumentsZip } from "../utils/exportStudentDocumentsZip";
 import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId, getUniversityPrograms } from "../authApi";
-import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
+import { buildCounselorTeamEntriesWithFallback, buildStudentCounselorRemovalPatch } from "../studentContactHelpers";
 import {
   isCounselorEquivalentAccountRole,
   isCounselorEquivalentPortalRole,
@@ -802,6 +808,7 @@ const StudentProfile = ({
     manualError: ""
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
+  const [removingCounselorId, setRemovingCounselorId] = useState("");
   useEffect(() => {
     setLocalStudent((prev) => {
       if (!student) return student;
@@ -828,7 +835,7 @@ const StudentProfile = ({
     return () => window.clearInterval(id);
   }, []);
   const stageSlaDisplay = useMemo(
-    () => getCurrentStageSlaDisplay(localStudent, { now: Date.now() }),
+    () => getCurrentStageSlaDisplay(localStudent, { now: Date.now(), resolveCountryConfig: resolveCountryDocConfig }),
     [localStudent, stageSlaClock]
   );
   const stageSlaToneClass =
@@ -944,6 +951,15 @@ const StudentProfile = ({
     const idx = getStudentPipelineStepIndex(localStudent.status, countryStages);
     return idx >= 0 ? idx : 0;
   }, [localStudent.status, countryStages]);
+  const currentStageLabel = useMemo(() => {
+    const fromPipeline = pipelineSteps[currentStepIndex];
+    if (fromPipeline) return fromPipeline;
+    const status = String(localStudent.status || effectiveStatus || "").trim();
+    return status || "—";
+  }, [pipelineSteps, currentStepIndex, localStudent.status, effectiveStatus]);
+  const currentStageCompletion = useMemo(() => {
+    return getCurrentStageCompletionSummary(localStudent, tasks, countryDocConfig);
+  }, [localStudent, tasks, countryDocConfig]);
   const nextStep = useMemo(
     () => getNextPipelineStepLabel(localStudent.status, countryDocConfig),
     [localStudent.status, countryDocConfig]
@@ -1124,6 +1140,7 @@ const StudentProfile = ({
   const showCounselorsRosterSection =
     ["Admin", "Manager", "Team Lead", "Country Coordinator"].includes(userRole) ||
     isCounselorEquivalentPortalRole(userRole);
+  const canManageStudentCounselors = userRole === "Admin" || userRole === "Manager";
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {
@@ -1413,6 +1430,37 @@ const StudentProfile = ({
         studentName: localStudent.name,
         studentId: localStudent.id
       });
+    }
+  };
+  const handleRemoveCounselorFromStudent = async (counselorEntry) => {
+    if (!canManageStudentCounselors) return;
+    const counselorId = String(counselorEntry?.id || "").trim();
+    const counselorName = String(counselorEntry?.name || "").trim() || "Counselor";
+    if (!counselorId) return;
+    const patch = buildStudentCounselorRemovalPatch(localStudent, counselorId);
+    if (!patch) return;
+    const confirmed = window.confirm(`Remove ${counselorName} from ${localStudent.name || "this student"}?`);
+    if (!confirmed) return;
+    setRemovingCounselorId(counselorId);
+    try {
+      const updated = { ...localStudent, ...patch };
+      const result = await handleUpdateStudentLocal(updated);
+      if (result?.ok === false) {
+        onNotify?.("Remove failed", result.error || "Could not remove counselor.", "error");
+        return;
+      }
+      onAddActivity?.({
+        user: userRole,
+        role: userRole,
+        action: "removed counselor",
+        target: `${counselorName} (${localStudent.name})`,
+        type: "system",
+        studentName: localStudent.name,
+        studentId: localStudent.id
+      });
+      onNotify?.("Counselor removed", `${counselorName} was removed from this student.`, "success");
+    } finally {
+      setRemovingCounselorId("");
     }
   };
   const handleConfirmAdvancePipeline = () => {
@@ -1713,36 +1761,74 @@ const StudentProfile = ({
             ] })
           ] })
         ] }),
-        effectiveStatus === "Inquiry" && showCounselorsRosterSection && /* @__PURE__ */ jsxs("div", { className: "mb-4 p-3 bg-amber-50 border border-amber-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm", children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
-            /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0 mt-1.5" }),
-            /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
-              /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
-                localStudent.name || "Student",
-                " is in Inquiry stage"
+        effectiveStatus === "Inquiry" && showCounselorsRosterSection && (() => {
+          const scheduledCallAt = getInquiryScheduledCallAt(localStudent);
+          const inquiryOnHold = isInquiryCallOnHold(localStudent, inquiryNowMs);
+          const scheduledCallDue = isInquiryScheduledCallDue(localStudent, inquiryNowMs);
+          if (inquiryOnHold) {
+            return /* @__PURE__ */ jsxs("div", { className: "mb-4 p-3 bg-sky-50 border border-sky-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
+                /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-sky-400 shrink-0 mt-1.5" }),
+                /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-sky-900", children: [
+                    localStudent.name || "Student",
+                    " — inquiry call scheduled"
+                  ] }),
+                  /* @__PURE__ */ jsx("p", { className: "text-xs text-sky-700 mt-0.5", children: scheduledCallAt ? `Call scheduled for ${formatInquiryScheduledCallLabel(scheduledCallAt)}. Inquiry is on hold until then.` : "Inquiry call is scheduled. Inquiry is on hold until the call time." })
+                ] })
               ] }),
-              /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: "Initiate first counselor meeting and capture inquiry details." }),
-                (localStudent.stageEnteredAt || localStudent.createdAt) && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
-                  "Inquiry SLA ",
-                  /* @__PURE__ */ jsx(InquirySlaBadge, { startedAt: localStudent.stageEnteredAt || localStudent.createdAt, nowMs: inquiryNowMs })
+              /* @__PURE__ */ jsx(Button, {
+                size: "sm",
+                variant: "ghost",
+                className: "shrink-0 self-start sm:self-auto",
+                onClick: () =>
+                  setInquiryTarget({
+                    student: localStudent,
+                    assignmentAlert: null,
+                    _key: `profile-inquiry-${Date.now()}`
+                  }),
+                children: "Start Inquiry"
+              })
+            ] });
+          }
+          const subtitle = scheduledCallDue
+            ? `Scheduled inquiry call is due${scheduledCallAt ? ` (${formatInquiryScheduledCallLabel(scheduledCallAt)})` : ""}.`
+            : "Initiate first counselor meeting and capture inquiry details.";
+          return /* @__PURE__ */ jsxs("div", { className: "mb-4 p-3 bg-amber-50 border border-amber-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3 min-w-0", children: [
+              /* @__PURE__ */ jsx("div", { className: "w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0 mt-1.5" }),
+              /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-amber-900", children: [
+                  localStudent.name || "Student",
+                  " is in Inquiry stage"
+                ] }),
+                /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5", children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700", children: subtitle }),
+                  !scheduledCallDue && (localStudent.stageEnteredAt || localStudent.createdAt) && /* @__PURE__ */ jsxs("span", { className: "text-[11px] text-amber-800", children: [
+                    "Inquiry SLA ",
+                    /* @__PURE__ */ jsx(InquirySlaBadge, {
+                      startedAt: localStudent.stageEnteredAt || localStudent.createdAt,
+                      scheduledCallAt,
+                      nowMs: inquiryNowMs
+                    })
+                  ] })
                 ] })
               ] })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsx(Button, {
-            size: "sm",
-            variant: "ghost",
-            className: "shrink-0 self-start sm:self-auto",
-            onClick: () =>
-              setInquiryTarget({
-                student: localStudent,
-                assignmentAlert: null,
-                _key: `profile-inquiry-${Date.now()}`
-              }),
-            children: "Start Inquiry"
-          })
-        ] }),
+            ] }),
+            /* @__PURE__ */ jsx(Button, {
+              size: "sm",
+              variant: "ghost",
+              className: "shrink-0 self-start sm:self-auto",
+              onClick: () =>
+                setInquiryTarget({
+                  student: localStudent,
+                  assignmentAlert: null,
+                  _key: `profile-inquiry-${Date.now()}`
+                }),
+              children: "Start Inquiry"
+            })
+          ] });
+        })(),
         hasOpenSlaViolationsForCurrentStage(localStudent) && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-4 shadow-sm animate-pulse", children: [
           /* @__PURE__ */ jsx("div", { className: "bg-rose-100 p-2 rounded-xl text-rose-600", children: /* @__PURE__ */ jsx(ShieldAlert, { size: 24 }) }),
           /* @__PURE__ */ jsxs("div", { className: "flex-1", children: [
@@ -1794,15 +1880,28 @@ const StudentProfile = ({
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "mb-8 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-5", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ jsxs("p", { className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600 flex items-center gap-x-2.5 min-w-0 overflow-x-auto whitespace-nowrap", children: [
               /* @__PURE__ */ jsx("span", { children: "Staging Progress" }),
-              /* @__PURE__ */ jsx("span", { className: "mx-2.5 text-slate-400 font-normal", children: "|" }),
+              /* @__PURE__ */ jsx("span", { className: "text-slate-400 font-normal", children: "|" }),
               /* @__PURE__ */ jsxs("span", { className: "text-indigo-700", children: [
                 currentStepIndex + 1,
                 " / ",
                 pipelineSteps.length,
                 " Steps"
-              ] })
+              ] }),
+              /* @__PURE__ */ jsx("span", { className: "text-slate-400 font-normal", children: "|" }),
+              /* @__PURE__ */ jsx("span", { className: "text-nexgenai-navy normal-case", children: currentStageLabel }),
+              currentStageCompletion ? /* @__PURE__ */ jsxs(Fragment, { children: [
+                /* @__PURE__ */ jsx("span", { className: "text-slate-400 font-normal", children: "|" }),
+                /* @__PURE__ */ jsxs("span", {
+                  className: `normal-case tabular-nums ${currentStageCompletion.percent === 100 ? "text-emerald-600" : "text-amber-700"}`,
+                  title: `${currentStageCompletion.completed} of ${currentStageCompletion.total} items complete`,
+                  children: [
+                    currentStageCompletion.percent,
+                    "%"
+                  ]
+                })
+              ] }) : null
             ] }),
             /* @__PURE__ */ jsx("nav", { className: `mt-3 sm:mt-4 grid grid-cols-3 ${pipelineGridSmClass} gap-1.5 sm:gap-2 min-w-0`, "aria-label": "Pipeline stages", children: pipelineSteps.map((step, idx) => {
               const isCompleted = idx < currentStepIndex;
@@ -1829,13 +1928,7 @@ const StudentProfile = ({
                 ]
               }
             )
-          ] }) : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
-            /* @__PURE__ */ jsx("div", { className: "w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0", children: /* @__PURE__ */ jsx(CheckCircle, { size: 20 }) }),
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("p", { className: "text-xs font-bold text-slate-800", children: userRole === "Student" ? "Current Stage" : "Pipeline Completed" }),
-              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500", children: localStudent.status })
-            ] })
-          ] })
+          ] }) : null
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex-1 grid grid-cols-12 gap-6 min-h-0", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-8 flex flex-col min-w-0", children: [
@@ -1853,7 +1946,13 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole, highlightTaskId, onNavigateToTask }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
-            showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, { student: localStudent, employees }),
+            showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
+              student: localStudent,
+              employees,
+              canRemoveCounselor: canManageStudentCounselors,
+              onRemoveCounselor: handleRemoveCounselorFromStudent,
+              removingCounselorId
+            }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
             /* @__PURE__ */ jsx(MeetingNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole })
           ] })

@@ -51,11 +51,55 @@ function defaultDocumentNotifyDocs() {
   return [{ id: "dn-offer-letter", docName: "Offer Letter", source: "pipeline" }];
 }
 
+/** Default SLA durations (hours/days) keyed by default stage id — mirrors frontend STAGE_CONFIG. */
+const DEFAULT_STAGE_DEADLINE_BY_ID = {
+  inquiry: { value: 1, unit: "hours" },
+  application: { value: 24, unit: "hours" },
+  documentation: { value: 7, unit: "days" },
+  visa: { value: 30, unit: "days" },
+};
+
+function buildDefaultStageDeadlines(stages) {
+  const out = {};
+  for (const stage of Array.isArray(stages) ? stages : defaultStagesCopy()) {
+    const id = String(stage?.id || "").trim();
+    if (!id) continue;
+    out[id] = DEFAULT_STAGE_DEADLINE_BY_ID[id] ? { ...DEFAULT_STAGE_DEADLINE_BY_ID[id] } : null;
+  }
+  return out;
+}
+
+/** @returns {Record<string, {value:number,unit:'hours'|'days'}|null>} */
+function normalizeStageDeadlines(raw, stages) {
+  const defaults = buildDefaultStageDeadlines(stages);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return defaults;
+  const out = { ...defaults };
+  for (const stage of Array.isArray(stages) ? stages : defaultStagesCopy()) {
+    const id = String(stage?.id || "").trim();
+    if (!id || !(id in raw)) continue;
+    const entry = raw[id];
+    if (entry === null) {
+      out[id] = null;
+      continue;
+    }
+    const value = Number(entry?.value);
+    const unit = entry?.unit === "days" ? "days" : entry?.unit === "hours" ? "hours" : null;
+    if (!Number.isFinite(value) || value <= 0 || !unit) {
+      out[id] = null;
+      continue;
+    }
+    const max = unit === "days" ? 365 : 8760;
+    out[id] = { value: Math.min(max, Math.max(1, Math.round(value))), unit };
+  }
+  return out;
+}
+
 function emptyDocConfig() {
   return {
     pipelineDocs: defaultPipelineDocs(),
     visaDocs: [],
     stageTasks: {},
+    stageDeadlines: {},
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
     documentNotifyDocs: defaultDocumentNotifyDocs(),
   };
@@ -193,6 +237,8 @@ module.exports = {
   ensureDefaultPipelineDocs,
   normalizeDocumentNotifyDocs,
   defaultDocumentNotifyDocs,
+  normalizeStageDeadlines,
+  buildDefaultStageDeadlines,
   DEFAULT_STAGES,
   DEFAULT_PIPELINE_DOC,
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,

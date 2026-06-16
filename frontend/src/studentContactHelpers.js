@@ -61,6 +61,40 @@ export function buildCounselorTeamEntries(student, employees) {
   });
 }
 
+function isAssignedCounselorId(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized !== "" && normalized !== "unassigned" && normalized !== "none" && normalized !== "null";
+}
+
+/**
+ * Build a partial student update that unlinks a counselor from all roles on the record.
+ */
+export function buildStudentCounselorRemovalPatch(student, counselorId) {
+  const id = String(counselorId || "").trim();
+  if (!id || !isAssignedCounselorId(id)) return null;
+
+  const patch = {};
+  const inquiry = String(student?.inquiryCounselorId || "").trim();
+  const primary = String(student?.counselor || "").trim();
+  const history = Array.isArray(student?.counselorHistory)
+    ? student.counselorHistory.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : [];
+
+  if (inquiry === id) {
+    patch.inquiryCounselorId = "";
+  }
+  if (primary === id) {
+    patch.counselor = "Unassigned";
+    patch.counselorName = "";
+  }
+  const nextHistory = history.filter((entry) => entry !== id);
+  if (nextHistory.length !== history.length) {
+    patch.counselorHistory = nextHistory;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 export function buildCounselorTeamEntriesWithFallback(student, employees) {
   const built = buildCounselorTeamEntries(student, employees);
   if (built.length > 0) return built;

@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState } from "react";
-import { Globe, Save, Settings, Landmark, Trash2, Wallet } from "lucide-react";
+import { Globe, Save, Settings, Landmark, Trash2, Wallet, MessageSquare } from "lucide-react";
 import { Button } from "./Button";
 import { createCountry, deleteCountry, getCountries, createPaymentAccount, deletePaymentAccount, getPaymentAccounts } from "../authApi";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
@@ -45,10 +45,13 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     currency: "LKR",
     notes: ""
   });
-  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false });
   const [financeError, setFinanceError] = useState("");
   const [financeSuccess, setFinanceSuccess] = useState("");
   const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [chatSuccess, setChatSuccess] = useState("");
+  const [isSavingChatSettings, setIsSavingChatSettings] = useState(false);
 
   const loadCountries = async () => {
     try {
@@ -93,7 +96,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   useEffect(() => {
     if (!systemData) return;
     setFinanceForm({
-      counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true
+      counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
+      adminChatEnabled: systemData.adminChatEnabled === true
     });
   }, [systemData]);
 
@@ -260,6 +264,49 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         children: [
           /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
           "Save finance settings"
+        ]
+      }) })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsx(MessageSquare, { size: 18, className: "text-slate-600" }),
+        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Admin messaging" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Allow the admin account to send WhatsApp messages to students from Omni-Channel and connect a dedicated WhatsApp number under Integrations." }),
+      chatError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 w-full", children: chatError }) : null,
+      chatSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 w-full", children: chatSuccess }) : null,
+      /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.adminChatEnabled,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, adminChatEnabled: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Enable admin chat & WhatsApp" }),
+          "When enabled, admin can reply in Omni-Channel (not read-only), the Integrations page appears in the sidebar, and outbound messages use the admin WhatsApp connection. Student threads stay in one conversation view alongside counselor messages."
+        ] })
+      ] }) }),
+      /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
+        type: "button",
+        isLoading: isSavingChatSettings,
+        onClick: async () => {
+          setChatError("");
+          setChatSuccess("");
+          setIsSavingChatSettings(true);
+          const result = await onSaveSystemData?.({
+            adminChatEnabled: financeForm.adminChatEnabled
+          });
+          setIsSavingChatSettings(false);
+          if (!result?.ok) {
+            setChatError(result?.error || "Failed to save messaging settings.");
+            return;
+          }
+          setChatSuccess("Admin messaging settings saved.");
+        },
+        children: [
+          /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
+          "Save messaging settings"
         ]
       }) })
     ] }),

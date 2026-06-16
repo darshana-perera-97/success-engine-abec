@@ -3,6 +3,10 @@ import companyFullLogo from "./assets/company-full-logo.png";
 import { resolveApiBase } from "../../resolveApiBase";
 
 // hSenid company branding and API configuration.
+export const ROLE_DISPLAY_NAMES = {
+  Manager: "Manager Level",
+};
+
 export const COMPANY_NAME = "hSenid";
 export const COMPANY_SHORT_NAME = "hSenid";
 export const PRODUCT_TAGLINE = "The Success Engine";

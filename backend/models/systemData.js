@@ -6,6 +6,7 @@ function normalizeSystemData(input) {
   const src = input && typeof input === "object" ? input : {};
   return {
     counselorCanAcceptPayments: src.counselorCanAcceptPayments === true,
+    adminChatEnabled: src.adminChatEnabled === true,
   };
 }
 

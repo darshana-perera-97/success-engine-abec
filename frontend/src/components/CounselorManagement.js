@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from "react";
 import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
 import { getAccounts, getBranches, getInvoices } from "../authApi";
 import { isCounselorEquivalentAccountRole } from "../roles";
+import { getRoleDisplayName, isTeamLeadAssignableAccountRole } from "../roleDisplay";
 import {
   Users,
   TrendingUp,
@@ -26,6 +27,7 @@ import {
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
 import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   XAxis,
@@ -69,7 +71,10 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const [invoices, setInvoices] = useState([]);
   const [pageLoads, setPageLoads] = useState({ accounts: false, branches: false, invoices: false });
   const counselorPageReady = pageLoads.accounts && pageLoads.branches && pageLoads.invoices;
-  const teamLeadOptions = useMemo(() => accounts.filter((a) => String(a.role || "") === "Team Lead"), [accounts]);
+  const teamLeadOptions = useMemo(
+    () => accounts.filter((a) => isTeamLeadAssignableAccountRole(a.role)),
+    [accounts]
+  );
   useEffect(() => {
     const loadAccounts = async () => {
       try {
@@ -187,7 +192,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           (t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t))
       ).length;
       const slaViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
-      const stageSlaBreaches = computePipelineEscalations(myStudents).length;
+      const stageSlaBreaches = computePipelineEscalations(myStudents, { resolveCountryConfig: resolveCountryDocConfig }).length;
       const maxCapacity = 35;
       const capacityLoad = Math.round(activeStudents / maxCapacity * 100);
       const successRate = activeStudents > 0 ? Math.round(visaGranted / activeStudents * 100) : 0;
@@ -691,7 +696,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200", children: c.avatar ? /* @__PURE__ */ jsx("img", { src: c.avatar, alt: c.name, className: "w-full h-full object-cover rounded-full", referrerPolicy: "no-referrer" }) : c.name.charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [
             /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-900", children: c.name }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: c.role })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: getRoleDisplayName(c.role) })
           ] })
         ] }) }),
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4 hidden md:table-cell text-slate-600", children: c.branch }),

@@ -3,7 +3,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 import { getBranches, getCountries, moveStudentToRequests } from "../authApi";
-import { getInquiryIntakeSlaRemainingParts, normalizePipelineStatus } from "../pipeline";
+import { getInquiryIntakeSlaRemainingParts, INQUIRY_SCHEDULE_CALL_MAX_MS, normalizePipelineStatus } from "../pipeline";
 import {
   examResultsRowsFromStudent,
   InquiryIntakeForm,
@@ -12,8 +12,8 @@ import {
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
 
-export function InquirySlaBadge({ startedAt, nowMs }) {
-  const meta = getInquiryIntakeSlaRemainingParts(startedAt, nowMs);
+export function InquirySlaBadge({ startedAt, scheduledCallAt, nowMs }) {
+  const meta = getInquiryIntakeSlaRemainingParts(startedAt, nowMs, scheduledCallAt);
   if (!meta) return null;
   const toneClass =
     meta.tone === "overdue"
@@ -24,6 +24,24 @@ export function InquirySlaBadge({ startedAt, nowMs }) {
           ? "text-amber-600 font-medium"
           : "text-emerald-700 font-medium";
   return /* @__PURE__ */ jsx("span", { className: `text-xs tabular-nums ${toneClass}`, children: meta.text });
+}
+
+function toDatetimeLocalValue(date) {
+  const d = new Date(date);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function getDefaultScheduleCallValue() {
+  const next = new Date(Date.now() + 60 * 60 * 1000);
+  next.setSeconds(0, 0);
+  return toDatetimeLocalValue(next);
+}
+
+function getScheduleCallBounds() {
+  const now = new Date();
+  const max = new Date(now.getTime() + INQUIRY_SCHEDULE_CALL_MAX_MS);
+  return { min: toDatetimeLocalValue(now), max: toDatetimeLocalValue(max) };
 }
 
 const InquiryCaptureFlowModals = ({
@@ -64,6 +82,7 @@ const InquiryCaptureFlowModals = ({
   const [summaryAction, setSummaryAction] = useState("meeting-note");
   const [summaryNote, setSummaryNote] = useState("");
   const [summaryBranch, setSummaryBranch] = useState("");
+  const [summaryScheduledAt, setSummaryScheduledAt] = useState("");
   const [isSavingSummary, setIsSavingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState("");
   const [dismissAlertId, setDismissAlertId] = useState(null);
@@ -163,6 +182,7 @@ const InquiryCaptureFlowModals = ({
       setSummaryAction("meeting-note");
       setSummaryNote("");
       setSummaryBranch(updatedStudent.nearestOffice || updatedStudent.branch || offices[0] || "");
+      setSummaryScheduledAt(getDefaultScheduleCallValue());
       setSummaryError("");
       setInquiryOpen(false);
       setSummaryOpen(true);
@@ -204,6 +224,7 @@ const InquiryCaptureFlowModals = ({
     const merged = {
       ...summaryStudent,
       meetingNotes: [noteEntry, ...existingNotes],
+      inquiryScheduledCallAt: "",
       ...(normalizePipelineStatus(summaryStudent.status) === "Inquiry"
         ? { status: "Registration" }
         : {})
@@ -232,6 +253,41 @@ const InquiryCaptureFlowModals = ({
           return;
         }
         onSelectStudent?.(result.latest);
+        return;
+      }
+      if (summaryAction === "schedule-call-later") {
+        const raw = String(summaryScheduledAt || "").trim();
+        if (!raw) {
+          setSummaryError("Please choose a date and time for the call.");
+          setIsSavingSummary(false);
+          return;
+        }
+        const scheduledMs = new Date(raw).getTime();
+        const nowMs = Date.now();
+        if (Number.isNaN(scheduledMs)) {
+          setSummaryError("Invalid date and time.");
+          setIsSavingSummary(false);
+          return;
+        }
+        if (scheduledMs <= nowMs) {
+          setSummaryError("Scheduled time must be in the future.");
+          setIsSavingSummary(false);
+          return;
+        }
+        if (scheduledMs > nowMs + INQUIRY_SCHEDULE_CALL_MAX_MS) {
+          setSummaryError("Scheduled time must be within the next 7 days.");
+          setIsSavingSummary(false);
+          return;
+        }
+        const merged = {
+          ...summaryStudent,
+          inquiryScheduledCallAt: new Date(scheduledMs).toISOString()
+        };
+        await onUpdateStudent?.(merged);
+        if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
+        setSummaryOpen(false);
+        setSummaryStudent(null);
+        onClear?.();
         return;
       }
       if (summaryAction === "request-branch") {
@@ -270,6 +326,8 @@ const InquiryCaptureFlowModals = ({
   };
 
   if (!inquiryOpen && !summaryOpen) return null;
+
+  const scheduleCallBounds = getScheduleCallBounds();
 
   return /* @__PURE__ */ jsxs(Fragment, {
     children: [
@@ -385,6 +443,19 @@ const InquiryCaptureFlowModals = ({
                           /* @__PURE__ */ jsx("input", {
                             type: "radio",
                             name: "summaryAction",
+                            value: "schedule-call-later",
+                            checked: summaryAction === "schedule-call-later",
+                            onChange: (e) => setSummaryAction(e.target.value)
+                          }),
+                          "Schedule call later"
+                        ]
+                      }),
+                      /* @__PURE__ */ jsxs("label", {
+                        className: "flex items-center gap-2 text-sm text-slate-700",
+                        children: [
+                          /* @__PURE__ */ jsx("input", {
+                            type: "radio",
+                            name: "summaryAction",
                             value: "open-profile",
                             checked: summaryAction === "open-profile",
                             onChange: (e) => setSummaryAction(e.target.value)
@@ -429,6 +500,27 @@ const InquiryCaptureFlowModals = ({
                         /* @__PURE__ */ jsx("p", {
                           className: "text-xs text-slate-500 mt-1",
                           children: "Student will be moved to requested students list for the selected branch."
+                        })
+                      ]
+                    }),
+                  summaryAction === "schedule-call-later" &&
+                    /* @__PURE__ */ jsxs("div", {
+                      children: [
+                        /* @__PURE__ */ jsx("label", {
+                          className: "text-xs font-semibold text-slate-700 mb-1 block",
+                          children: "Call date and time"
+                        }),
+                        /* @__PURE__ */ jsx("input", {
+                          type: "datetime-local",
+                          className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+                          value: summaryScheduledAt,
+                          min: scheduleCallBounds.min,
+                          max: scheduleCallBounds.max,
+                          onChange: (e) => setSummaryScheduledAt(e.target.value)
+                        }),
+                        /* @__PURE__ */ jsx("p", {
+                          className: "text-xs text-slate-500 mt-1",
+                          children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold."
                         })
                       ]
                     }),

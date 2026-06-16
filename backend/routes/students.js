@@ -416,20 +416,50 @@ async function handle(req, res, url) {
         merged.phone = normalizedPhone;
       }
       const nextCounselor = String(merged?.counselor || "").trim();
-      if (previousCounselor && nextCounselor && previousCounselor !== nextCounselor) {
+      const nextCounselorNorm = nextCounselor.toLowerCase();
+      const prevCounselorNorm = previousCounselor.toLowerCase();
+      if (previousCounselor && previousCounselor !== nextCounselor) {
         const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
         const normalized = history.map((id) => String(id || "").trim()).filter(Boolean);
-        normalized.push(previousCounselor);
-        merged.counselorHistory = Array.from(new Set(normalized));
-        logEvent("student", "counselor transferred", {
+        if (
+          nextCounselor &&
+          nextCounselorNorm !== "unassigned" &&
+          nextCounselorNorm !== "none" &&
+          nextCounselorNorm !== "null"
+        ) {
+          normalized.push(previousCounselor);
+          merged.counselorHistory = Array.from(new Set(normalized));
+          logEvent("student", "counselor transferred", {
+            studentId,
+            from: previousCounselor,
+            to: nextCounselor,
+          });
+        } else if (
+          prevCounselorNorm &&
+          prevCounselorNorm !== "unassigned" &&
+          prevCounselorNorm !== "none" &&
+          prevCounselorNorm !== "null"
+        ) {
+          logEvent("student", "counselor removed", {
+            studentId,
+            counselorId: previousCounselor,
+          });
+        }
+      }
+      const previousInquiryCounselor = String(previous?.inquiryCounselorId || "").trim();
+      const nextInquiryCounselor = String(merged?.inquiryCounselorId || "").trim();
+      if (
+        previousInquiryCounselor &&
+        previousInquiryCounselor !== nextInquiryCounselor &&
+        !nextInquiryCounselor
+      ) {
+        logEvent("student", "inquiry counselor removed", {
           studentId,
-          from: previousCounselor,
-          to: nextCounselor,
+          counselorId: previousInquiryCounselor,
         });
       }
 
       let counselorAssignmentWhatsapp = null;
-      const prevCounselorNorm = previousCounselor.toLowerCase();
       const isNewCounselorAssignment =
         nextCounselor &&
         nextCounselor.toLowerCase() !== "unassigned" &&

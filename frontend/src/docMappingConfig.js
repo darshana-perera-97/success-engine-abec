@@ -1,5 +1,5 @@
 import { COUNTRY_CHECKLISTS } from "./constants";
-import { PIPELINE_STEPS, normalizePipelineStatus, getVisibleCountryChecklistStages } from "./pipeline";
+import { PIPELINE_STEPS, STAGE_CONFIG, normalizePipelineStatus, getVisibleCountryChecklistStages } from "./pipeline";
 import { VISA_WORKFLOWS } from "./visaWorkflows";
 
 const DEFAULT_STAGE_ROWS = [
@@ -23,6 +23,7 @@ export function buildCountryDocConfig(apiData) {
   const pipelineDocs = Array.isArray(apiData?.pipelineDocs) ? apiData.pipelineDocs : [];
   const visaDocs = Array.isArray(apiData?.visaDocs) ? apiData.visaDocs : [];
   const stageTasks = normalizeStageTasksMap(apiData?.stageTasks);
+  const stageDeadlines = normalizeStageDeadlinesMap(apiData?.stageDeadlines, stages);
   const accountDetailsStageId = normalizeAccountDetailsStageId(apiData?.accountDetailsStageId, stages);
   const documentNotifyDocs = normalizeDocumentNotifyDocs(apiData?.documentNotifyDocs);
   return {
@@ -33,6 +34,7 @@ export function buildCountryDocConfig(apiData) {
     pipelineDocs,
     visaDocs,
     stageTasks,
+    stageDeadlines,
     accountDetailsStageId,
     documentNotifyDocs,
   };
@@ -116,6 +118,81 @@ export function getConfiguredStageTasks(stageId, countryConfig) {
   if (!key) return [];
   const map = countryConfig?.stageTasks;
   return Array.isArray(map?.[key]) ? map[key] : [];
+}
+
+const DEFAULT_STAGE_DEADLINE_BY_ID = {
+  inquiry: { value: 1, unit: "hours" },
+  application: { value: 24, unit: "hours" },
+  documentation: { value: 7, unit: "days" },
+  visa: { value: 30, unit: "days" },
+};
+
+function slaMsToDeadlineEntry(slaMs) {
+  const ms = Number(slaMs);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const hourMs = 60 * 60 * 1000;
+  if (ms % dayMs === 0) return { value: ms / dayMs, unit: "days" };
+  return { value: Math.max(1, Math.round(ms / hourMs)), unit: "hours" };
+}
+
+/** Build default stage SLA deadlines from pipeline stages and STAGE_CONFIG. */
+export function buildDefaultStageDeadlines(stages) {
+  const out = {};
+  for (const stage of Array.isArray(stages) ? stages : DEFAULT_STAGE_ROWS) {
+    const id = String(stage?.id || "").trim();
+    if (!id) continue;
+    if (DEFAULT_STAGE_DEADLINE_BY_ID[id]) {
+      out[id] = { ...DEFAULT_STAGE_DEADLINE_BY_ID[id] };
+      continue;
+    }
+    const canonical = normalizePipelineStatus(stage?.label || stage?.id || "");
+    const cfg = STAGE_CONFIG[canonical] || STAGE_CONFIG[stage?.label];
+    out[id] = cfg?.slaMs ? slaMsToDeadlineEntry(cfg.slaMs) : null;
+  }
+  return out;
+}
+
+/** @returns {Record<string, {value:number,unit:'hours'|'days'}|null>} */
+export function normalizeStageDeadlinesMap(raw, stages) {
+  const defaults = buildDefaultStageDeadlines(stages);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return defaults;
+  const out = { ...defaults };
+  for (const stage of Array.isArray(stages) ? stages : DEFAULT_STAGE_ROWS) {
+    const id = String(stage?.id || "").trim();
+    if (!id || !(id in raw)) continue;
+    const entry = raw[id];
+    if (entry === null) {
+      out[id] = null;
+      continue;
+    }
+    const value = Number(entry?.value);
+    const unit = entry?.unit === "days" ? "days" : entry?.unit === "hours" ? "hours" : null;
+    if (!Number.isFinite(value) || value <= 0 || !unit) {
+      out[id] = null;
+      continue;
+    }
+    const max = unit === "days" ? 365 : 8760;
+    out[id] = { value: Math.min(max, Math.max(1, Math.round(value))), unit };
+  }
+  return out;
+}
+
+export function deadlineEntryToMs(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const value = Number(entry.value);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  if (entry.unit === "days") return value * 24 * 60 * 60 * 1000;
+  if (entry.unit === "hours") return value * 60 * 60 * 1000;
+  return null;
+}
+
+export function formatStageDeadlineLabel(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const value = Number(entry.value);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (entry.unit === "days") return value === 1 ? "1 day" : `${value} days`;
+  return value === 1 ? "1 hour" : `${value} hours`;
 }
 
 export function buildStageTransitionTaskKey(studentId, stageId, configTaskId) {
@@ -234,6 +311,7 @@ export function buildFallbackCountryDocConfig(country) {
     pipelineDocs: [],
     visaDocs: [],
     stageTasks: {},
+    stageDeadlines: buildDefaultStageDeadlines(DEFAULT_STAGE_ROWS),
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
     documentNotifyDocs: normalizeDocumentNotifyDocs(undefined),
   };
@@ -602,6 +680,154 @@ export function studentHasUploadedDocType(studentDocs, docType) {
       String(d?.status || "").trim() !== "Rejected"
     );
   });
+}
+
+function studentHasVerifiedDocType(studentDocs, docType) {
+  return (studentDocs || []).some((d) => {
+    return (
+      documentTypeMatchesRequirement(d?.type, docType) &&
+      String(d?.status || "").trim().toLowerCase() === "verified"
+    );
+  });
+}
+
+function isStageLinkedTask(task, studentId, stageId, stageLabel) {
+  const tid = String(task?.student_id || task?.studentId || "").trim();
+  if (!studentId || tid !== studentId) return false;
+  const sourceKey = String(task?.stageSourceKey || "").trim();
+  if (sourceKey.startsWith("missing-doc:")) return false;
+  const taskStageId = String(task?.stageId || "").trim();
+  if (taskStageId && taskStageId === stageId) return true;
+  const taskStageLabel = String(task?.stageLabel || "").trim();
+  if (taskStageLabel && stageLabelsEquivalent(taskStageLabel, stageLabel)) return true;
+  if (sourceKey.startsWith("stage-task:")) {
+    const parts = sourceKey.split(":");
+    return parts[2] === stageId;
+  }
+  return false;
+}
+
+function isConfiguredStageTaskCompleted(configTask, stageTasks, studentId, stageId) {
+  const configId = String(configTask?.id || "").trim();
+  const title = String(configTask?.title || "").trim();
+  const expectedKey = buildStageTransitionTaskKey(studentId, stageId, configId);
+  const match = stageTasks.find((task) => {
+    const sourceKey = String(task?.stageSourceKey || "").trim();
+    if (sourceKey && sourceKey === expectedKey) return true;
+    const taskTitle = String(task?.task || "").trim();
+    return title && taskTitle === title;
+  });
+  return String(match?.status || "").trim().toLowerCase() === "completed";
+}
+
+function isStageRequirementDocSatisfied({ group, docType }, student, studentDocs, stageId, countryConfig) {
+  if (studentHasVerifiedDocType(studentDocs, docType)) return true;
+  if (
+    isOfferLetterChecklistGroup(group) &&
+    documentTypeMatchesRequirement(docType, "Offer Letter") &&
+    studentHasUniversityOfferLetter(student)
+  ) {
+    return true;
+  }
+  if (stageId === "documentation") {
+    const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
+    const itemName = String(docType || "")
+      .trim()
+      .replace(new RegExp(`^${VISA_PILOT_DOC_TYPE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "")
+      .trim();
+    if (itemName && visaState[itemName] === "Completed") return true;
+  }
+  return false;
+}
+
+function collectCurrentStageDocRequirements(statusLabel, student, countryConfig, stageId) {
+  const studentDocs = Array.isArray(student?.documents) ? student.documents : [];
+  const required = getRequiredDocTypesBeforeAdvance(statusLabel, countryConfig);
+  const items = required.map((entry) => ({
+    kind: "doc",
+    satisfied: isStageRequirementDocSatisfied(entry, student, studentDocs, stageId, countryConfig),
+  }));
+
+  if (stageId === "documentation") {
+    const seen = new Set(required.map(({ docType }) => String(docType || "").trim().toLowerCase()));
+    const visaState = student?.visa && typeof student.visa === "object" ? student.visa : {};
+    for (const stage of countryConfig?.visaWorkflow || []) {
+      for (const item of stage.items || []) {
+        const { name, required: isRequired } = normalizeVisaWorkflowItem(item);
+        if (!isRequired || !name) continue;
+        const docType = `${VISA_PILOT_DOC_TYPE_PREFIX}${name}`;
+        const key = docType.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const satisfied =
+          visaState[name] === "Completed" || studentHasVerifiedDocType(studentDocs, docType);
+        items.push({ kind: "doc", satisfied });
+      }
+    }
+  }
+
+  return items;
+}
+
+function collectCurrentStageTaskRequirements(student, tasks, stageId, stageLabel, countryConfig) {
+  const studentId = String(student?.id || "").trim();
+  if (!studentId || !stageId) return [];
+
+  const stageTasks = (tasks || []).filter((task) => isStageLinkedTask(task, studentId, stageId, stageLabel));
+  const configured = getConfiguredStageTasks(stageId, countryConfig);
+  const items = [];
+  const matchedTaskIds = new Set();
+
+  for (const configTask of configured) {
+    const match = stageTasks.find((task) => {
+      const configId = String(configTask?.id || "").trim();
+      const expectedKey = buildStageTransitionTaskKey(studentId, stageId, configId);
+      const sourceKey = String(task?.stageSourceKey || "").trim();
+      if (sourceKey && sourceKey === expectedKey) return true;
+      const title = String(configTask?.title || "").trim();
+      const taskTitle = String(task?.task || "").trim();
+      return title && taskTitle === title;
+    });
+    if (match?.id != null) matchedTaskIds.add(String(match.id));
+    const satisfied = isConfiguredStageTaskCompleted(configTask, stageTasks, studentId, stageId);
+    items.push({ kind: "task", satisfied });
+  }
+
+  for (const task of stageTasks) {
+    const taskId = String(task?.id ?? "").trim();
+    if (!taskId || matchedTaskIds.has(taskId)) continue;
+    const satisfied = String(task?.status || "").trim().toLowerCase() === "completed";
+    items.push({ kind: "task", satisfied });
+  }
+
+  return items;
+}
+
+/** Verified docs and completed stage tasks for the student's current pipeline stage. */
+export function getCurrentStageCompletionSummary(student, tasks = [], countryConfig) {
+  const statusLabel = String(student?.status || "").trim();
+  if (!statusLabel) return null;
+
+  const stages = countryConfig?.stages || [];
+  const stageId = resolveStudentStageId(statusLabel, stages);
+  if (!stageId) return null;
+
+  const docItems = collectCurrentStageDocRequirements(statusLabel, student, countryConfig, stageId);
+  const taskItems = collectCurrentStageTaskRequirements(student, tasks, stageId, statusLabel, countryConfig);
+  const items = [...docItems, ...taskItems];
+  if (items.length === 0) return null;
+
+  const completed = items.filter((item) => item.satisfied).length;
+  const total = items.length;
+  return {
+    completed,
+    total,
+    percent: Math.round((completed / total) * 100),
+    docCompleted: docItems.filter((item) => item.satisfied).length,
+    docTotal: docItems.length,
+    taskCompleted: taskItems.filter((item) => item.satisfied).length,
+    taskTotal: taskItems.length,
+  };
 }
 
 function studentHasUniversityOfferLetter(student) {

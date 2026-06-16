@@ -1,10 +1,11 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useState, useRef } from "react";
-import { AlertCircle, Plus, Upload, CheckCircle, Hourglass } from "lucide-react";
+import { useEffect, useState, useRef, useMemo } from "react";
+import { AlertCircle, Plus, Upload, CheckCircle, Hourglass, Filter, X } from "lucide-react";
 import { Button } from "./Button";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskOverdueByDate } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
+import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { findTaskDocumentForSlot } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
@@ -30,7 +31,7 @@ function getTaskSlaParts(task, relatedStudent, nowMs = Date.now()) {
   const completed = String(task?.status || "").trim() === "Completed";
   if (completed) return getCalendarDueSlaParts(task);
   if (relatedStudent) {
-    const stageSla = getCurrentStageSlaDisplay(relatedStudent, { now: nowMs });
+    const stageSla = getCurrentStageSlaDisplay(relatedStudent, { now: nowMs, resolveCountryConfig: resolveCountryDocConfig });
     if (stageSla) {
       const subClass =
         stageSla.visualTone === "red"
@@ -42,6 +43,82 @@ function getTaskSlaParts(task, relatedStudent, nowMs = Date.now()) {
     }
   }
   return getCalendarDueSlaParts(task);
+}
+
+const TASK_FILTER_STATUSES = ["Pending", "In Progress", "In Review", "Completed", "Overdue"];
+const TASK_FILTER_PRIORITIES = ["High", "Medium", "Low"];
+
+const defaultTaskFilters = {
+  search: "",
+  status: "All",
+  priority: "All",
+  counselor: "All",
+  country: "All",
+  dueFrom: "",
+  dueTo: ""
+};
+
+function countActiveTaskFilters(filters) {
+  let count = 0;
+  if (String(filters.search || "").trim()) count += 1;
+  if (filters.status !== "All") count += 1;
+  if (filters.priority !== "All") count += 1;
+  if (filters.counselor !== "All") count += 1;
+  if (filters.country !== "All") count += 1;
+  if (filters.dueFrom) count += 1;
+  if (filters.dueTo) count += 1;
+  return count;
+}
+
+function taskMatchesDueDateRange(task, dueFrom, dueTo) {
+  if (!dueFrom && !dueTo) return true;
+  if (!task?.dueDate) return false;
+  const due = new Date(String(task.dueDate));
+  if (Number.isNaN(due.getTime())) return false;
+  due.setHours(0, 0, 0, 0);
+  if (dueFrom) {
+    const from = new Date(dueFrom);
+    from.setHours(0, 0, 0, 0);
+    if (due < from) return false;
+  }
+  if (dueTo) {
+    const to = new Date(dueTo);
+    to.setHours(0, 0, 0, 0);
+    if (due > to) return false;
+  }
+  return true;
+}
+
+function filterTasksByPanel(tasks, filters, { getStudentContextForTask, getStudentLabelForTask }) {
+  const search = String(filters.search || "").trim().toLowerCase();
+  return (tasks || []).filter((task) => {
+    if (search) {
+      const taskText = String(task.task || "").toLowerCase();
+      const studentLabel = getStudentLabelForTask(task, getStudentContextForTask(task)).toLowerCase();
+      if (!taskText.includes(search) && !studentLabel.includes(search)) return false;
+    }
+    if (filters.status !== "All") {
+      if (filters.status === "Overdue") {
+        if (!isTaskOverdueByDate(task)) return false;
+      } else if (String(task.status || "").trim() !== filters.status) return false;
+    }
+    if (filters.priority !== "All" && String(task.priority || "").trim() !== filters.priority) return false;
+    if (filters.counselor !== "All") {
+      const ctx = getStudentContextForTask(task);
+      const counselorId = String(ctx?.counselor || "").trim();
+      const assignees = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+      const matchesCounselor =
+        counselorId === filters.counselor ||
+        assignees.some((assignee) => String(assignee || "").trim() === filters.counselor);
+      if (!matchesCounselor) return false;
+    }
+    if (filters.country !== "All") {
+      const ctx = getStudentContextForTask(task);
+      if (String(ctx?.country || "").trim() !== filters.country) return false;
+    }
+    if (!taskMatchesDueDateRange(task, filters.dueFrom, filters.dueTo)) return false;
+    return true;
+  });
 }
 
 const TaskManager = ({
@@ -64,6 +141,8 @@ const TaskManager = ({
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showCompletedTasks, setShowCompletedTasks] = useState(true);
+  const [taskFilters, setTaskFilters] = useState(defaultTaskFilters);
+  const [taskFiltersOpen, setTaskFiltersOpen] = useState(false);
   const [slaClock, setSlaClock] = useState(() => Date.now());
   const [studentTaskUploadError, setStudentTaskUploadError] = useState("");
   const [studentTaskUploadingKey, setStudentTaskUploadingKey] = useState("");
@@ -106,7 +185,27 @@ const TaskManager = ({
     if (assignees.length === 0) return "—";
     return assignees.map((a) => getAssigneeLabel(a)).join(", ");
   };
-  const tableColSpan = userRole === "Student" ? 4 : 5;
+  const getStudentContextForTask = (task) => {
+    const sid = String(task?.student_id || task?.studentId || "").trim();
+    return (
+      (sid ? studentLookup[sid] : null) ||
+      (userRole === "Student" && student && String(student.id || "").trim() === sid ? student : null) ||
+      null
+    );
+  };
+  const getStudentLabelForTask = (task, studentContext) => {
+    if (studentContext) {
+      const label = String(studentContext.name || studentContext.email || "").trim();
+      if (label) return label;
+      const id = String(studentContext.id || "").trim();
+      if (id) return id;
+    }
+    const fromTask = String(task?.studentName || task?.student_name || "").trim();
+    if (fromTask) return fromTask;
+    const sid = String(task?.student_id || task?.studentId || "").trim();
+    return sid || "—";
+  };
+  const tableColSpan = userRole === "Student" ? 4 : 6;
   const assignedColumnHeaderClass =
     userRole === "Manager"
       ? "px-6 py-3 whitespace-nowrap hidden md:table-cell"
@@ -132,9 +231,51 @@ const TaskManager = ({
     }
     return [];
   })();
-  const filteredTasks = showCompletedTasks
+  const showTaskFilters = userRole === "Admin" || userRole === "Manager";
+  const activeTaskFilterCount = useMemo(() => countActiveTaskFilters(taskFilters), [taskFilters]);
+  const taskFilterOptions = useMemo(() => {
+    const counselorMap = new Map();
+    const countries = new Set();
+    for (const task of roleScopedTasks) {
+      const ctx = getStudentContextForTask(task);
+      if (!ctx) continue;
+      const counselorId = String(ctx.counselor || "").trim();
+      if (counselorId) {
+        counselorMap.set(counselorId, getAssigneeLabel(counselorId));
+      }
+      const country = String(ctx.country || "").trim();
+      if (country) countries.add(country);
+    }
+    return {
+      counselors: [...counselorMap.entries()]
+        .map(([id, label]) => ({ id, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      countries: [...countries].sort((a, b) => a.localeCompare(b))
+    };
+  }, [roleScopedTasks, studentLookup, employees]);
+  const completedFilteredTasks = showCompletedTasks
     ? roleScopedTasks
     : roleScopedTasks.filter((task) => String(task?.status || "").trim() !== "Completed");
+  const filteredTasks = showTaskFilters
+    ? filterTasksByPanel(completedFilteredTasks, taskFilters, {
+        getStudentContextForTask,
+        getStudentLabelForTask
+      })
+    : completedFilteredTasks;
+  const updateTaskFilter = (key, value) => {
+    setTaskFilters((prev) => ({ ...prev, [key]: value }));
+  };
+  const resetTaskFilters = () => {
+    setTaskFilters(defaultTaskFilters);
+  };
+  useEffect(() => {
+    if (!taskFiltersOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setTaskFiltersOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [taskFiltersOpen]);
   const handleStatusChange = (task, newStatus) => {
     if (String(task?.status || "") === String(newStatus || "")) return;
     const updatedTask = { ...task, status: newStatus };
@@ -219,9 +360,11 @@ const TaskManager = ({
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selectedTaskId, studentTasks]);
   const emptyTasksMessage =
-    filteredTasks.length === 0 && roleScopedTasks.length > 0 && !showCompletedTasks
-      ? "No active tasks. Turn Completed tasks on to see finished items."
-      : "No tasks found.";
+    filteredTasks.length === 0 && completedFilteredTasks.length > 0 && showTaskFilters && activeTaskFilterCount > 0
+      ? "No tasks match the current filters."
+      : filteredTasks.length === 0 && roleScopedTasks.length > 0 && !showCompletedTasks
+        ? "No active tasks. Turn Completed tasks on to see finished items."
+        : "No tasks found.";
   const studentTaskDocTasks =
     userRole === "Student" && student
       ? studentTasks.filter(
@@ -316,6 +459,27 @@ const TaskManager = ({
         })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-3 sm:gap-4 shrink-0", children: [
+        showTaskFilters &&
+          /* @__PURE__ */ jsxs(Button, {
+            type: "button",
+            variant: "outline",
+            size: "sm",
+            onClick: () => setTaskFiltersOpen(true),
+            children: /* @__PURE__ */ jsxs("span", {
+              className: "inline-flex items-center gap-1.5",
+              children: [
+                /* @__PURE__ */ jsx(Filter, { size: 14 }),
+                "Filters",
+                activeTaskFilterCount > 0
+                  ? /* @__PURE__ */ jsx("span", {
+                      className:
+                        "inline-flex min-w-[1.25rem] h-5 px-1.5 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold",
+                      children: activeTaskFilterCount
+                    })
+                  : null
+              ]
+            })
+          }),
         /* @__PURE__ */ jsxs("div", {
           className: "inline-flex items-center gap-2.5 select-none",
           children: [
@@ -351,6 +515,22 @@ const TaskManager = ({
         ] })
       ] })
     ] }),
+    showTaskFilters && activeTaskFilterCount > 0
+      ? /* @__PURE__ */ jsxs("div", {
+          className: "flex flex-wrap items-center gap-2 text-[11px] text-slate-500",
+          children: [
+            /* @__PURE__ */ jsxs("span", {
+              children: [activeTaskFilterCount, " filter", activeTaskFilterCount === 1 ? "" : "s", " active"]
+            }),
+            /* @__PURE__ */ jsx("button", {
+              type: "button",
+              className: "text-indigo-600 hover:text-indigo-800 font-medium",
+              onClick: resetTaskFilters,
+              children: "Clear all"
+            })
+          ]
+        })
+      : null,
     studentTaskDocTasks.length > 0 &&
       /* @__PURE__ */ jsxs("div", {
         className: "rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 space-y-3",
@@ -430,6 +610,10 @@ const TaskManager = ({
         /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Task" }),
           userRole !== "Student" && /* @__PURE__ */ jsx("th", {
+            className: "px-6 py-3 whitespace-nowrap min-w-[8rem]",
+            children: "Student"
+          }),
+          userRole !== "Student" && /* @__PURE__ */ jsx("th", {
             className: assignedColumnHeaderClass,
             title: "Student's counselor (case owner), or task assignees if no counselor is set on the student.",
             children: "Assigned"
@@ -444,11 +628,8 @@ const TaskManager = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: "px-6 py-10 text-center text-slate-500", children: emptyTasksMessage }) }) : studentTasks.map((task) => {
-          const sid = String(task.student_id || task.studentId || "").trim();
-          const studentContext =
-            studentLookup[sid] ||
-            (userRole === "Student" && student && String(student.id || "").trim() === sid ? student : null) ||
-            null;
+          const studentContext = getStudentContextForTask(task);
+          const studentLabel = getStudentLabelForTask(task, studentContext);
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";
           const isTaskCompleted = task.status === "Completed";
           let docStatus = "none";
@@ -466,24 +647,38 @@ const TaskManager = ({
             /* @__PURE__ */ jsx("td", { className: "px-6 py-4 min-w-[200px]", children: /* @__PURE__ */ jsxs("div", { children: [
                 /* @__PURE__ */ jsx("p", { className: `font-medium ${isTaskCompleted ? "text-slate-500 line-through" : "text-slate-900"}`, children: task.task }),
                 task.isBlocking && !isTaskCompleted && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-rose-600 font-bold uppercase tracking-wide", children: "Required" }),
-                userRole !== "Student" && studentContext && onSelectStudent && onNavigate && /* @__PURE__ */ jsx(
-                  "button",
-                  {
-                    type: "button",
-                    onClick: (e) => {
-                      e.stopPropagation();
-                      handleOpenTaskContext(task, studentContext);
-                    },
-                    className: "mt-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 underline underline-offset-2",
-                    children: "Go to related student"
-                  }
-                ),
+                userRole !== "Student" && /* @__PURE__ */ jsxs("p", { className: "mt-1 text-[11px] text-slate-600 sm:hidden", children: [
+                  /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Student:" }),
+                  " ",
+                  studentLabel
+                ] }),
                 userRole === "Manager" && /* @__PURE__ */ jsxs("p", { className: "mt-1 text-[11px] text-slate-600 md:hidden", children: [
                   /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-500", children: "Assigned:" }),
                   " ",
                   getPrimaryCounselorLabelForTask(task)
                 ] })
             ] }) }),
+            userRole !== "Student" && /* @__PURE__ */ jsx("td", {
+              className: "px-6 py-4 hidden sm:table-cell min-w-[8rem] max-w-[200px]",
+              children:
+                studentLabel === "—"
+                  ? /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: "—" })
+                  : studentContext && onSelectStudent && onNavigate
+                    ? /* @__PURE__ */ jsx(
+                        "button",
+                        {
+                          type: "button",
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            handleOpenTaskContext(task, studentContext);
+                          },
+                          className: "text-left font-medium text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 line-clamp-2",
+                          title: studentLabel,
+                          children: studentLabel
+                        }
+                      )
+                    : /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800 line-clamp-2", title: studentLabel, children: studentLabel })
+            }),
             userRole !== "Student" && /* @__PURE__ */ jsx("td", {
               className: `${assignedColumnCellClass} text-slate-800 text-sm max-w-[260px]`,
               children: (() => {
@@ -571,7 +766,194 @@ const TaskManager = ({
         students: monitoredStudents || [],
         employees
       }
-    )
+    ),
+    showTaskFilters && taskFiltersOpen
+      ? /* @__PURE__ */ jsx("div", {
+          className:
+            "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200",
+          onClick: () => setTaskFiltersOpen(false),
+          children: /* @__PURE__ */ jsxs("div", {
+            className:
+              "bg-white rounded-xl shadow-2xl w-full max-w-2xl border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto",
+            onClick: (e) => e.stopPropagation(),
+            children: [
+              /* @__PURE__ */ jsxs("div", {
+                className: "flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100",
+                children: [
+                  /* @__PURE__ */ jsxs("div", {
+                    children: [
+                      /* @__PURE__ */ jsx("h4", {
+                        className: "text-base font-semibold text-slate-900",
+                        children: "Filter tasks"
+                      }),
+                      /* @__PURE__ */ jsx("p", {
+                        className: "text-xs text-slate-500 mt-0.5",
+                        children: "Narrow tasks by student, status, priority, counselor, country, or due date."
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx("button", {
+                    type: "button",
+                    className:
+                      "p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors",
+                    "aria-label": "Close filters",
+                    onClick: () => setTaskFiltersOpen(false),
+                    children: /* @__PURE__ */ jsx(X, { size: 18 })
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsxs("div", {
+                className: "grid grid-cols-1 sm:grid-cols-2 gap-3 p-5",
+                children: [
+                  /* @__PURE__ */ jsxs("label", { className: "block sm:col-span-2", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Search"
+                    }),
+                    /* @__PURE__ */ jsx("input", {
+                      type: "search",
+                      value: taskFilters.search,
+                      onChange: (e) => updateTaskFilter("search", e.target.value),
+                      placeholder: "Task title or student name",
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Status"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      value: taskFilters.status,
+                      onChange: (e) => updateTaskFilter("status", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      children: [
+                        /* @__PURE__ */ jsx("option", { value: "All", children: "All statuses" }),
+                        ...TASK_FILTER_STATUSES.map((status) =>
+                          /* @__PURE__ */ jsx("option", { value: status, children: status }, status)
+                        )
+                      ]
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Priority"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      value: taskFilters.priority,
+                      onChange: (e) => updateTaskFilter("priority", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      children: [
+                        /* @__PURE__ */ jsx("option", { value: "All", children: "All priorities" }),
+                        ...TASK_FILTER_PRIORITIES.map((priority) =>
+                          /* @__PURE__ */ jsx("option", { value: priority, children: priority }, priority)
+                        )
+                      ]
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Counselor"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      value: taskFilters.counselor,
+                      onChange: (e) => updateTaskFilter("counselor", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      children: [
+                        /* @__PURE__ */ jsx("option", { value: "All", children: "All counselors" }),
+                        ...taskFilterOptions.counselors.map((counselor) =>
+                          /* @__PURE__ */ jsx("option", { value: counselor.id, children: counselor.label }, counselor.id)
+                        )
+                      ]
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Country"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      value: taskFilters.country,
+                      onChange: (e) => updateTaskFilter("country", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      children: [
+                        /* @__PURE__ */ jsx("option", { value: "All", children: "All countries" }),
+                        ...taskFilterOptions.countries.map((country) =>
+                          /* @__PURE__ */ jsx("option", { value: country, children: country }, country)
+                        )
+                      ]
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Due from"
+                    }),
+                    /* @__PURE__ */ jsx("input", {
+                      type: "date",
+                      value: taskFilters.dueFrom,
+                      onChange: (e) => updateTaskFilter("dueFrom", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    })
+                  ] }),
+                  /* @__PURE__ */ jsxs("label", { className: "block", children: [
+                    /* @__PURE__ */ jsx("span", {
+                      className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+                      children: "Due to"
+                    }),
+                    /* @__PURE__ */ jsx("input", {
+                      type: "date",
+                      value: taskFilters.dueTo,
+                      onChange: (e) => updateTaskFilter("dueTo", e.target.value),
+                      className:
+                        "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    })
+                  ] })
+                ]
+              }),
+              /* @__PURE__ */ jsxs("div", {
+                className:
+                  "px-5 pb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-100 pt-4 mx-5",
+                children: [
+                  /* @__PURE__ */ jsx("p", {
+                    className: "text-[11px] text-slate-500",
+                    children:
+                      completedFilteredTasks.length > 0
+                        ? `Showing ${filteredTasks.length} of ${completedFilteredTasks.length} tasks.`
+                        : "No tasks in the current view."
+                  }),
+                  /* @__PURE__ */ jsxs("div", {
+                    className: "flex items-center gap-2 shrink-0",
+                    children: [
+                      /* @__PURE__ */ jsx(Button, {
+                        type: "button",
+                        variant: "ghost",
+                        size: "sm",
+                        onClick: resetTaskFilters,
+                        children: "Reset"
+                      }),
+                      /* @__PURE__ */ jsx(Button, {
+                        type: "button",
+                        size: "sm",
+                        onClick: () => setTaskFiltersOpen(false),
+                        children: "Done"
+                      })
+                    ]
+                  })
+                ]
+              })
+            ]
+          })
+        })
+      : null
   ] });
 };
 export {

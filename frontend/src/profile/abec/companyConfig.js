@@ -3,6 +3,10 @@ import companyFullLogo from "./assets/company-full-logo.png";
 import { resolveApiBase } from "../../resolveApiBase";
 
 // ABEC Premier company branding and API configuration.
+export const ROLE_DISPLAY_NAMES = {
+  Manager: "Manager Level",
+};
+
 export const COMPANY_NAME = "ABEC Premier";
 export const COMPANY_SHORT_NAME = "ABEC";
 export const PRODUCT_TAGLINE = "The Success Engine";

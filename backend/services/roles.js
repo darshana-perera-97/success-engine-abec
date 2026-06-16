@@ -1,4 +1,5 @@
 const { COMPANY_NAME } = require("../config");
+const { getRoleDisplayName } = require("./roleDisplay");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -27,14 +28,15 @@ function isStaffWelcomeEmailRole(role) {
 }
 
 function staffWelcomeRolePhrase(role) {
-  const r = String(role || "").trim();
-  if (r === "Country Coordinator") return "country coordinator";
-  if (r === "Team Lead") return "team lead";
-  return r.toLowerCase() || "staff";
+  const display = getRoleDisplayName(role);
+  if (display === "Country Coordinator") return "country coordinator";
+  if (display === "Team Lead") return "team lead";
+  if (display === "Manager Level") return "manager level";
+  return display.toLowerCase() || "staff";
 }
 
 function staffWelcomeEmailCopy(role) {
-  const displayRole = String(role || "").trim() || "Staff";
+  const displayRole = getRoleDisplayName(role) || "Staff";
   const phrase = staffWelcomeRolePhrase(role);
   return {
     headline: `Welcome to your ${displayRole} account`,

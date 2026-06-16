@@ -3,6 +3,8 @@ import companyFullLogo from "./assets/company-full-logo.png";
 import { resolveApiBase } from "../../resolveApiBase";
 
 // NexGenAI company branding and API configuration.
+export const ROLE_DISPLAY_NAMES = {};
+
 export const COMPANY_NAME = "NexGenAI";
 export const COMPANY_SHORT_NAME = "NexGenAI";
 export const PRODUCT_TAGLINE = "The Success Engine";
