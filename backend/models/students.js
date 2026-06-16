@@ -32,10 +32,26 @@ function stripStudentSecrets(student) {
   return rest;
 }
 
+function requestPublicOrigin(req) {
+  const host = String(req.headers.host || "").trim();
+  if (!host) return "";
+  const forwarded = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const proto =
+    forwarded === "https" || forwarded === "http"
+      ? forwarded
+      : req.socket?.encrypted
+        ? "https"
+        : "http";
+  return `${proto}://${host}`;
+}
+
 function publicAssetUrl(req, avatar) {
   if (!avatar) return avatar;
   if (avatar.startsWith("/assets/")) {
-    return `http://${req.headers.host}${avatar}`;
+    return `${requestPublicOrigin(req)}${avatar}`;
   }
   return avatar;
 }
@@ -43,7 +59,7 @@ function publicAssetUrl(req, avatar) {
 function publicChatFileUrl(req, filePath) {
   if (!filePath) return filePath;
   if (filePath.startsWith("/chat-files/")) {
-    return `http://${req.headers.host}${filePath}`;
+    return `${requestPublicOrigin(req)}${filePath}`;
   }
   return filePath;
 }
@@ -68,7 +84,7 @@ function resolveStudentDocDiskPath(filePath) {
 function publicStudentDocUrl(req, filePath) {
   if (!filePath) return filePath;
   if (filePath.startsWith("/student-docs/")) {
-    return `http://${req.headers.host}${filePath}`;
+    return `${requestPublicOrigin(req)}${filePath}`;
   }
   return filePath;
 }
@@ -106,12 +122,13 @@ function publicInvoiceRecord(req, invoice) {
   const absolutize = (urlValue) => {
     const u = String(urlValue || "").trim();
     if (!u || !host) return u;
+    const origin = requestPublicOrigin(req);
     if (u.startsWith("/payments/") || u.startsWith("/chat-files/") || u.startsWith("/assets/")) {
-      return `http://${host}${u}`;
+      return `${origin}${u}`;
     }
     if (/^https?:\/\/localhost(:\d+)?/i.test(u)) {
       const pathPart = u.replace(/^https?:\/\/[^/]+/i, "");
-      return pathPart ? `http://${host}${pathPart}` : u;
+      return pathPart ? `${origin}${pathPart}` : u;
     }
     return u;
   };

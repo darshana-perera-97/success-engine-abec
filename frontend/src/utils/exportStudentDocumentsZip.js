@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { toAbsoluteAssetUrl } from "../apiConfig";
+import { API_BASE, toAbsoluteAssetUrl } from "../apiConfig";
 import {
   buildPipelineDocTypeGroupMap,
   buildVisaDocTypeGroupMap,
@@ -79,8 +79,44 @@ function migrateProfileOtherDocumentsToSlotEntries(value) {
   return [...bySlot.keys()].sort((a, b) => a - b).map((k) => bySlot.get(k));
 }
 
+const BACKEND_RELATIVE_PREFIXES = ["/student-docs/", "/payments/", "/chat-files/", "/assets/"];
+
+/** Resolve a stored document URL for cross-origin fetch (HTTPS, API base, relative paths). */
+function resolveDocumentFetchUrl(url) {
+  let resolved = String(url || "").trim();
+  if (!resolved) return "";
+
+  if (BACKEND_RELATIVE_PREFIXES.some((prefix) => resolved.startsWith(prefix))) {
+    resolved = `${String(API_BASE || "").replace(/\/+$/, "")}${resolved}`;
+  } else {
+    resolved = String(toAbsoluteAssetUrl(resolved) || resolved).trim();
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    window.location?.protocol === "https:" &&
+    /^http:\/\//i.test(resolved)
+  ) {
+    try {
+      const target = new URL(resolved);
+      const pageHost = window.location.hostname;
+      const sameHost =
+        target.hostname === pageHost ||
+        target.hostname === `www.${pageHost}` ||
+        pageHost === `www.${target.hostname}`;
+      if (sameHost) {
+        resolved = resolved.replace(/^http:/i, "https:");
+      }
+    } catch {
+      // Keep original URL when parsing fails.
+    }
+  }
+
+  return resolved;
+}
+
 function normalizeAssetUrl(url) {
-  return String(toAbsoluteAssetUrl(String(url || "").trim()) || "").trim();
+  return resolveDocumentFetchUrl(url);
 }
 
 function escapeCsvCell(value) {
@@ -105,10 +141,10 @@ function buildStudentCsv(student) {
 }
 
 async function fetchDocumentBlob(url) {
-  const resolvedUrl = toAbsoluteAssetUrl(String(url || "").trim());
+  const resolvedUrl = resolveDocumentFetchUrl(url);
   if (!resolvedUrl) throw new Error("Missing document URL");
   // Static student-doc files are served with Access-Control-Allow-Origin: * — do not send credentials.
-  const res = await fetch(resolvedUrl);
+  const res = await fetch(resolvedUrl, { mode: "cors", credentials: "omit" });
   if (!res.ok) throw new Error(`Failed to download ${resolvedUrl} (${res.status})`);
   return res.blob();
 }
@@ -209,10 +245,12 @@ function triggerZipDownload(zipBlob, student) {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileLabel;
+  anchor.rel = "noopener noreferrer";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoking immediately can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 /**

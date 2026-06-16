@@ -846,6 +846,7 @@ const StudentProfile = ({
         : "bg-green-50 text-green-800 border-green-200";
   const [inquiryTarget, setInquiryTarget] = useState(null);
   const [exportingDocuments, setExportingDocuments] = useState(false);
+  const exportingDocumentsRef = useRef(false);
   const inquiryNowMs = useMemo(() => Date.now(), [stageSlaClock]);
   useEffect(() => {
     setInquiryTarget(null);
@@ -869,7 +870,8 @@ const StudentProfile = ({
   }, [localStudent]);
   const { config: countryDocConfig } = useCountryDocConfig(localStudent?.country);
   const handleExportDocuments = useCallback(async () => {
-    if (exportingDocuments) return;
+    if (exportingDocumentsRef.current) return;
+    exportingDocumentsRef.current = true;
     setExportingDocuments(true);
     try {
       const result = await exportStudentDocumentsZip(localStudent, countryDocConfig);
@@ -892,9 +894,10 @@ const StudentProfile = ({
     } catch {
       onNotify?.("Export failed", "Something went wrong while building the zip file.", "error");
     } finally {
+      exportingDocumentsRef.current = false;
       setExportingDocuments(false);
     }
-  }, [countryDocConfig, exportingDocuments, localStudent, onNotify]);
+  }, [countryDocConfig, localStudent, onNotify]);
   const effectiveStatus = normalizePipelineStatus(localStudent.status);
   const countryStages = useMemo(
     () => getPipelineStagesForConfig(countryDocConfig),
