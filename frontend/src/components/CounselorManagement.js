@@ -26,8 +26,9 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
-import { normalizePipelineStatus, PIPELINE_STEPS, computePipelineStageCounts, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
+import { normalizePipelineStatus, PIPELINE_STEPS, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
+import { buildPipelineHealthRows } from "../docMappingConfig";
 import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   XAxis,
@@ -266,20 +267,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     const counselor = counselors.find((c) => c.id === selectedCounselorId);
     if (!counselor) return null;
     const funnelData = buildCounselorFunnelSeries(counselor.students);
-    const pipelineStageCounts = computePipelineStageCounts(counselor.students || []);
-    const pipelineHealthPalette = ["#6366F1", "#F59E0B", "#A855F7", "#F97316", "#14B8A6", "#22C55E", "#38BDF8"];
-    const pipelineHealthRows = PIPELINE_STEPS.map((stage, idx) => ({
-      stage,
-      count: pipelineStageCounts.byStage[stage] ?? 0,
-      color: pipelineHealthPalette[idx % pipelineHealthPalette.length]
-    }));
-    if (pipelineStageCounts.other > 0) {
-      pipelineHealthRows.push({
-        stage: "Other / unmapped",
-        count: pipelineStageCounts.other,
-        color: "#94A3B8"
-      });
-    }
+    const pipelineHealth = buildPipelineHealthRows(counselor.students || [], resolveCountryDocConfig);
     const counselorCriticalTasks = counselor.tasks.filter(
       (t) =>
         t.status !== "Completed" &&
@@ -440,12 +428,12 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             /* @__PURE__ */ jsx("h4", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider", children: "Pipeline Health" }),
             /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
               "Students by stage (",
-              pipelineStageCounts.total,
+              pipelineHealth.total,
               " total)"
             ] })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1 flex-1", children: pipelineHealthRows.map(({ stage, count, color }) => {
-            const denom = Math.max(1, pipelineStageCounts.total);
+          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1 flex-1", children: pipelineHealth.rows.map(({ stage, count, color }) => {
+            const denom = Math.max(1, pipelineHealth.total);
             const widthPct = Math.round(count / denom * 100);
             return /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1 gap-2", children: [

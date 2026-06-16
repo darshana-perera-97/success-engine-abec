@@ -390,6 +390,104 @@ export function getPipelineStepLabels(countryConfig) {
   return getPipelineStagesForConfig(countryConfig).map((s) => s.label);
 }
 
+const PIPELINE_HEALTH_PALETTE = [
+  "#6366F1",
+  "#F59E0B",
+  "#A855F7",
+  "#F97316",
+  "#14B8A6",
+  "#22C55E",
+  "#38BDF8",
+];
+
+function pushUniquePipelineHealthStage(ordered, seen, label) {
+  const trimmed = String(label || "").trim();
+  if (!trimmed) return;
+  const key = trimmed.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  ordered.push(trimmed);
+}
+
+/** Resolve a student's status to the pipeline stage label shown in Pipeline Health. */
+export function resolveStudentPipelineHealthLabel(student, resolveCountryConfig) {
+  const config = resolveCountryConfig?.(student?.country);
+  const stages = getPipelineStagesForConfig(config);
+  const idx = getStudentPipelineStepIndex(student?.status, stages);
+  if (idx >= 0) return stages[idx].label;
+
+  const canonical = normalizePipelineStatus(student?.status);
+  if (PIPELINE_STEPS.includes(canonical)) return canonical;
+
+  const raw = String(student?.status || "").trim();
+  return raw || canonical || "Unknown";
+}
+
+/** Ordered stage labels for Pipeline Health (country stages + canonical + any in-use statuses). */
+export function buildPipelineHealthStageOrder(students, resolveCountryConfig) {
+  const list = Array.isArray(students) ? students : [];
+  const ordered = [];
+  const seen = new Set();
+
+  const countries = [
+    ...new Set(list.map((s) => String(s?.country || "").trim()).filter(Boolean)),
+  ].sort();
+
+  for (const country of countries) {
+    for (const label of getPipelineStepLabels(resolveCountryConfig?.(country))) {
+      pushUniquePipelineHealthStage(ordered, seen, label);
+    }
+  }
+
+  for (const step of PIPELINE_STEPS) {
+    pushUniquePipelineHealthStage(ordered, seen, step);
+  }
+
+  for (const student of list) {
+    pushUniquePipelineHealthStage(
+      ordered,
+      seen,
+      resolveStudentPipelineHealthLabel(student, resolveCountryConfig)
+    );
+  }
+
+  return ordered;
+}
+
+/** @returns {{ stageOrder: string[], byStage: Record<string, number>, total: number }} */
+export function computePipelineHealthStageCounts(students, resolveCountryConfig) {
+  const list = Array.isArray(students) ? students : [];
+  const stageOrder = buildPipelineHealthStageOrder(list, resolveCountryConfig);
+  const byStage = Object.fromEntries(stageOrder.map((s) => [s, 0]));
+
+  for (const student of list) {
+    const label = resolveStudentPipelineHealthLabel(student, resolveCountryConfig);
+    if (!Object.prototype.hasOwnProperty.call(byStage, label)) {
+      byStage[label] = 0;
+      stageOrder.push(label);
+    }
+    byStage[label] += 1;
+  }
+
+  return { stageOrder, byStage, total: list.length };
+}
+
+/** @returns {{ total: number, rows: Array<{ stage: string, count: number, color: string }> }} */
+export function buildPipelineHealthRows(students, resolveCountryConfig) {
+  const { stageOrder, byStage, total } = computePipelineHealthStageCounts(
+    students,
+    resolveCountryConfig
+  );
+  return {
+    total,
+    rows: stageOrder.map((stage, idx) => ({
+      stage,
+      count: byStage[stage] ?? 0,
+      color: PIPELINE_HEALTH_PALETTE[idx % PIPELINE_HEALTH_PALETTE.length],
+    })),
+  };
+}
+
 export function resolveStudentStageId(status, stages) {
   const raw = String(status || "").trim();
   if (!raw || !Array.isArray(stages) || stages.length === 0) return null;

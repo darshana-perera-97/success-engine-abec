@@ -8,10 +8,8 @@ import { getChats } from "../authApi";
 import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
 import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
-  PIPELINE_STEPS,
   normalizePipelineStatus,
   computePipelineEscalations,
-  computePipelineStageCounts,
   countOpenSlaRequirementViolations,
   formatInquiryScheduledCallLabel,
   getInquiryScheduledCallAt,
@@ -19,6 +17,7 @@ import {
   isInquiryScheduledCallDue
 } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
+import { buildPipelineHealthRows } from "../docMappingConfig";
 const DAY_MS = 86400000;
 function localDayStartMs(ts) {
   const d = new Date(ts);
@@ -145,23 +144,10 @@ const CounselorDashboard = ({
   const chatScore = inboundFromStudents > 0 ? Math.min(100, counselorReplies / Math.max(1, inboundFromStudents) * 100) : 100;
   const baseActivity = 0.4 * taskCompletionPct + 0.3 * chatScore + 0.3 * reviewScore;
   const performanceScore = Math.max(0, Math.min(100, Math.round(baseActivity / 100 * slaScore)));
-  const pipelineStageCounts = useMemo(() => computePipelineStageCounts(myStudents || []), [myStudents]);
-  const pipelineHealthRows = useMemo(() => {
-    const palette = ["#6366F1", "#F59E0B", "#A855F7", "#F97316", "#14B8A6", "#22C55E", "#38BDF8"];
-    const rows = PIPELINE_STEPS.map((stage, idx) => ({
-      stage,
-      count: pipelineStageCounts.byStage[stage] ?? 0,
-      color: palette[idx % palette.length]
-    }));
-    if (pipelineStageCounts.other > 0) {
-      rows.push({
-        stage: "Other / unmapped",
-        count: pipelineStageCounts.other,
-        color: "#94A3B8"
-      });
-    }
-    return rows;
-  }, [pipelineStageCounts]);
+  const pipelineHealth = useMemo(
+    () => buildPipelineHealthRows(myStudents || [], resolveCountryDocConfig),
+    [myStudents]
+  );
   const inquiryStageStudents = myStudents.filter((student) => normalizePipelineStatus(student?.status) === "Inquiry");
   const studentById = useMemo(() => {
     const map = new Map();
@@ -625,12 +611,12 @@ const CounselorDashboard = ({
             /* @__PURE__ */ jsx("h4", { className: "text-slate-400 text-xs font-bold uppercase tracking-wider", children: "Pipeline Health" }),
             /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
               "Your students by stage (",
-              pipelineStageCounts.total,
+              pipelineHealth.total,
               " total)"
             ] })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1", children: pipelineHealthRows.map(({ stage, count, color }) => {
-            const denom = Math.max(1, pipelineStageCounts.total);
+          /* @__PURE__ */ jsx("div", { className: "space-y-2.5 max-h-[280px] overflow-y-auto pr-1", children: pipelineHealth.rows.map(({ stage, count, color }) => {
+            const denom = Math.max(1, pipelineHealth.total);
             const widthPct = Math.round(count / denom * 100);
             return /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-sm mb-1 gap-2", children: [

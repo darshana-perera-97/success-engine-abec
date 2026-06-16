@@ -308,7 +308,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                 item
               );
             }) }),
-            isActive && !isCompleted && /* @__PURE__ */ jsxs("div", { className: "mt-5 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2", children: [
+            isActive && !isCompleted && String(stage.blockerMessage || "").trim() && /* @__PURE__ */ jsxs("div", { className: "mt-5 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2", children: [
               /* @__PURE__ */ jsx(AlertCircle, { size: 16, className: "text-amber-600 flex-shrink-0 mt-0.5" }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-800 font-medium leading-relaxed", children: stage.blockerMessage })
             ] })
