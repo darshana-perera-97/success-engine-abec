@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
+import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { EDUCATION_LEVELS, LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
 import { Button } from "./Button";
 import { normalizeWebFormAppearance, normalizeWebFormFields } from "../webFormConfig";
@@ -64,7 +65,9 @@ export function EmbeddableWebForm({
   }, [formConfig]);
 
   const { appearance, fields } = normalized;
-  const [countries, setCountries] = useState([]);
+  const [branchRecords, setBranchRecords] = useState([]);
+  const [globalCountries, setGlobalCountries] = useState([]);
+  const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [branches, setBranches] = useState([]);
   const [branchesReady, setBranchesReady] = useState(isPreview);
   const [countriesError, setCountriesError] = useState("");
@@ -83,17 +86,17 @@ export function EmbeddableWebForm({
       if (!countriesRes.ok) {
         setCountriesError(countriesRes.error || "Could not load countries.");
       } else {
-        setCountries(countriesRes.data || []);
-        setForm((prev) => ({
-          ...prev,
-          countryToVisit: prev.countryToVisit || countriesRes.data?.[0] || "",
-        }));
+        setGlobalCountries(countriesRes.data || []);
+        setBranchCountriesEnabled(countriesRes.branchCountriesEnabled === true);
       }
       if (!branchesRes.ok) {
         setBranchesError(branchesRes.error || "Could not load offices.");
         setBranches([]);
+        setBranchRecords([]);
       } else {
-        const locations = (branchesRes.data || [])
+        const records = branchesRes.data || [];
+        setBranchRecords(records);
+        const locations = records
           .map((b) => String(b?.location || "").trim())
           .filter(Boolean);
         setBranches(locations);
@@ -109,9 +112,22 @@ export function EmbeddableWebForm({
     };
   }, [isPreview]);
 
+  const countries = useMemo(
+    () => (isPreview ? ["UK", "USA", "Canada", "Australia"] : resolveCountriesForOffice(branchRecords, form.nearestOffice, globalCountries, { branchCountriesEnabled })),
+    [isPreview, branchRecords, form.nearestOffice, globalCountries, branchCountriesEnabled]
+  );
+
+  useEffect(() => {
+    if (isPreview) return;
+    setForm((prev) => {
+      const nextCountry = countries.includes(prev.countryToVisit) ? prev.countryToVisit : countries[0] || "";
+      if (nextCountry === prev.countryToVisit) return prev;
+      return { ...prev, countryToVisit: nextCountry };
+    });
+  }, [isPreview, countries, form.nearestOffice]);
+
   useEffect(() => {
     if (!isPreview) return;
-    setCountries(["UK", "USA", "Canada", "Australia"]);
     setBranches(["Colombo", "Kandy"]);
     setBranchesReady(true);
     setForm((prev) => ({

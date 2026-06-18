@@ -1422,7 +1422,6 @@ export function DocMapping() {
         ? jsx("div", { className: "flex items-center justify-center py-24 text-sm text-slate-400", children: "Loading configuration…" })
         : jsxs("div", { className: "space-y-6", children: [
             jsx(StageManager, { stages, onChange: setStages }),
-            jsx(StageDeadlinesSection, { stages, stageDeadlines, onChange: setStageDeadlines }),
             jsx(AccountDetailsStageSection, {
               stages,
               accountDetailsStageId,
@@ -1446,7 +1445,8 @@ export function DocMapping() {
               documentNotifyDocs,
               onChange: setDocumentNotifyDocs
             }),
-            jsx(StageTasksSection, { stages, stageTasks, onChange: setStageTasks })
+            jsx(StageTasksSection, { stages, stageTasks, onChange: setStageTasks }),
+            jsx(StageDeadlinesSection, { stages, stageDeadlines, onChange: setStageDeadlines })
           ] }),
 
     // ── Add Country Modal ────────────────────────────────────────

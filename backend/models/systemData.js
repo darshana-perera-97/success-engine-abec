@@ -7,6 +7,7 @@ function normalizeSystemData(input) {
   return {
     counselorCanAcceptPayments: src.counselorCanAcceptPayments === true,
     adminChatEnabled: src.adminChatEnabled === true,
+    branchCountriesEnabled: src.branchCountriesEnabled === true,
   };
 }
 

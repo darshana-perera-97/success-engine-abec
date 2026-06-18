@@ -1,14 +1,46 @@
 const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
-const { readBranches } = require("../models/branches");
+const {
+  readBranches,
+  writeBranches,
+  resolveCountriesForBranchLocation,
+  normalizeCountryNames,
+  getStoredBranchCountries,
+  officesMatch,
+  resolveCountriesForOfficeLoose,
+  countryIsInList,
+} = require("../models/branches");
 const { readCountries, writeCountries } = require("../models/countries");
 const { readReqStudents, appendReqStudent, appendReqStudentsBulk, removeReqStudentById } = require("../models/reqStudents");
 const { readPaymentAccounts, writePaymentAccounts, normalizePaymentAccount } = require("../models/paymentAccounts");
 const { readUniversityPrograms, writeUniversityPrograms } = require("../models/universityPrograms");
 const { getWebFormById } = require("../models/webForms");
+const { readSystemData } = require("../models/systemData");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function filterReqStudentEntries(entries, { branchParam = "", branchCountriesEnabled = false, branches = [], globalCountries = [] } = {}) {
+  let rows = Array.isArray(entries) ? entries : [];
+  const scopeBranch = String(branchParam || "").trim();
+
+  if (!scopeBranch) return rows;
+
+  if (branchCountriesEnabled) {
+    const allowedCountries = resolveCountriesForOfficeLoose(branches, scopeBranch, globalCountries, true);
+    return rows.filter((entry) => {
+      const country = String(entry.countryToVisit || "").trim();
+      if (!country) return true;
+      return countryIsInList(country, allowedCountries);
+    });
+  }
+
+  return rows.filter((entry) => {
+    const office = String(entry.nearestOffice || "").trim();
+    if (!office) return true;
+    return officesMatch(scopeBranch, office);
+  });
 }
 
 async function handle(req, res, url) {
@@ -24,8 +56,20 @@ async function handle(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/countries") {
     try {
-      const countries = await readCountries();
-      sendJson(res, 200, { ok: true, data: countries });
+      const systemData = await readSystemData();
+      const branchCountriesEnabled = systemData.branchCountriesEnabled === true;
+      const branchParam = String(url.searchParams.get("branch") || "").trim();
+      const globalCountries = await readCountries();
+      if (branchParam) {
+        const countries = await resolveCountriesForBranchLocation(
+          branchParam,
+          globalCountries,
+          branchCountriesEnabled
+        );
+        sendJson(res, 200, { ok: true, data: countries, branchCountriesEnabled });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, data: globalCountries, branchCountriesEnabled });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load countries." });
     }
@@ -72,14 +116,21 @@ async function handle(req, res, url) {
         sendJson(res, 400, { ok: false, error: "Please enter a valid email address." });
         return true;
       }
-      const countriesList = await readCountries();
+      const systemData = await readSystemData();
+      const branchCountriesEnabled = systemData.branchCountriesEnabled === true;
+      const globalCountries = await readCountries();
+      const countriesList = nearestOfficeRaw
+        ? await resolveCountriesForBranchLocation(nearestOfficeRaw, globalCountries, branchCountriesEnabled)
+        : globalCountries;
       const matchedCountry = countriesList.find(
         (c) => String(c).trim().toLowerCase() === countryToVisitRaw.toLowerCase()
       );
       if (!matchedCountry) {
         sendJson(res, 400, {
           ok: false,
-          error: "Please choose a valid country to visit from the list.",
+          error: nearestOfficeRaw
+            ? "Please choose a valid country to visit for the selected office."
+            : "Please choose a valid country to visit from the list.",
         });
         return true;
       }
@@ -233,20 +284,20 @@ async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/req-students") {
     try {
       const branchParam = String(url.searchParams.get("branch") || "").trim();
-      const all = await readReqStudents();
-      if (!branchParam) {
-        sendJson(res, 200, { ok: true, data: all });
-        return true;
-      }
-      const key = branchParam.toLowerCase();
-      const filtered = all.filter((entry) => {
-        const office = String(entry.nearestOffice || "").trim().toLowerCase();
-        if (!office) return true;
-        if (office === key) return true;
-        if (key.includes(office) || office.includes(key)) return true;
-        return false;
+      const [all, systemData, branches, globalCountries] = await Promise.all([
+        readReqStudents(),
+        readSystemData(),
+        readBranches(),
+        readCountries(),
+      ]);
+      const branchCountriesEnabled = systemData.branchCountriesEnabled === true;
+      const filtered = filterReqStudentEntries(all, {
+        branchParam,
+        branchCountriesEnabled,
+        branches,
+        globalCountries,
       });
-      sendJson(res, 200, { ok: true, data: filtered });
+      sendJson(res, 200, { ok: true, data: filtered, branchCountriesEnabled });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load requested students." });
     }
@@ -268,6 +319,123 @@ async function handle(req, res, url) {
       sendJson(res, 200, { ok: true, data: { id: requestId } });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to remove request." });
+    }
+    return true;
+  }
+
+  if (req.method === "PUT" && url.pathname.startsWith("/api/branches/") && url.pathname.endsWith("/countries")) {
+    try {
+      const branchId = decodeURIComponent(
+        url.pathname.replace("/api/branches/", "").replace(/\/countries\/?$/, "").trim()
+      );
+      if (!branchId) {
+        sendJson(res, 400, { ok: false, error: "Branch id is required." });
+        return true;
+      }
+      const body = await parseBody(req);
+      const rawList = Array.isArray(body.countries) ? body.countries : [];
+      const globalCountries = await readCountries();
+      const globalKeys = new Map(globalCountries.map((c) => [String(c).trim().toLowerCase(), String(c).trim()]));
+      const nextCountries = normalizeCountryNames(
+        rawList
+          .map((name) => {
+            const key = String(name || "").trim().toLowerCase();
+            return globalKeys.get(key) || "";
+          })
+          .filter(Boolean)
+      );
+      const branches = await readBranches();
+      const index = branches.findIndex((b) => String(b?.id || "") === branchId);
+      if (index < 0) {
+        sendJson(res, 404, { ok: false, error: "Branch not found." });
+        return true;
+      }
+      branches[index] = { ...branches[index], countries: nextCountries };
+      await writeBranches(branches);
+      sendJson(res, 200, {
+        ok: true,
+        data: { branchId, location: branches[index].location, countries: nextCountries },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname.startsWith("/api/branches/") && url.pathname.endsWith("/countries")) {
+    try {
+      const branchId = decodeURIComponent(
+        url.pathname.replace("/api/branches/", "").replace(/\/countries\/?$/, "").trim()
+      );
+      if (!branchId) {
+        sendJson(res, 400, { ok: false, error: "Branch id is required." });
+        return true;
+      }
+      const body = await parseBody(req);
+      const name = String(body.name || "").trim();
+      if (!name) {
+        sendJson(res, 400, { ok: false, error: "Country name is required." });
+        return true;
+      }
+      const branches = await readBranches();
+      const index = branches.findIndex((b) => String(b?.id || "") === branchId);
+      if (index < 0) {
+        sendJson(res, 404, { ok: false, error: "Branch not found." });
+        return true;
+      }
+      const existing = getStoredBranchCountries(branches[index]);
+      if (existing.some((c) => c.toLowerCase() === name.toLowerCase())) {
+        sendJson(res, 409, { ok: false, error: "This country is already in the branch list." });
+        return true;
+      }
+      const nextCountries = normalizeCountryNames([...existing, name]);
+      branches[index] = { ...branches[index], countries: nextCountries };
+      await writeBranches(branches);
+      sendJson(res, 201, {
+        ok: true,
+        data: { branchId, location: branches[index].location, countries: nextCountries },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/branches/") && url.pathname.includes("/countries/")) {
+    try {
+      const suffix = url.pathname.replace("/api/branches/", "").replace(/\/+$/, "");
+      const slashIdx = suffix.indexOf("/countries/");
+      if (slashIdx < 0) {
+        sendJson(res, 400, { ok: false, error: "Invalid branch country path." });
+        return true;
+      }
+      const branchId = decodeURIComponent(suffix.slice(0, slashIdx).trim());
+      const countryName = decodeURIComponent(suffix.slice(slashIdx + "/countries/".length).trim());
+      if (!branchId || !countryName) {
+        sendJson(res, 400, { ok: false, error: "Branch id and country name are required." });
+        return true;
+      }
+      const branches = await readBranches();
+      const index = branches.findIndex((b) => String(b?.id || "") === branchId);
+      if (index < 0) {
+        sendJson(res, 404, { ok: false, error: "Branch not found." });
+        return true;
+      }
+      const existing = getStoredBranchCountries(branches[index]);
+      const key = countryName.toLowerCase();
+      const nextCountries = existing.filter((c) => c.toLowerCase() !== key);
+      if (nextCountries.length === existing.length) {
+        sendJson(res, 404, { ok: false, error: "Country not found for this branch." });
+        return true;
+      }
+      branches[index] = { ...branches[index], countries: nextCountries };
+      await writeBranches(branches);
+      sendJson(res, 200, {
+        ok: true,
+        data: { branchId, location: branches[index].location, countries: nextCountries },
+      });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to remove branch country." });
     }
     return true;
   }

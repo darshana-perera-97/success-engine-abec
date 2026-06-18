@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
 import { getBranches, getCountries } from "../authApi";
+import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { branchesMatch } from "../pipeline";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { Button } from "./Button";
@@ -56,7 +57,9 @@ const AddStudentModal = ({
   counselorOptions = [],
   scopeBranch = null
 }) => {
-  const [countries, setCountries] = useState([]);
+  const [branchRecords, setBranchRecords] = useState([]);
+  const [globalCountries, setGlobalCountries] = useState([]);
+  const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [offices, setOffices] = useState([]);
   const [optionsReady, setOptionsReady] = useState(false);
   const [form, setForm] = useState(() => emptyInquiryForm());
@@ -81,10 +84,13 @@ const AddStudentModal = ({
         const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
         if (cancelled) return;
         const countryList = countriesRes.ok ? countriesRes.data || [] : [];
-        const officeList = branchesRes.ok
-          ? (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean)
-          : [];
-        setCountries(countryList);
+        const records = branchesRes.ok ? branchesRes.data || [] : [];
+        const officeList = records
+          .map((b) => String(b?.location || "").trim())
+          .filter(Boolean);
+        setGlobalCountries(countryList);
+        setBranchCountriesEnabled(countriesRes.branchCountriesEnabled === true);
+        setBranchRecords(records);
         setOffices(officeList);
       } finally {
         if (!cancelled) setOptionsReady(true);
@@ -94,6 +100,11 @@ const AddStudentModal = ({
       cancelled = true;
     };
   }, []);
+
+  const countries = useMemo(
+    () => resolveCountriesForOffice(branchRecords, form.nearestOffice, globalCountries, { branchCountriesEnabled }),
+    [branchRecords, form.nearestOffice, globalCountries, branchCountriesEnabled]
+  );
 
   useEffect(() => {
     const justOpened = isOpen && !wasOpenRef.current;
@@ -108,12 +119,13 @@ const AddStudentModal = ({
   useEffect(() => {
     if (!isOpen || !optionsReady) return;
     setForm((prev) => {
-      const countryToVisit = prev.countryToVisit || countries[0] || "";
       const nearestOffice = prev.nearestOffice || offices[0] || "";
+      const officeCountries = resolveCountriesForOffice(branchRecords, nearestOffice, globalCountries, { branchCountriesEnabled });
+      const countryToVisit = officeCountries.includes(prev.countryToVisit) ? prev.countryToVisit : officeCountries[0] || "";
       if (countryToVisit === prev.countryToVisit && nearestOffice === prev.nearestOffice) return prev;
       return { ...prev, countryToVisit, nearestOffice };
     });
-  }, [isOpen, optionsReady, countries, offices]);
+  }, [isOpen, optionsReady, countries, offices, branchRecords, globalCountries, branchCountriesEnabled, form.nearestOffice]);
 
   useEffect(() => {
     if (!isOpen || showAssignStep) return;

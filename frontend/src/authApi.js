@@ -375,14 +375,16 @@ export async function createBranch(location) {
   }
 }
 
-export async function getCountries() {
+export async function getCountries(branch) {
   try {
-    const res = await fetch(`${API_BASE}/api/countries`);
+    const branchName = String(branch || "").trim();
+    const query = branchName ? `?branch=${encodeURIComponent(branchName)}` : "";
+    const res = await fetch(`${API_BASE}/api/countries${query}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load countries." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, branchCountriesEnabled: data.branchCountriesEnabled === true };
   } catch {
     return { ok: false, error: "Cannot reach country server. Please contact the Support team." };
   }
@@ -398,7 +400,7 @@ export async function getReqStudents(params = {}) {
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load requested students." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, branchCountriesEnabled: data.branchCountriesEnabled === true };
   } catch {
     return { ok: false, error: "Cannot reach the server." };
   }
@@ -529,6 +531,67 @@ export async function deleteCountry(name) {
     return { ok: true, data: data.data };
   } catch {
     return { ok: false, error: "Cannot reach country server. Please contact the Support team." };
+  }
+}
+
+export async function updateBranchCountries(branchId, countries) {
+  const id = String(branchId || "").trim();
+  if (!id) return { ok: false, error: "Branch id is required." };
+  const list = Array.isArray(countries) ? countries : [];
+  try {
+    const res = await fetch(`${API_BASE}/api/branches/${encodeURIComponent(id)}/countries`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ countries: list })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to save branch countries." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach branch server. Please contact the Support team." };
+  }
+}
+
+export async function createBranchCountry(branchId, name) {
+  const id = String(branchId || "").trim();
+  const countryName = String(name || "").trim();
+  if (!id) return { ok: false, error: "Branch id is required." };
+  if (!countryName) return { ok: false, error: "Country name is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/branches/${encodeURIComponent(id)}/countries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: countryName })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to add country to branch." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach branch server. Please contact the Support team." };
+  }
+}
+
+export async function deleteBranchCountry(branchId, name) {
+  const id = String(branchId || "").trim();
+  const countryName = String(name || "").trim();
+  if (!id) return { ok: false, error: "Branch id is required." };
+  if (!countryName) return { ok: false, error: "Country name is required." };
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/branches/${encodeURIComponent(id)}/countries/${encodeURIComponent(countryName)}`,
+      { method: "DELETE" }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to remove country from branch." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach branch server. Please contact the Support team." };
   }
 }
 

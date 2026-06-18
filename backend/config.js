@@ -74,6 +74,7 @@ const DEFAULT_MEETING_SETTINGS = {
 const DEFAULT_SYSTEM_DATA = {
   counselorCanAcceptPayments: false,
   adminChatEnabled: false,
+  branchCountriesEnabled: false,
 };
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();

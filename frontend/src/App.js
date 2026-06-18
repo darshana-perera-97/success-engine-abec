@@ -108,7 +108,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
-  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false });
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -471,6 +471,10 @@ function App({ initialView = "dashboard" }) {
     }
     const raw = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
     return { active: !!raw, branchKey: raw.toLowerCase(), branchLabel: raw };
+  }, [currentRole, currentUser?.branch, authenticatedUser?.branch]);
+  const staffBranchLabel = useMemo(() => {
+    if (currentRole !== "Manager" && currentRole !== "Team Lead") return "";
+    return String(currentUser?.branch || authenticatedUser?.branch || "").trim();
   }, [currentRole, currentUser?.branch, authenticatedUser?.branch]);
   const branchCounselorIdentitySet = useMemo(() => {
     if (!managerDataScope.active || !managerDataScope.branchLabel) return new Set();
@@ -1099,8 +1103,8 @@ function App({ initialView = "dashboard" }) {
     }
     const loadRequestedStudents = async () => {
       const params =
-        (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active && managerDataScope.branchLabel
-          ? { branch: managerDataScope.branchLabel }
+        (currentRole === "Manager" || currentRole === "Team Lead") && staffBranchLabel
+          ? { branch: staffBranchLabel }
           : {};
       const result = await getReqStudents(params);
       if (!result.ok || cancelled) return;
@@ -1127,7 +1131,7 @@ function App({ initialView = "dashboard" }) {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [currentRole, managerDataScope.active, managerDataScope.branchLabel]);
+  }, [currentRole, addNotification, staffBranchLabel]);
   useEffect(() => {
     let cancelled = false;
     const isCounselor = isCounselorEquivalentPortalRole(currentRole);
@@ -2499,7 +2503,14 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
-      if (currentView === "requested-students") return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
+      if (currentView === "requested-students") {
+        return /* @__PURE__ */ jsx(RequestedStudents, {
+          userRole: currentRole,
+          scopeBranch: staffBranchLabel || null,
+          branchCountriesLimited: systemData.branchCountriesEnabled === true,
+          onAddFromRequest: handleAddFromRequest
+        });
+      }
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: mgrStudents,
@@ -2578,7 +2589,12 @@ function App({ initialView = "dashboard" }) {
       case "students":
         return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "requested-students":
-        return /* @__PURE__ */ jsx(RequestedStudents, { userRole: currentRole, scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null, onAddFromRequest: handleAddFromRequest });
+        return /* @__PURE__ */ jsx(RequestedStudents, {
+          userRole: currentRole,
+          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
+          branchCountriesLimited: systemData.branchCountriesEnabled === true,
+          onAddFromRequest: handleAddFromRequest
+        });
       case "student-detail":
         return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "finance":

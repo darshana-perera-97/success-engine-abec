@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardList, FileUp, RefreshCw, Trash2, UserPlus, X, Eye } from "lucide-react";
-import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getReqStudents } from "../authApi";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardList, Eye, FileUp, Info, RefreshCw, Trash2, UserPlus, X } from "lucide-react";
+import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getCountries, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { isCounselorEquivalentAccountRole } from "../roles";
+import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { mapMetaLeadRow, parseMetaLeadsFile } from "../utils/metaLeadsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 
@@ -27,8 +28,24 @@ function branchesMatch(a, b) {
   return x.includes(y) || y.includes(x);
 }
 
+function findBranchByOfficeLoose(branchRecords, office) {
+  const key = String(office || "").trim().toLowerCase();
+  if (!key) return null;
+  return (
+    (branchRecords || []).find((branch) => {
+      const location = String(branch?.location || "").trim().toLowerCase();
+      if (!location) return false;
+      return branchesMatch(location, key);
+    }) || null
+  );
+}
+
 function isCounselorAccount(row) {
   return isCounselorEquivalentAccountRole(row?.role);
+}
+
+function isManagerOrTeamLeadRole(role) {
+  return role === "Manager" || role === "Team Lead";
 }
 
 const PIPELINE_PRIORITIES = [
@@ -88,21 +105,22 @@ function buildFullDetailRows(row) {
   return out;
 }
 
-function counselorOptionsForRow(userRole, scopeBranch, requestRow, accounts) {
-  const list = (accounts || []).filter(isCounselorAccount);
-  const scopedBranch = String(scopeBranch || "").trim();
-  const officeFromLead = String(requestRow?.nearestOffice || "").trim();
-
-  if ((userRole === "Manager" || userRole === "Admin") && scopedBranch) {
-    return list.filter((c) => branchesMatch(c.branch, scopedBranch));
-  }
-  if (userRole === "Admin" && officeFromLead) {
-    return list.filter((c) => branchesMatch(c.branch, officeFromLead));
-  }
-  return list;
+function counselorOptionsForRow(_userRole, _scopeBranch, _requestRow, accounts) {
+  return (accounts || [])
+    .filter(isCounselorAccount)
+    .sort((a, b) => {
+      const left = String(a.username || a.email || a.id || "").toLowerCase();
+      const right = String(b.username || b.email || b.id || "").toLowerCase();
+      return left.localeCompare(right);
+    });
 }
 
-export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAddFromRequest }) {
+export function RequestedStudents({
+  userRole = "Admin",
+  scopeBranch = null,
+  branchCountriesLimited = false,
+  onAddFromRequest
+}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -127,23 +145,100 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
   const [importSaving, setImportSaving] = useState(false);
   const [importParseLoading, setImportParseLoading] = useState(false);
   const [removingId, setRemovingId] = useState("");
+  const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
+  const [branchRecords, setBranchRecords] = useState([]);
+  const [globalCountries, setGlobalCountries] = useState([]);
+  const [branchMetaLoading, setBranchMetaLoading] = useState(false);
+
+  const applyManagerBranchFilter = isManagerOrTeamLeadRole(userRole) && scopeBranch;
+
+  const displayRows = useMemo(() => {
+    if (!applyManagerBranchFilter) return rows;
+    if (branchCountriesLimited) {
+      if (!branchRecords.length) return rows;
+      const countries = resolveCountriesForOffice(branchRecords, scopeBranch, globalCountries, {
+        branchCountriesEnabled: true
+      });
+      return rows.filter((entry) => {
+        const country = String(entry.countryToVisit || "").trim();
+        if (!country) return true;
+        const key = country.toLowerCase();
+        return countries.some((name) => String(name).trim().toLowerCase() === key);
+      });
+    }
+    return rows.filter((entry) => {
+      const office = String(entry.nearestOffice || "").trim();
+      if (!office) return true;
+      return branchesMatch(scopeBranch, office);
+    });
+  }, [rows, applyManagerBranchFilter, branchCountriesLimited, scopeBranch, branchRecords, globalCountries]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const result = await getReqStudents(scopeBranch ? { branch: scopeBranch } : {});
+    const result = await getReqStudents(applyManagerBranchFilter ? { branch: scopeBranch } : {});
     if (!result.ok) {
       setError(result.error || "Failed to load.");
       setRows([]);
+      setBranchCountriesEnabled(false);
     } else {
       setRows(result.data || []);
+      setBranchCountriesEnabled(result.branchCountriesEnabled === true);
     }
     setLoading(false);
-  }, [scopeBranch]);
+  }, [applyManagerBranchFilter, scopeBranch, branchCountriesLimited]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!isManagerOrTeamLeadRole(userRole) || !branchCountriesLimited) {
+      setBranchRecords([]);
+      setGlobalCountries([]);
+      setBranchMetaLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setBranchMetaLoading(true);
+      const [branchesRes, countriesRes] = await Promise.all([getBranches(), getCountries()]);
+      if (cancelled) return;
+      setBranchRecords(branchesRes.ok ? branchesRes.data || [] : []);
+      setGlobalCountries(countriesRes.ok ? countriesRes.data || [] : []);
+      setBranchMetaLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userRole, branchCountriesLimited]);
+
+  const branchLimitEntries = useMemo(() => {
+    if (!isManagerOrTeamLeadRole(userRole) || !branchCountriesLimited || !branchRecords.length) return [];
+    const resolveOpts = { branchCountriesEnabled: true };
+    if (scopeBranch) {
+      const branch = findBranchByOfficeLoose(branchRecords, scopeBranch);
+      const name = String(branch?.location || scopeBranch).trim();
+      if (!name) return [];
+      return [
+        {
+          name,
+          countries: resolveCountriesForOffice(branchRecords, scopeBranch, globalCountries, resolveOpts)
+        }
+      ];
+    }
+    return branchRecords
+      .map((branch) => {
+        const name = String(branch?.location || branch?.id || "").trim();
+        if (!name) return null;
+        return {
+          name,
+          countries: resolveCountriesForOffice(branchRecords, name, globalCountries, resolveOpts)
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [userRole, branchCountriesLimited, scopeBranch, branchRecords, globalCountries]);
 
   const loadPipelineCounselors = useCallback(
     async ({ preserveCounselorSelection = false } = {}) => {
@@ -339,18 +434,13 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
     closeModal();
   };
 
-  const filterDescription =
-    userRole === "Manager" && scopeBranch
-      ? `Counselors at ${scopeBranch}.`
-      : userRole === "Admin" && pipelineRow?.nearestOffice
-        ? `Counselors matching office: ${pipelineRow.nearestOffice}.`
-        : userRole === "Admin"
-          ? "All counselors (this lead has no nearest office on file)."
-          : "Counselors for your branch.";
+  const filterDescription = "All counselors in the organization.";
 
-  const subtitle = scopeBranch
-    ? `Submissions for offices matching your branch (${scopeBranch}).`
-    : "All student interest form submissions across branches.";
+  const subtitle = !applyManagerBranchFilter
+    ? "All student interest form submissions across branches."
+    : branchCountriesLimited
+      ? `Submissions with destination countries assigned to your branch (${scopeBranch}).`
+      : `Submissions for offices matching your branch (${scopeBranch}).`;
 
   return (
     <div className="space-y-6">
@@ -404,12 +494,68 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>
       ) : null}
 
+      {isManagerOrTeamLeadRole(userRole) &&
+      (branchCountriesLimited || applyManagerBranchFilter) ? (
+        <div className="flex items-start gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950">
+          <Info size={18} className="mt-0.5 shrink-0 text-indigo-600" aria-hidden />
+          <p className="min-w-0 flex-1 leading-relaxed text-indigo-900/90">
+            <span className="font-semibold text-indigo-900">Limit countries by branch</span>
+            <span className="text-indigo-400"> · </span>
+            {branchCountriesLimited ? (
+              branchMetaLoading ? (
+                <span className="text-indigo-800/80">Loading branch countries…</span>
+              ) : branchLimitEntries.length ? (
+                <>
+                  <span className="font-medium text-indigo-900">On</span>
+                  <span className="text-indigo-400"> · </span>
+                  {branchLimitEntries.map((entry, index) => (
+                    <span key={entry.name}>
+                      {index > 0 ? <span className="text-indigo-400"> | </span> : null}
+                      <span className="font-medium text-indigo-900">{entry.name}</span>
+                      <span className="text-indigo-400">: </span>
+                      <span>
+                        {entry.countries.length ? entry.countries.join(", ") : "global defaults apply"}
+                      </span>
+                    </span>
+                  ))}
+                  {applyManagerBranchFilter ? (
+                    <>
+                      <span className="text-indigo-400"> · </span>
+                      <span>Showing destination countries assigned to {scopeBranch} only.</span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <span>
+                  <span className="font-medium text-indigo-900">On</span>
+                  <span className="text-indigo-400"> · </span>
+                  Destination countries are limited per office on inquiry forms.
+                </span>
+              )
+            ) : (
+              <>
+                <span className="font-medium text-indigo-900">Off</span>
+                <span className="text-indigo-400"> · </span>
+                <span className="font-medium text-indigo-900">{scopeBranch}</span>
+                <span className="text-indigo-400"> · </span>
+                <span>Showing submissions where nearest office matches your branch.</span>
+              </>
+            )}
+          </p>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         {loading ? (
           <InlineLoading label="Loading requests…" className="py-16" />
-        ) : rows.length === 0 ? (
+        ) : displayRows.length === 0 ? (
           <div className="px-6 py-16 text-center text-sm text-slate-500">
-            No form submissions yet{scopeBranch ? " for your branch." : "."}
+            No form submissions yet
+            {applyManagerBranchFilter
+              ? branchCountriesLimited
+                ? " with a destination country assigned to your branch."
+                : " for your branch."
+              : "."}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -417,7 +563,7 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
               <thead className="border-b border-slate-100 bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="whitespace-nowrap px-4 py-3">Name</th>
-                  <th className="whitespace-nowrap px-4 py-3">Email</th>
+                  <th className="whitespace-nowrap px-4 py-3">Country</th>
                   <th className="whitespace-nowrap px-4 py-3">Phone</th>
                   <th className="whitespace-nowrap px-4 py-3">Office</th>
                   <th className="whitespace-nowrap px-4 py-3">Source</th>
@@ -425,13 +571,13 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-800">
-                {rows.map((row) => (
+                {displayRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50/60">
                     <td className="max-w-[160px] truncate px-4 py-3 font-medium text-slate-900" title={row.name || ""}>
                       {row.name || "—"}
                     </td>
-                    <td className="max-w-[180px] truncate px-4 py-3 text-slate-600" title={row.email || ""}>
-                      {row.email || "—"}
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600" title={row.countryToVisit || ""}>
+                      {row.countryToVisit || "—"}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.phone || "—"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.nearestOffice || "—"}</td>
@@ -729,8 +875,7 @@ export function RequestedStudents({ userRole = "Admin", scopeBranch = null, onAd
                   <p className="text-sm text-slate-500">Loading counselors…</p>
                 ) : counselorRows.length === 0 ? (
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    No counselors found for this branch. Add counselor accounts for this office or align branch names in
-                    admin settings.
+                    No counselor accounts found. Add counselor accounts in team management first.
                   </p>
                 ) : (
                   <select

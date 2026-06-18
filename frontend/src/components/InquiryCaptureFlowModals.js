@@ -1,8 +1,9 @@
-import React, { Fragment, useEffect, useState } from "react";
+import React, { Fragment, useEffect, useMemo, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 import { getBranches, getCountries, moveStudentToRequests } from "../authApi";
+import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { getInquiryIntakeSlaRemainingParts, INQUIRY_SCHEDULE_CALL_MAX_MS, normalizePipelineStatus } from "../pipeline";
 import {
   examResultsRowsFromStudent,
@@ -55,7 +56,9 @@ const InquiryCaptureFlowModals = ({
   onStudentMovedToRequests,
   onSelectStudent
 }) => {
-  const [countries, setCountries] = useState([]);
+  const [branchRecords, setBranchRecords] = useState([]);
+  const [globalCountries, setGlobalCountries] = useState([]);
+  const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [offices, setOffices] = useState([]);
   const [inquiryForm, setInquiryForm] = useState({
     name: "",
@@ -92,9 +95,14 @@ const InquiryCaptureFlowModals = ({
     (async () => {
       const [countriesRes, branchesRes] = await Promise.all([getCountries(), getBranches()]);
       if (cancelled) return;
-      if (countriesRes.ok) setCountries(countriesRes.data || []);
+      if (countriesRes.ok) {
+        setGlobalCountries(countriesRes.data || []);
+        setBranchCountriesEnabled(countriesRes.branchCountriesEnabled === true);
+      }
       if (branchesRes.ok) {
-        const locations = (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean);
+        const records = branchesRes.data || [];
+        setBranchRecords(records);
+        const locations = records.map((b) => String(b?.location || "").trim()).filter(Boolean);
         setOffices(locations);
       }
     })();
@@ -102,6 +110,19 @@ const InquiryCaptureFlowModals = ({
       cancelled = true;
     };
   }, []);
+
+  const countries = useMemo(
+    () => resolveCountriesForOffice(branchRecords, inquiryForm.nearestOffice, globalCountries, { branchCountriesEnabled }),
+    [branchRecords, inquiryForm.nearestOffice, globalCountries, branchCountriesEnabled]
+  );
+
+  useEffect(() => {
+    setInquiryForm((prev) => {
+      const nextCountry = countries.includes(prev.countryToVisit) ? prev.countryToVisit : countries[0] || "";
+      if (nextCountry === prev.countryToVisit) return prev;
+      return { ...prev, countryToVisit: nextCountry };
+    });
+  }, [countries, inquiryForm.nearestOffice]);
 
   useEffect(() => {
     if (!target?.student) {
@@ -112,14 +133,18 @@ const InquiryCaptureFlowModals = ({
       return;
     }
     const student = target.student;
+    const nearestOffice = String(student.nearestOffice || student.branch || offices[0] || "");
+    const officeCountries = resolveCountriesForOffice(branchRecords, nearestOffice, globalCountries, { branchCountriesEnabled });
+    const preferredCountry = String(student.countryToVisit || student.country || "").trim();
+    const countryToVisit = officeCountries.includes(preferredCountry) ? preferredCountry : officeCountries[0] || "";
     setInquiryError("");
     setSummaryError("");
     setInquiryForm({
       name: String(student.name || ""),
       email: String(student.email || ""),
       phone: String(student.phone || ""),
-      countryToVisit: String(student.countryToVisit || student.country || countries[0] || ""),
-      nearestOffice: String(student.nearestOffice || student.branch || offices[0] || ""),
+      countryToVisit,
+      nearestOffice,
       city: String(student.city || ""),
       livingStatus: String(student.livingStatus || ""),
       budget: String(student.budget || ""),
@@ -135,7 +160,7 @@ const InquiryCaptureFlowModals = ({
     setInquiryOpen(true);
     setSummaryOpen(false);
     setSummaryStudent(null);
-  }, [target?._key, countries, offices]);
+  }, [target?._key, branchRecords, globalCountries, branchCountriesEnabled, offices]);
 
   const resolveStudentById = (studentId) => {
     const sid = String(studentId || "").trim();

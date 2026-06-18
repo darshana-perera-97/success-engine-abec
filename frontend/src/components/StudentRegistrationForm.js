@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
+import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
 import { Button } from "./Button";
 
@@ -15,7 +16,9 @@ const EDUCATION_LEVELS = [
 ];
 
 export function StudentRegistrationForm() {
-  const [countries, setCountries] = useState([]);
+  const [branchRecords, setBranchRecords] = useState([]);
+  const [globalCountries, setGlobalCountries] = useState([]);
+  const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [branches, setBranches] = useState([]);
   const [branchesReady, setBranchesReady] = useState(false);
   const [countriesError, setCountriesError] = useState("");
@@ -45,17 +48,17 @@ export function StudentRegistrationForm() {
       if (!countriesRes.ok) {
         setCountriesError(countriesRes.error || "Could not load countries.");
       } else {
-        setCountries(countriesRes.data);
-        setForm((prev) => ({
-          ...prev,
-          countryToVisit: prev.countryToVisit || countriesRes.data[0] || ""
-        }));
+        setGlobalCountries(countriesRes.data || []);
+        setBranchCountriesEnabled(countriesRes.branchCountriesEnabled === true);
       }
       if (!branchesRes.ok) {
         setBranchesError(branchesRes.error || "Could not load offices.");
         setBranches([]);
+        setBranchRecords([]);
       } else {
-        const locations = (branchesRes.data || [])
+        const records = branchesRes.data || [];
+        setBranchRecords(records);
+        const locations = records
           .map((b) => String(b?.location || "").trim())
           .filter(Boolean);
         setBranches(locations);
@@ -70,6 +73,19 @@ export function StudentRegistrationForm() {
       cancelled = true;
     };
   }, []);
+
+  const countries = useMemo(
+    () => resolveCountriesForOffice(branchRecords, form.nearestOffice, globalCountries, { branchCountriesEnabled }),
+    [branchRecords, form.nearestOffice, globalCountries, branchCountriesEnabled]
+  );
+
+  useEffect(() => {
+    setForm((prev) => {
+      const nextCountry = countries.includes(prev.countryToVisit) ? prev.countryToVisit : countries[0] || "";
+      if (nextCountry === prev.countryToVisit) return prev;
+      return { ...prev, countryToVisit: nextCountry };
+    });
+  }, [countries, form.nearestOffice]);
 
   const update = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -206,7 +222,7 @@ export function StudentRegistrationForm() {
                 ))
               )}
             </select>
-            <p className="mt-1 text-[11px] text-slate-500">Options are managed in the platform admin settings.</p>
+            <p className="mt-1 text-[11px] text-slate-500">{branchCountriesEnabled ? "Options depend on the nearest office you select." : "Showing the global destination list."}</p>
           </div>
 
           <div>

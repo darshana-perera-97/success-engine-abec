@@ -2,7 +2,8 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState } from "react";
 import { Globe, Save, Settings, Landmark, Trash2, Wallet, MessageSquare } from "lucide-react";
 import { Button } from "./Button";
-import { createCountry, deleteCountry, getCountries, createPaymentAccount, deletePaymentAccount, getPaymentAccounts } from "../authApi";
+import { createCountry, createPaymentAccount, deleteCountry, deletePaymentAccount, getBranches, getCountries, getPaymentAccounts, updateBranchCountries } from "../authApi";
+import { getStoredBranchCountries } from "../utils/branchCountries";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onSaveSystemData, paymentAccounts = [], onPaymentAccountsChange }) => {
@@ -25,10 +26,17 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   const [isSavingMeetingSettings, setIsSavingMeetingSettings] = useState(false);
   const [countries, setCountries] = useState([]);
   const [countriesReady, setCountriesReady] = useState(false);
-  const [newCountryName, setNewCountryName] = useState("");
+  const [branches, setBranches] = useState([]);
+  const [branchesReady, setBranchesReady] = useState(false);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [branchCountrySelection, setBranchCountrySelection] = useState([]);
+  const [newGlobalCountryName, setNewGlobalCountryName] = useState("");
   const [countryError, setCountryError] = useState("");
   const [countrySuccess, setCountrySuccess] = useState("");
+  const [globalCountryError, setGlobalCountryError] = useState("");
+  const [globalCountrySuccess, setGlobalCountrySuccess] = useState("");
   const [isSavingCountry, setIsSavingCountry] = useState(false);
+  const [isSavingBranchCountrySelection, setIsSavingBranchCountrySelection] = useState(false);
   const [removingCountryName, setRemovingCountryName] = useState("");
   const [localPaymentAccounts, setLocalPaymentAccounts] = useState(paymentAccounts);
   const [paymentAccountsReady, setPaymentAccountsReady] = useState(false);
@@ -45,13 +53,34 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     currency: "LKR",
     notes: ""
   });
-  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false });
   const [financeError, setFinanceError] = useState("");
   const [financeSuccess, setFinanceSuccess] = useState("");
   const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
   const [chatError, setChatError] = useState("");
   const [chatSuccess, setChatSuccess] = useState("");
   const [isSavingChatSettings, setIsSavingChatSettings] = useState(false);
+  const [branchCountriesError, setBranchCountriesError] = useState("");
+  const [branchCountriesSuccess, setBranchCountriesSuccess] = useState("");
+  const [isSavingBranchCountriesSettings, setIsSavingBranchCountriesSettings] = useState(false);
+
+  const loadBranches = async () => {
+    try {
+      const result = await getBranches();
+      if (!result.ok) {
+        setCountryError(result.error || "Failed to load branches.");
+        return;
+      }
+      const list = Array.isArray(result.data) ? result.data : [];
+      setBranches(list);
+      setSelectedBranchId((prev) => {
+        if (prev && list.some((branch) => branch.id === prev)) return prev;
+        return list[0]?.id || "";
+      });
+    } finally {
+      setBranchesReady(true);
+    }
+  };
 
   const loadCountries = async () => {
     try {
@@ -84,6 +113,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
 
   useEffect(() => {
     loadCountries();
+    loadBranches();
     loadPaymentAccounts();
   }, []);
 
@@ -97,7 +127,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     if (!systemData) return;
     setFinanceForm({
       counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
-      adminChatEnabled: systemData.adminChatEnabled === true
+      adminChatEnabled: systemData.adminChatEnabled === true,
+      branchCountriesEnabled: systemData.branchCountriesEnabled === true
     });
   }, [systemData]);
 
@@ -117,6 +148,30 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
       daySchedules: nextSchedules
     });
   }, [meetingSettings]);
+
+  useEffect(() => {
+    if (!selectedBranchId) {
+      setBranchCountrySelection([]);
+      return;
+    }
+    const branch = branches.find((item) => item.id === selectedBranchId);
+    setBranchCountrySelection(branch ? getStoredBranchCountries(branch) : []);
+  }, [selectedBranchId, branches]);
+
+  const toggleBranchCountry = (countryName) => {
+    const key = String(countryName || "").trim().toLowerCase();
+    if (!key) return;
+    setBranchCountrySelection((prev) => {
+      if (prev.some((c) => c.toLowerCase() === key)) {
+        return prev.filter((c) => c.toLowerCase() !== key);
+      }
+      const canonical = countries.find((c) => c.toLowerCase() === key) || countryName;
+      return [...prev, canonical].sort((a, b) => a.localeCompare(b));
+    });
+  };
+
+  const isBranchCountrySelected = (countryName) =>
+    branchCountrySelection.some((c) => c.toLowerCase() === String(countryName || "").trim().toLowerCase());
 
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxs("div", { children: [
@@ -313,40 +368,139 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
         /* @__PURE__ */ jsx(Globe, { size: 18, className: "text-slate-600" }),
-        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Destination countries" })
+        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Destination countries by branch" })
       ] }),
-      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Used when creating Country Coordinator accounts and student destination options. Remove countries that are no longer offered." }),
-      countryError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: countryError }) : null,
-      countrySuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: countrySuccess }) : null,
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Configure destination countries separately for each branch. When branch limiting is enabled, students and inquiry forms show the list for their selected office. When disabled, everyone sees the global default list." }),
+      branchCountriesError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: branchCountriesError }) : null,
+      branchCountriesSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: branchCountriesSuccess }) : null,
+      /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.branchCountriesEnabled,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, branchCountriesEnabled: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Limit countries by branch" }),
+          "When enabled, each branch can offer its own destination countries. When disabled, all branches and forms use the global default list only."
+        ] })
+      ] }) }),
+      /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
+        type: "button",
+        isLoading: isSavingBranchCountriesSettings,
+        onClick: async () => {
+          setBranchCountriesError("");
+          setBranchCountriesSuccess("");
+          setIsSavingBranchCountriesSettings(true);
+          const result = await onSaveSystemData?.({
+            branchCountriesEnabled: financeForm.branchCountriesEnabled
+          });
+          setIsSavingBranchCountriesSettings(false);
+          if (!result?.ok) {
+            setBranchCountriesError(result?.error || "Failed to save branch country settings.");
+            return;
+          }
+          setBranchCountriesSuccess("Branch country limiting settings saved.");
+        },
+        children: [
+          /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
+          "Save branch limiting"
+        ]
+      }) }),
+      financeForm.branchCountriesEnabled && countryError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: countryError }) : null,
+      financeForm.branchCountriesEnabled && countrySuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: countrySuccess }) : null,
+      !financeForm.branchCountriesEnabled ? /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-600 bg-slate-50 border border-gray-200 rounded-lg px-3 py-2 w-full", children: "Branch limiting is off. All forms use the global default countries section below." }) : !branchesReady ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: "Loading branches…" }) : branches.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: "No branches found. Add branches in Branch Analytics first." }) : /* @__PURE__ */ jsxs("div", { className: "space-y-4 w-full", children: [
+        /* @__PURE__ */ jsxs("div", { className: "space-y-1.5", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold uppercase tracking-wide text-slate-700", children: "Branch" }),
+          /* @__PURE__ */ jsx("select", {
+            className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md",
+            value: selectedBranchId,
+            onChange: (e) => setSelectedBranchId(e.target.value),
+            children: branches.map((branch) => /* @__PURE__ */ jsx("option", { value: branch.id, children: branch.location || branch.id }, branch.id))
+          })
+        ] }),
+        !countriesReady ? /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: "Loading countries…" }) : countries.length === 0 ? /* @__PURE__ */ jsx("div", { className: "text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2", children: "Add countries in the Global default countries section below before assigning them to branches." }) : /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Tick the destinations this branch offers. Only countries from the global list can be selected." }),
+          /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto p-2", children: /* @__PURE__ */ jsx("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2", children: countries.map((country) => /* @__PURE__ */ jsx("label", {
+            className: "flex items-center gap-3 px-3 py-2.5 bg-slate-50/60 border border-gray-200 rounded-md hover:bg-slate-50 cursor-pointer",
+            children: [
+              /* @__PURE__ */ jsx("input", {
+                type: "checkbox",
+                className: "shrink-0",
+                checked: isBranchCountrySelected(country),
+                onChange: () => toggleBranchCountry(country)
+              }),
+              /* @__PURE__ */ jsx("span", { className: "text-sm text-slate-800 font-medium", children: country })
+            ]
+          }, country)) }) }),
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-3", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: `${branchCountrySelection.length} of ${countries.length} countr${countries.length === 1 ? "y" : "ies"} selected.` }),
+            /* @__PURE__ */ jsxs(Button, {
+              type: "button",
+              isLoading: isSavingBranchCountrySelection,
+              onClick: async () => {
+                setCountryError("");
+                setCountrySuccess("");
+                if (!selectedBranchId) {
+                  setCountryError("Select a branch first.");
+                  return;
+                }
+                setIsSavingBranchCountrySelection(true);
+                const result = await updateBranchCountries(selectedBranchId, branchCountrySelection);
+                setIsSavingBranchCountrySelection(false);
+                if (!result.ok) {
+                  setCountryError(result.error || "Failed to save branch countries.");
+                  return;
+                }
+                setBranches((prev) => prev.map((branch) => branch.id === selectedBranchId ? { ...branch, countries: result.data.countries || [] } : branch));
+                setCountrySuccess(`Countries saved for ${result.data.location || "branch"}.`);
+              },
+              children: [
+                /* @__PURE__ */ jsx(Save, { size: 14, className: "mr-1.5" }),
+                "Save countries"
+              ]
+            })
+          ] })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsx(Globe, { size: 18, className: "text-slate-600" }),
+        /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Global default countries" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Platform-wide destination list used when branch limiting is off, as a fallback when a branch has no custom list, and for Country Coordinator account setup." }),
+      globalCountryError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 max-w-xl", children: globalCountryError }) : null,
+      globalCountrySuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 max-w-xl", children: globalCountrySuccess }) : null,
       /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row gap-2 max-w-xl", children: [
         /* @__PURE__ */ jsx("input", {
           type: "text",
           className: "flex-1 px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
           placeholder: "e.g. Ireland",
-          value: newCountryName,
-          onChange: (e) => setNewCountryName(e.target.value)
+          value: newGlobalCountryName,
+          onChange: (e) => setNewGlobalCountryName(e.target.value)
         }),
         /* @__PURE__ */ jsx(Button, {
           type: "button",
           isLoading: isSavingCountry,
           onClick: async () => {
-            setCountryError("");
-            setCountrySuccess("");
-            const name = newCountryName.trim();
+            setGlobalCountryError("");
+            setGlobalCountrySuccess("");
+            const name = newGlobalCountryName.trim();
             if (!name) {
-              setCountryError("Enter a country name.");
+              setGlobalCountryError("Enter a country name.");
               return;
             }
             setIsSavingCountry(true);
             const result = await createCountry(name);
             setIsSavingCountry(false);
             if (!result.ok) {
-              setCountryError(result.error || "Failed to add country.");
+              setGlobalCountryError(result.error || "Failed to add global country.");
               return;
             }
             setCountries(result.data);
-            setNewCountryName("");
-            setCountrySuccess("Country added.");
+            setNewGlobalCountryName("");
+            setGlobalCountrySuccess("Global default country added.");
           },
           children: "Add country"
         })
@@ -356,32 +510,32 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 5, cols: 2 }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
+        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 2 }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No global countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right", children: /* @__PURE__ */ jsx(Button, {
             type: "button",
             variant: "ghost",
             size: "sm",
             className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50",
-            isLoading: removingCountryName === c,
+            isLoading: removingCountryName === `global:${c}`,
             onClick: async () => {
-              setCountryError("");
-              setCountrySuccess("");
-              setRemovingCountryName(c);
+              setGlobalCountryError("");
+              setGlobalCountrySuccess("");
+              setRemovingCountryName(`global:${c}`);
               const result = await deleteCountry(c);
               setRemovingCountryName("");
               if (!result.ok) {
-                setCountryError(result.error || "Failed to remove country.");
+                setGlobalCountryError(result.error || "Failed to remove global country.");
                 return;
               }
               setCountries(result.data);
-              setCountrySuccess("Country removed.");
+              setGlobalCountrySuccess("Global default country removed.");
             },
             children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
           }) })
-        ] }, c)) })
+        ] }, `global-${c}`)) })
       ] }) }),
-      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: countriesReady ? `${countries.length} countr${countries.length === 1 ? "y" : "ies"} in the list.` : "Loading countries…" })
+      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 max-w-xl", children: countriesReady ? `${countries.length} global countr${countries.length === 1 ? "y" : "ies"} in the list.` : "Loading countries…" })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
