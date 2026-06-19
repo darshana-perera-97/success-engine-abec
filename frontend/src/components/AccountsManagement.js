@@ -1,13 +1,14 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
-import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, Shield, X } from "lucide-react";
 import {
   createAccount,
   getAccounts,
   getBranches,
   getCountries,
   resetAccountPassword,
+  updateAccountRole,
   updateAdminAvatar
 } from "../authApi";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
@@ -28,6 +29,22 @@ function generateTempPassword() {
   const rest = Array.from({ length: 8 }, () => pick(all));
   return [...required, ...rest].sort(() => Math.random() - 0.5).join("");
 }
+
+function accountRoleSelectValue(role) {
+  if (role === "Consultor") return "Counselor";
+  return String(role || "").trim();
+}
+
+const ACCOUNT_ROLE_OPTIONS = [
+  { value: "Admin", label: "Admin" },
+  { value: "Manager", label: getRoleDisplayName("Manager") },
+  { value: "Team Lead", label: "Team Lead" },
+  { value: "Accountant", label: "Accountant" },
+  { value: "Counselor", label: "Counselor" },
+  { value: VISA_OFFICER_ROLE, label: VISA_OFFICER_ROLE },
+  { value: VISA_OFFICER_COUNSELOR_ROLE, label: VISA_OFFICER_COUNSELOR_ROLE },
+  { value: "Country Coordinator", label: "Country Coordinator" }
+];
 
 function roleBadgeClass(role) {
   switch (getRoleDisplayName(role)) {
@@ -80,6 +97,11 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
   const [resetSuccess, setResetSuccess] = useState("");
   const [resetSaving, setResetSaving] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
+  const [roleTarget, setRoleTarget] = useState(null);
+  const [roleForm, setRoleForm] = useState({ role: "Manager", branch: "", country: "" });
+  const [roleError, setRoleError] = useState("");
+  const [roleSuccess, setRoleSuccess] = useState("");
+  const [roleSaving, setRoleSaving] = useState(false);
   const [pageLoads, setPageLoads] = useState({
     accounts: false,
     branches: false,
@@ -153,6 +175,52 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     setResetError("");
     setResetSuccess("");
     setShowResetPassword(false);
+  };
+
+  const openRoleDialog = (row) => {
+    setRoleTarget(row);
+    setRoleForm({
+      role: accountRoleSelectValue(row.role) || "Manager",
+      branch: row.branch || "",
+      country: row.country || countryOptions[0] || ""
+    });
+    setRoleError("");
+    setRoleSuccess("");
+  };
+
+  const closeRoleDialog = () => {
+    if (roleSaving) return;
+    setRoleTarget(null);
+    setRoleError("");
+    setRoleSuccess("");
+  };
+
+  const handleConfirmRoleChange = async () => {
+    if (!roleTarget) return;
+    if (roleForm.role === "Country Coordinator" && !roleForm.country) {
+      setRoleError("Select a country for this Country Coordinator account.");
+      return;
+    }
+    if (roleForm.role !== "Admin" && !roleForm.branch) {
+      setRoleError("Select a branch for this access level.");
+      return;
+    }
+    setRoleError("");
+    setRoleSaving(true);
+    setPendingId(roleTarget.id);
+    const result = await updateAccountRole(roleTarget.id, {
+      role: roleForm.role,
+      branch: roleForm.role === "Admin" ? "" : roleForm.branch,
+      country: roleForm.role === "Country Coordinator" ? roleForm.country : ""
+    });
+    setRoleSaving(false);
+    setPendingId(null);
+    if (!result.ok) {
+      setRoleError(result.error || "Failed to update access level.");
+      return;
+    }
+    setRows((prev) => prev.map((row) => (row.id === roleTarget.id ? { ...row, ...result.data } : row)));
+    setRoleSuccess(`Access level updated for ${roleTarget.username}.`);
   };
 
   const handleConfirmReset = async () => {
@@ -231,7 +299,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               }),
               /* @__PURE__ */ jsx("p", {
                 className: "text-sm text-slate-500 mt-0.5",
-                children: "Manage platform logins. Add Admin, Manager, Accountant, counselor-type roles (Counselor, Visa Officer, Visa Officer & Counselor), or Country Coordinator accounts and reset passwords (except the primary admin login)."
+                children: "Manage platform logins. Add accounts, change access levels, and reset passwords (except the primary admin login)."
               })
             ]
           }),
@@ -352,6 +420,18 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                                       onClick: () => fileRef.current?.click(),
                                       children: "Upload photo"
                                     })
+                                  ]
+                                }) : null,
+                                row.id !== "ADM001" ? /* @__PURE__ */ jsxs(Button, {
+                                  type: "button",
+                                  variant: "outline",
+                                  size: "sm",
+                                  className: "gap-1.5",
+                                  isLoading: pendingId === row.id,
+                                  onClick: () => openRoleDialog(row),
+                                  children: [
+                                    /* @__PURE__ */ jsx(Shield, { size: 14 }),
+                                    "Change access"
                                   ]
                                 }) : null,
                                 row.id !== "ADM001" ? /* @__PURE__ */ jsxs(Button, {
@@ -500,13 +580,9 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                         };
                       }),
                       children: [
-                        /* @__PURE__ */ jsx("option", { value: "Admin", children: "Admin" }),
-                        /* @__PURE__ */ jsx("option", { value: "Manager", children: getRoleDisplayName("Manager") }),
-                        /* @__PURE__ */ jsx("option", { value: "Accountant", children: "Accountant" }),
-                        /* @__PURE__ */ jsx("option", { value: "Counselor", children: "Counselor" }),
-                        /* @__PURE__ */ jsx("option", { value: VISA_OFFICER_ROLE, children: VISA_OFFICER_ROLE }),
-                        /* @__PURE__ */ jsx("option", { value: VISA_OFFICER_COUNSELOR_ROLE, children: VISA_OFFICER_COUNSELOR_ROLE }),
-                        /* @__PURE__ */ jsx("option", { value: "Country Coordinator", children: "Country Coordinator" })
+                        ...ACCOUNT_ROLE_OPTIONS.map((option) =>
+                          /* @__PURE__ */ jsx("option", { value: option.value, children: option.label }, option.value)
+                        )
                       ]
                     })
                   ]
@@ -592,6 +668,168 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                       children: "Save Account"
                     })
                   ]
+                })
+              ].filter(Boolean)
+            })
+          ]
+        })
+      }) : null,
+      roleTarget ? /* @__PURE__ */ jsx("div", {
+        className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm",
+        onClick: (e) => {
+          if (e.target === e.currentTarget) closeRoleDialog();
+        },
+        children: /* @__PURE__ */ jsxs("div", {
+          className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto",
+          children: [
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between",
+              children: [
+                /* @__PURE__ */ jsxs("div", {
+                  children: [
+                    /* @__PURE__ */ jsx("h3", {
+                      className: "font-semibold text-lg text-slate-900",
+                      children: "Change access level"
+                    }),
+                    /* @__PURE__ */ jsxs("p", {
+                      className: "text-xs text-slate-500 mt-0.5",
+                      children: [
+                        "Update the portal role for ",
+                        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: roleTarget.username }),
+                        " (",
+                        roleTarget.email,
+                        ")."
+                      ]
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsx("button", {
+                  type: "button",
+                  className: "text-slate-400 hover:text-slate-600",
+                  onClick: closeRoleDialog,
+                  disabled: roleSaving,
+                  children: /* @__PURE__ */ jsx(X, { size: 18 })
+                })
+              ]
+            }),
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 space-y-4",
+              children: [
+                roleError ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2",
+                  children: roleError
+                }) : null,
+                roleSuccess ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2",
+                  children: roleSuccess
+                }) : null,
+                /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "Access level"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: roleForm.role,
+                      onChange: (e) => {
+                        const role = e.target.value;
+                        setRoleForm((prev) => ({
+                          ...prev,
+                          role,
+                          branch: role === "Admin" ? "" : prev.branch || branchOptions[0] || "",
+                          country: role === "Country Coordinator" ? prev.country || countryOptions[0] || "" : ""
+                        }));
+                        if (roleError) setRoleError("");
+                        if (roleSuccess) setRoleSuccess("");
+                      },
+                      disabled: roleSaving || Boolean(roleSuccess),
+                      children: ACCOUNT_ROLE_OPTIONS.map((option) =>
+                        /* @__PURE__ */ jsx("option", { value: option.value, children: option.label }, option.value)
+                      )
+                    })
+                  ]
+                }),
+                roleForm.role === "Admin" ? /* @__PURE__ */ jsx("p", {
+                  className: "text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-md px-3 py-2",
+                  children: "Admin accounts are global and are not assigned to a branch."
+                }) : /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "Branch"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: roleForm.branch,
+                      onChange: (e) => {
+                        setRoleForm((prev) => ({ ...prev, branch: e.target.value }));
+                        if (roleError) setRoleError("");
+                        if (roleSuccess) setRoleSuccess("");
+                      },
+                      required: true,
+                      disabled: roleSaving || Boolean(roleSuccess) || branchOptions.length === 0,
+                      children: [
+                        /* @__PURE__ */ jsx("option", {
+                          value: "",
+                          disabled: true,
+                          children: branchOptions.length === 0 ? "No saved branches" : "Select branch"
+                        }),
+                        ...branchOptions.map((branch) => /* @__PURE__ */ jsx("option", { value: branch, children: branch }, branch))
+                      ]
+                    })
+                  ]
+                }),
+                roleForm.role === "Country Coordinator" ? /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "Country (portfolio)"
+                    }),
+                    /* @__PURE__ */ jsxs("select", {
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: roleForm.country,
+                      onChange: (e) => {
+                        setRoleForm((prev) => ({ ...prev, country: e.target.value }));
+                        if (roleError) setRoleError("");
+                        if (roleSuccess) setRoleSuccess("");
+                      },
+                      required: true,
+                      disabled: roleSaving || Boolean(roleSuccess) || countryOptions.length === 0,
+                      children: [
+                        /* @__PURE__ */ jsx("option", {
+                          value: "",
+                          disabled: true,
+                          children: countryOptions.length === 0 ? "Add countries in Settings first" : "Select country"
+                        }),
+                        ...countryOptions.map((c) => /* @__PURE__ */ jsx("option", { value: c, children: c }, c))
+                      ]
+                    })
+                  ]
+                }) : null,
+                /* @__PURE__ */ jsxs("div", {
+                  className: "pt-2 flex justify-end gap-2",
+                  children: [
+                    /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      variant: "ghost",
+                      onClick: closeRoleDialog,
+                      disabled: roleSaving,
+                      children: roleSuccess ? "Close" : "Cancel"
+                    }),
+                    roleSuccess ? null : /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      isLoading: roleSaving,
+                      disabled:
+                        (roleForm.role !== "Admin" && (!roleForm.branch || branchOptions.length === 0)) ||
+                        (roleForm.role === "Country Coordinator" && (!roleForm.country || countryOptions.length === 0)),
+                      onClick: handleConfirmRoleChange,
+                      children: "Save access level"
+                    })
+                  ].filter(Boolean)
                 })
               ].filter(Boolean)
             })

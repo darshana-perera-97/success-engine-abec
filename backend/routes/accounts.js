@@ -204,6 +204,108 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "PUT" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/role")) {
+    try {
+      const accountId = decodeURIComponent(
+        url.pathname.replace("/api/accounts/", "").replace("/role", "").trim()
+      ).replace(/\/+$/, "");
+      if (!accountId) {
+        sendJson(res, 400, { ok: false, error: "Account ID is required." });
+        return true;
+      }
+      if (accountId === "ADM001") {
+        sendJson(res, 400, {
+          ok: false,
+          error: "The primary admin access level is managed in backend configuration and cannot be changed here.",
+        });
+        return true;
+      }
+      const body = await parseBody(req);
+      const role = normalizeStoredRole(String(body.role || "").trim());
+      const branch = String(body.branch || "").trim();
+      const country = String(body.country || "").trim();
+
+      if (!role) {
+        sendJson(res, 400, { ok: false, error: "Role is required." });
+        return true;
+      }
+      if (!ALLOWED_ROLES.has(role)) {
+        sendJson(res, 400, { ok: false, error: "Invalid role." });
+        return true;
+      }
+      if (role !== "Admin" && !branch) {
+        sendJson(res, 400, { ok: false, error: "Branch is required for this role." });
+        return true;
+      }
+      if (role === "Country Coordinator") {
+        if (!country) {
+          sendJson(res, 400, { ok: false, error: "Country is required for Country Coordinator accounts." });
+          return true;
+        }
+        const countriesList = await readCountries();
+        const allowedCountry = countriesList.some((c) => String(c).trim().toLowerCase() === country.toLowerCase());
+        if (!allowedCountry) {
+          sendJson(res, 400, { ok: false, error: "Please select a country from the saved list (Settings)." });
+          return true;
+        }
+      }
+
+      const users = await readUsers();
+      const targetIndex = users.findIndex((u) => String(u.id || "") === accountId);
+      if (targetIndex === -1) {
+        sendJson(res, 404, { ok: false, error: "Account not found." });
+        return true;
+      }
+      const target = users[targetIndex];
+      if (normalizeEmail(target.email) === ADMIN_EMAIL) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "The primary admin access level cannot be changed from this screen.",
+        });
+        return true;
+      }
+
+      if (role !== "Admin") {
+        const savedBranches = await readBranches();
+        const branchExists = savedBranches.some(
+          (b) => String(b.location || "").toLowerCase() === branch.toLowerCase()
+        );
+        if (!branchExists) {
+          sendJson(res, 400, { ok: false, error: "Please select a valid saved branch." });
+          return true;
+        }
+      }
+
+      const keepTeamLead = isCounselorRole(role) && isCounselorRole(target.role);
+      const updatedAccount = {
+        ...target,
+        role,
+        branch: role === "Admin" ? "" : branch,
+        country: role === "Country Coordinator" ? country : "",
+        teamLeadId: keepTeamLead ? target.teamLeadId || "" : "",
+        teamLeadName: keepTeamLead ? target.teamLeadName || "" : "",
+        teamLeadEmail: keepTeamLead ? target.teamLeadEmail || "" : "",
+        updatedAt: new Date().toISOString(),
+      };
+      const updatedUsers = [...users];
+      updatedUsers[targetIndex] = updatedAccount;
+      await writeUsers(updatedUsers);
+      logEvent("auth", "admin changed account role", {
+        accountId: updatedAccount.id,
+        email: updatedAccount.email,
+        previousRole: target.role,
+        role: updatedAccount.role,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
   if (req.method === "PUT" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/team-lead")) {
     try {
       const accountId = decodeURIComponent(url.pathname.replace("/api/accounts/", "").replace("/team-lead", "").trim()).replace(/\/+$/, "");
