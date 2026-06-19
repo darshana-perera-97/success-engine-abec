@@ -40,6 +40,7 @@ import { filterTasksForCounselor } from "./counselorTaskScope";
 import {
   isCounselorEquivalentPortalRole,
   isRecognizedPortalRole,
+  isStaffOmniChannelMessenger,
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "./roles";
@@ -1135,9 +1136,9 @@ function App({ initialView = "dashboard" }) {
   useEffect(() => {
     let cancelled = false;
     const isCounselor = isCounselorEquivalentPortalRole(currentRole);
-    const isAdminMessenger = currentRole === "Admin" && adminChatEnabled;
+    const isStaffMessenger = isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
     const userId = String(currentUser?.id || "").trim();
-    if ((!isCounselor && !isAdminMessenger) || !userId) {
+    if ((!isCounselor && !isStaffMessenger) || !userId) {
       whatsappPollUserIdRef.current = "";
       setWhatsappConnectionStatus("disconnected");
       return;
@@ -1171,8 +1172,8 @@ function App({ initialView = "dashboard" }) {
   }, [currentRole, currentUser?.id, adminChatEnabled]);
   useEffect(() => {
     const isCounselor = isCounselorEquivalentPortalRole(currentRole);
-    const isAdminMessenger = currentRole === "Admin" && adminChatEnabled;
-    if (!isCounselor && !isAdminMessenger) return;
+    const isStaffMessenger = isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+    if (!isCounselor && !isStaffMessenger) return;
     const userId = String(currentUser?.id || "").trim();
     if (!userId) return;
     const tick = () => {
@@ -2227,7 +2228,7 @@ function App({ initialView = "dashboard" }) {
   };
   const renderContent = () => {
     if (currentView === "integration") {
-      if (isCounselorEquivalentPortalRole(currentRole) || (currentRole === "Admin" && adminChatEnabled)) {
+      if (isCounselorEquivalentPortalRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled)) {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
     }
@@ -2519,6 +2520,11 @@ function App({ initialView = "dashboard" }) {
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       }
+      if (currentView === "integration") {
+        return adminChatEnabled
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser })
+          : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable admin messaging in Settings to use Integrations." });
+      }
       return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
     }
     const adminBranchScoped = currentRole === "Admin" && managerDataScope.active;
@@ -2684,7 +2690,7 @@ function App({ initialView = "dashboard" }) {
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
         pageLoading: !appDataLoaded,
-        showWhatsappNavIndicator: isCounselorEquivalentPortalRole(currentRole) || (currentRole === "Admin" && adminChatEnabled),
+        showWhatsappNavIndicator: isCounselorEquivalentPortalRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled),
         whatsappConnectionStatus,
         adminChatEnabled,
         onLogout: () => {

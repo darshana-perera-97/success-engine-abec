@@ -43,3 +43,11 @@ export function isRecognizedPortalRole(role) {
     isCounselorEquivalentPortalRole(r)
   );
 }
+
+const STAFF_OMNI_CHANNEL_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
+
+/** Admin messaging setting unlocks Omni-Channel send + Integrations for these roles. */
+export function isStaffOmniChannelMessenger(role, adminChatEnabled = false) {
+  if (adminChatEnabled !== true) return false;
+  return STAFF_OMNI_CHANNEL_ROLES.has(String(role || "").trim());
+}

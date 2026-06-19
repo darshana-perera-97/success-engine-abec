@@ -327,7 +327,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         /* @__PURE__ */ jsx(MessageSquare, { size: 18, className: "text-slate-600" }),
         /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Admin messaging" })
       ] }),
-      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Allow the admin account to send WhatsApp messages to students from Omni-Channel and connect a dedicated WhatsApp number under Integrations." }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Allow Admin, Manager, and Team Lead accounts to send WhatsApp messages to students from Omni-Channel and connect a dedicated WhatsApp number under Integrations." }),
       chatError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 w-full", children: chatError }) : null,
       chatSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 w-full", children: chatSuccess }) : null,
       /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
@@ -338,8 +338,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           onChange: (e) => setFinanceForm((prev) => ({ ...prev, adminChatEnabled: e.target.checked }))
         }),
         /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
-          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Enable admin chat & WhatsApp" }),
-          "When enabled, admin can reply in Omni-Channel (not read-only), the Integrations page appears in the sidebar, and outbound messages use the admin WhatsApp connection. Student threads stay in one conversation view alongside counselor messages."
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Enable staff chat & WhatsApp" }),
+          "When enabled, Admin, Manager, and Team Lead can reply in Omni-Channel (not read-only), the Integrations page appears in their sidebar, and outbound messages use each user's own WhatsApp connection. Student threads stay in one conversation view alongside counselor messages."
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {

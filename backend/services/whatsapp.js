@@ -15,6 +15,8 @@ const { readStudemts } = require("../models/students");
 const { readChats, writeChats } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { isCounselorRole } = require("./roles");
+
+const STAFF_WHATSAPP_ROLES = new Set(["Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
 const { appendWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
@@ -32,19 +34,37 @@ async function resolveCounselor(userId) {
   return matched;
 }
 
+async function isStaffWhatsappMessagingEnabled() {
+  const systemData = await readSystemData();
+  return systemData.adminChatEnabled === true;
+}
+
 async function isAdminWhatsappMessenger(userId) {
   const id = String(userId || "").trim();
   if (id !== ADMIN_WHATSAPP_USER_ID) return false;
-  const systemData = await readSystemData();
-  return systemData.adminChatEnabled === true;
+  return isStaffWhatsappMessagingEnabled();
+}
+
+async function resolveStaffWhatsappMessenger(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  if (!(await isStaffWhatsappMessagingEnabled())) return null;
+  if (id === ADMIN_WHATSAPP_USER_ID) {
+    return { id: ADMIN_WHATSAPP_USER_ID, role: "Admin" };
+  }
+  const users = await readUsers();
+  const matched = users.find((user) => String(user.id || "") === id);
+  if (!matched) return null;
+  const role = String(matched.role || "").trim();
+  if (!STAFF_WHATSAPP_ROLES.has(role)) return null;
+  return { id, role };
 }
 
 async function resolveWhatsappMessenger(userId) {
   const id = String(userId || "").trim();
   if (!id) return null;
-  if (await isAdminWhatsappMessenger(id)) {
-    return { id: ADMIN_WHATSAPP_USER_ID, role: "Admin" };
-  }
+  const staffMessenger = await resolveStaffWhatsappMessenger(id);
+  if (staffMessenger) return staffMessenger;
   return resolveCounselor(userId);
 }
 
@@ -280,10 +300,20 @@ async function initializeWhatsappSessionsOnStartup() {
       if (!hasSavedSession) continue;
       await startWhatsappSession(counselorId);
     }
-    if (await isAdminWhatsappMessenger(ADMIN_WHATSAPP_USER_ID)) {
+    if (await isStaffWhatsappMessagingEnabled()) {
       const hasAdminSession = await userHasSavedWhatsappSession(ADMIN_WHATSAPP_USER_ID);
       if (hasAdminSession) {
         await startWhatsappSession(ADMIN_WHATSAPP_USER_ID);
+      }
+      for (const user of users) {
+        const role = String(user.role || "").trim();
+        if (!STAFF_WHATSAPP_ROLES.has(role)) continue;
+        const staffId = String(user.id || "").trim();
+        if (!staffId) continue;
+        const hasSavedSession = await userHasSavedWhatsappSession(staffId);
+        if (hasSavedSession) {
+          await startWhatsappSession(staffId);
+        }
       }
     }
   } catch (error) {

@@ -210,6 +210,20 @@ const Layout = ({
     { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
     { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
   ];
+  const withStaffMessagingNav = (items) => {
+    if (!adminChatEnabled) return items;
+    const messagesIndex = items.findIndex((item) => item.id === "messages");
+    const integrationItem = { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) };
+    const next = items.map((item) =>
+      item.id === "messages" ? { ...item, label: "Omni-Channel" } : item
+    );
+    if (messagesIndex >= 0) {
+      next.splice(messagesIndex, 0, integrationItem);
+    } else {
+      next.push(integrationItem);
+    }
+    return next;
+  };
   const getNavItems = () => {
     if (isCounselorEquivalentPortalRole(currentRole)) {
       return counselorNavItems;
@@ -243,7 +257,7 @@ const Layout = ({
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) }
         ];
       case "Manager":
-        return [
+        return withStaffMessagingNav([
           { id: "dashboard", label: "Command Center", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
@@ -254,9 +268,9 @@ const Layout = ({
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
-        ];
+        ]);
       case "Team Lead":
-        return [
+        return withStaffMessagingNav([
           { id: "dashboard", label: "Command Center", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
@@ -265,7 +279,7 @@ const Layout = ({
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Live Ops (Ghost)", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge }
-        ];
+        ]);
       case "Admin":
       default: {
         const adminNavItems = [
@@ -283,13 +297,7 @@ const Layout = ({
           { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) }
         ];
         if (adminChatEnabled) {
-          const messagesIndex = adminNavItems.findIndex((item) => item.id === "messages");
-          const integrationItem = { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) };
-          if (messagesIndex >= 0) {
-            adminNavItems.splice(messagesIndex, 0, integrationItem);
-          } else {
-            adminNavItems.push(integrationItem);
-          }
+          return withStaffMessagingNav(adminNavItems);
         }
         return adminNavItems;
       }
