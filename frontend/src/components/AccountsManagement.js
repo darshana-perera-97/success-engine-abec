@@ -32,19 +32,27 @@ function generateTempPassword() {
 
 function accountRoleSelectValue(role) {
   if (role === "Consultor") return "Counselor";
-  return String(role || "").trim();
+  const r = String(role || "").trim();
+  if (r === "Team Lead" && getRoleDisplayName("Manager") === "Team Lead") return "Manager";
+  return r;
 }
 
-const ACCOUNT_ROLE_OPTIONS = [
-  { value: "Admin", label: "Admin" },
-  { value: "Manager", label: getRoleDisplayName("Manager") },
-  { value: "Team Lead", label: "Team Lead" },
-  { value: "Accountant", label: "Accountant" },
-  { value: "Counselor", label: "Counselor" },
-  { value: VISA_OFFICER_ROLE, label: VISA_OFFICER_ROLE },
-  { value: VISA_OFFICER_COUNSELOR_ROLE, label: VISA_OFFICER_COUNSELOR_ROLE },
-  { value: "Country Coordinator", label: "Country Coordinator" }
-];
+function getAccountRoleOptions() {
+  const managerLabel = getRoleDisplayName("Manager");
+  const options = [
+    { value: "Admin", label: "Admin" },
+    { value: "Manager", label: managerLabel },
+    { value: "Accountant", label: "Accountant" },
+    { value: "Counselor", label: "Counselor" },
+    { value: VISA_OFFICER_ROLE, label: VISA_OFFICER_ROLE },
+    { value: VISA_OFFICER_COUNSELOR_ROLE, label: VISA_OFFICER_COUNSELOR_ROLE },
+    { value: "Country Coordinator", label: "Country Coordinator" }
+  ];
+  if (managerLabel !== "Team Lead") {
+    options.splice(2, 0, { value: "Team Lead", label: "Team Lead" });
+  }
+  return options;
+}
 
 function roleBadgeClass(role) {
   switch (getRoleDisplayName(role)) {
@@ -580,7 +588,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                         };
                       }),
                       children: [
-                        ...ACCOUNT_ROLE_OPTIONS.map((option) =>
+                        ...getAccountRoleOptions().map((option) =>
                           /* @__PURE__ */ jsx("option", { value: option.value, children: option.label }, option.value)
                         )
                       ]
@@ -745,7 +753,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                         if (roleSuccess) setRoleSuccess("");
                       },
                       disabled: roleSaving || Boolean(roleSuccess),
-                      children: ACCOUNT_ROLE_OPTIONS.map((option) =>
+                      children: getAccountRoleOptions().map((option) =>
                         /* @__PURE__ */ jsx("option", { value: option.value, children: option.label }, option.value)
                       )
                     })
