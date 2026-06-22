@@ -133,8 +133,10 @@ export function InquiryIntakeForm({
   isSaving = false,
   onSubmit,
   onCancel,
+  onScheduleLater,
   submitLabel = "Save",
   cancelLabel = "Cancel",
+  scheduleLaterLabel = "Schedule Later",
   showBudgetField = true
 }) {
   const updateInquiryExamRow = (id, field, value) => {
@@ -431,10 +433,15 @@ export function InquiryIntakeForm({
           </div>
         </div>
       </div>
-      <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 flex-shrink-0">
+      <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-gray-100 flex-shrink-0">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>
           {cancelLabel}
         </Button>
+        {onScheduleLater ? (
+          <Button type="button" variant="secondary" onClick={onScheduleLater} disabled={isSaving}>
+            {scheduleLaterLabel}
+          </Button>
+        ) : null}
         <Button type="submit" isLoading={isSaving}>
           {submitLabel}
         </Button>

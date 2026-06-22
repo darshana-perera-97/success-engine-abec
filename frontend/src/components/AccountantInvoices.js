@@ -4,6 +4,7 @@ import { DollarSign, X, ExternalLink, FileText } from "lucide-react";
 import { Button } from "./Button";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
+import { invoiceApprovedPaid, invoiceBalanceDue, invoiceInvoicedAmount, evidencePaymentKind, evidencePaymentKindLabel, evidencePaymentKindClass } from "../invoicePaymentHelpers";
 
 const INVOICE_TABS = [
   { id: "all", label: "All" },
@@ -50,9 +51,11 @@ function transferAccountLabel(inv, paymentAccountsById) {
 
 function invoiceMatchesTab(inv, tabId) {
   const status = String(inv.status || "").trim();
-  if (tabId === "pending") return status === "Pending" && !hasRejectedPaymentEvidence(inv);
+  if (tabId === "pending") {
+    return (status === "Pending" || status === "Partially Paid") && !hasRejectedPaymentEvidence(inv);
+  }
   if (tabId === "to_approve") return status === "Verifying";
-  if (tabId === "rejected") return status === "Pending" && hasRejectedPaymentEvidence(inv);
+  if (tabId === "rejected") return (status === "Pending" || status === "Partially Paid") && hasRejectedPaymentEvidence(inv);
   return true;
 }
 
@@ -66,6 +69,8 @@ function statusBadgeClass(status) {
       return "bg-blue-50 text-blue-700 border-blue-200";
     case "Overdue":
       return "bg-rose-50 text-rose-700 border-rose-200";
+    case "Partially Paid":
+      return "bg-violet-50 text-violet-700 border-violet-200";
     default:
       return "bg-slate-50 text-slate-700 border-slate-200";
   }
@@ -137,7 +142,7 @@ const AccountantInvoices = ({
   const [busyInvoiceId, setBusyInvoiceId] = useState(null);
   const [busyAction, setBusyAction] = useState("");
   const [query, setQuery] = useState("");
-  const [evidenceModal, setEvidenceModal] = useState({ open: false, invoice: null });
+  const [evidenceModal, setEvidenceModal] = useState({ open: false, invoice: null, paidAmount: "", error: "" });
   const [rejectModal, setRejectModal] = useState({ open: false, invoice: null, reason: "", error: "" });
 
   const studentById = useMemo(() => {
@@ -194,21 +199,55 @@ const AccountantInvoices = ({
 
   const awaitingAccountantReview = (inv) => String(inv?.status || "").trim() === "Verifying";
 
-  const handleApprove = async (inv) => {
-    if (!onUpdateInvoice || !awaitingAccountantReview(inv)) return;
+  const openEvidenceModal = (inv) => {
+    const claimed = inv?.paymentProofClaimedAmount;
+    const balance = invoiceBalanceDue(inv);
+    const recorded = claimed ?? (balance > 0 ? balance : inv?.amount);
+    setEvidenceModal({
+      open: true,
+      invoice: inv,
+      paidAmount: recorded != null && recorded !== "" ? String(recorded) : "",
+      error: ""
+    });
+  };
+
+  const closeEvidenceModal = () => setEvidenceModal({ open: false, invoice: null, paidAmount: "", error: "" });
+
+  const handleApprove = async (inv, paidAmount) => {
+    if (!onUpdateInvoice || !awaitingAccountantReview(inv)) return { ok: false };
+    const parsed = typeof paidAmount === "number" ? paidAmount : parseFloat(String(paidAmount || "").trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return { ok: false, error: "Enter a valid amount greater than zero before approving." };
+    }
+    const balanceDue = invoiceBalanceDue(inv);
+    if (parsed > balanceDue + 0.009) {
+      return {
+        ok: false,
+        error: `Receipt amount cannot exceed the outstanding balance (${balanceDue.toLocaleString()}).`,
+      };
+    }
     setBusyInvoiceId(inv.id);
     setBusyAction("approve");
     const result = await onUpdateInvoice({
       ...inv,
       status: "Paid",
+      paidAmount: parsed,
       generatedReceiptUrl: `REC-${inv.id}.pdf`
     });
     setBusyInvoiceId(null);
     setBusyAction("");
     if (result?.ok) {
-      setEvidenceModal({ open: false, invoice: null });
-      onNotify?.("Payment approved", `Invoice ${inv.id} was marked paid after evidence review.`, "success");
+      closeEvidenceModal();
+      const approvedStatus = String(result?.data?.status || "").trim();
+      onNotify?.(
+        approvedStatus === "Partially Paid" ? "Partial payment approved" : "Payment approved",
+        approvedStatus === "Partially Paid"
+          ? `Invoice ${inv.id} — partial payment recorded. Balance remains open for further receipts.`
+          : `Invoice ${inv.id} was marked paid after evidence review.`,
+        "success"
+      );
     }
+    return result;
   };
 
   const handleReject = async () => {
@@ -233,7 +272,7 @@ const AccountantInvoices = ({
       return;
     }
     setRejectModal({ open: false, invoice: null, reason: "", error: "" });
-    setEvidenceModal({ open: false, invoice: null });
+    closeEvidenceModal();
     onNotify?.("Payment evidence rejected", `Invoice ${inv.id} was sent back to the student with your reason.`, "info");
   };
 
@@ -257,8 +296,9 @@ const AccountantInvoices = ({
       /* @__PURE__ */ jsx("p", {
         className: "text-sm text-slate-500 max-w-2xl",
         children:
-          "All branch invoices by status. Open payment evidence on the To approve tab, then approve (mark paid) or reject (return to the student with a reason)."
-      })
+          "All branch invoices by status. Open payment evidence on the To approve tab, then approve with the amount received (partial payments are supported) or reject."
+      }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium", children: "Payment is not refundable." })
     ] }),
     tabCounts.to_approve > 0 &&
       /* @__PURE__ */ jsxs("div", {
@@ -390,8 +430,8 @@ const AccountantInvoices = ({
                                   size: "sm",
                                   variant: isReviewQueue ? "primary" : "outline",
                                   className: isReviewQueue ? "text-xs h-8 bg-indigo-600 hover:bg-indigo-700" : "text-xs h-8",
-                                  onClick: () => setEvidenceModal({ open: true, invoice: inv }),
-                                  children: "View evidence"
+                                  onClick: () => openEvidenceModal(inv),
+                                  children: isReviewQueue ? "Review" : "View evidence"
                                 })
                               : null,
                             isReviewQueue
@@ -401,13 +441,6 @@ const AccountantInvoices = ({
                                       className: "text-[10px] text-amber-700 self-center px-1",
                                       children: "No file yet"
                                     }),
-                                  /* @__PURE__ */ jsx(Button, {
-                                    size: "sm",
-                                    className: "text-xs h-8 bg-emerald-600 hover:bg-emerald-700",
-                                    disabled: !hasProof || isBusy(inv.id, "approve") || isBusy(inv.id, "reject"),
-                                    onClick: () => handleApprove(inv),
-                                    children: isBusy(inv.id, "approve") ? "Approving…" : "Approve"
-                                  }),
                                   /* @__PURE__ */ jsx(Button, {
                                     size: "sm",
                                     variant: "outline",
@@ -431,7 +464,7 @@ const AccountantInvoices = ({
     }),
     evidenceModal.open && modalInvoice && /* @__PURE__ */ jsx("div", {
       className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm",
-      onClick: () => setEvidenceModal({ open: false, invoice: null }),
+      onClick: closeEvidenceModal,
       children: /* @__PURE__ */ jsxs("div", {
         className: "bg-white rounded-xl border border-gray-100 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto my-auto",
         onClick: (e) => e.stopPropagation(),
@@ -441,11 +474,14 @@ const AccountantInvoices = ({
               /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Review payment evidence" }),
               /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mt-1", children: [
                 modalStudentName,
-                " · ",
-                formatLKR(
-                  typeof modalInvoice.amount === "string" ? parseFloat(modalInvoice.amount) : modalInvoice.amount,
-                  modalInvoice.currency || "LKR"
-                )
+                " · Invoiced ",
+                formatLKR(invoiceInvoicedAmount(modalInvoice), modalInvoice.currency || "LKR"),
+                invoiceApprovedPaid(modalInvoice) > 0
+                  ? ` · Paid ${formatLKR(invoiceApprovedPaid(modalInvoice), modalInvoice.currency || "LKR")}`
+                  : "",
+                invoiceBalanceDue(modalInvoice) > 0.009
+                  ? ` · Balance ${formatLKR(invoiceBalanceDue(modalInvoice), modalInvoice.currency || "LKR")}`
+                  : ""
               ] }),
               /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-0.5", children: [
                 "Transfer account: ",
@@ -457,12 +493,47 @@ const AccountantInvoices = ({
             ] }),
             /* @__PURE__ */ jsxs("button", {
               type: "button",
-              onClick: () => setEvidenceModal({ open: false, invoice: null }),
+              onClick: closeEvidenceModal,
               className: "text-slate-400 hover:text-slate-600 p-1",
               children: [/* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }), /* @__PURE__ */ jsx(X, { size: 20 })]
             })
           ] }),
           /* @__PURE__ */ jsx("div", { className: "p-5", children: /* @__PURE__ */ jsx(EvidencePreview, { url: modalProofUrl, name: modalInvoice.paymentProofName }) }),
+          awaitingAccountantReview(modalInvoice) ? (() => {
+            const currentEvidence = {
+              isCurrent: true,
+              claimedAmount: modalInvoice.paymentProofClaimedAmount,
+              balanceDueAtUpload: modalInvoice.paymentProofBalanceDue,
+              paidBeforeUpload: modalInvoice.paymentProofPaidBefore
+            };
+            const kind = evidencePaymentKind(currentEvidence, modalInvoice);
+            const kindLabel = evidencePaymentKindLabel(kind);
+            const kindClass = evidencePaymentKindClass(kind);
+            const studentClaimed = Number(modalInvoice.paymentProofClaimedAmount);
+            return /* @__PURE__ */ jsxs("div", { className: "px-5 pb-2 space-y-3", children: [
+              kindLabel ? /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${kindClass}`, children: kindLabel }) : null,
+              Number.isFinite(studentClaimed) && studentClaimed > 0 ? /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-600", children: [
+                "Student declared: ",
+                /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: `${modalInvoice.currency || "LKR"} ${studentClaimed.toLocaleString()}` })
+              ] }) : null,
+              /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900", children: "Amount to approve" }),
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Confirm the amount on this receipt. Full and partial payments are both supported." }),
+              /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
+                /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-600 shrink-0", children: modalInvoice.currency || "LKR" }),
+                /* @__PURE__ */ jsx("input", {
+                  type: "number",
+                  min: "0",
+                  step: "0.01",
+                  disabled: isBusy(modalInvoice.id, "approve"),
+                  className: "flex-1 px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50",
+                  placeholder: "0.00",
+                  value: evidenceModal.paidAmount,
+                  onChange: (e) => setEvidenceModal((prev) => ({ ...prev, paidAmount: e.target.value, error: "" }))
+                })
+              ] }),
+              evidenceModal.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: evidenceModal.error }) : null
+            ] });
+          })() : null,
           /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2 p-5 pt-0 border-t border-slate-100", children: [
             modalProofUrl
               ? /* @__PURE__ */ jsx("a", {
@@ -478,7 +549,12 @@ const AccountantInvoices = ({
                     size: "sm",
                     className: "text-xs h-8 bg-emerald-600 hover:bg-emerald-700",
                     disabled: !modalProofUrl || isBusy(modalInvoice.id, "approve") || isBusy(modalInvoice.id, "reject"),
-                    onClick: () => handleApprove(modalInvoice),
+                    onClick: async () => {
+                      const result = await handleApprove(modalInvoice, evidenceModal.paidAmount);
+                      if (!result?.ok) {
+                        setEvidenceModal((prev) => ({ ...prev, error: result?.error || "Failed to approve payment." }));
+                      }
+                    },
                     children: isBusy(modalInvoice.id, "approve") ? "Approving…" : "Approve payment"
                   }),
                   /* @__PURE__ */ jsx(Button, {
@@ -495,7 +571,7 @@ const AccountantInvoices = ({
               size: "sm",
               variant: "ghost",
               className: "text-xs h-8 ml-auto",
-              onClick: () => setEvidenceModal({ open: false, invoice: null }),
+              onClick: closeEvidenceModal,
               children: "Close"
             })
           ] })

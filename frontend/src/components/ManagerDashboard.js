@@ -7,6 +7,7 @@ import { IncentiveCalculator } from "./IncentiveCalculator";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
 import { buildUniversityOfferLetterRows, offerStatusBadgeClass } from "../utils/universityOfferLetters";
+import { invoiceBalanceDue } from "../invoicePaymentHelpers";
 import {
   normalizePipelineStatus,
   countOpenSlaRequirementViolations,
@@ -50,6 +51,7 @@ const ManagerDashboard = ({
 }) => {
   const [activeTab, setActiveTab] = useState("escalations");
   const [acceptingInvoiceId, setAcceptingInvoiceId] = useState(null);
+  const [approveInvoiceModal, setApproveInvoiceModal] = useState({ open: false, invoice: null, paidAmount: "", error: "" });
   const [reviewingTaskId, setReviewingTaskId] = useState(null);
   const { quarter: calendarQuarter } = getCalendarQuarter();
   const quarterLabel = `Q${calendarQuarter}`;
@@ -367,21 +369,14 @@ const ManagerDashboard = ({
                                   size: "sm",
                                   className: "text-xs h-8 bg-emerald-600 hover:bg-emerald-700",
                                   disabled: busy,
-                                  onClick: async () => {
-                                    setAcceptingInvoiceId(inv.id);
-                                    const result = await onUpdateInvoice({
-                                      ...inv,
-                                      status: "Paid",
-                                      generatedReceiptUrl: `REC-${inv.id}.pdf`
+                                  onClick: () => {
+                                    const recorded = inv?.paidAmount ?? inv?.amount;
+                                    setApproveInvoiceModal({
+                                      open: true,
+                                      invoice: inv,
+                                      paidAmount: recorded != null && recorded !== "" ? String(recorded) : "",
+                                      error: ""
                                     });
-                                    setAcceptingInvoiceId(null);
-                                    if (result?.ok) {
-                                      onNotify?.(
-                                        "Payment approved",
-                                        `Invoice ${inv.id} payment evidence was approved.`,
-                                        "success"
-                                      );
-                                    }
                                   },
                                   children: busy ? "Accepting…" : "Accept payment"
                                 })
@@ -454,6 +449,84 @@ const ManagerDashboard = ({
       employees,
       onSelectStudent,
       scopeLabel: studentsScopeLabel,
+    }),
+    approveInvoiceModal.open && approveInvoiceModal.invoice && /* @__PURE__ */ jsx("div", {
+      className: "fixed inset-0 z-[60] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm",
+      children: /* @__PURE__ */ jsxs("div", {
+        className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md my-auto",
+        children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-2", children: "Approve payment evidence" }),
+          /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mb-4", children: [
+            "Invoice ",
+            approveInvoiceModal.invoice.id,
+            " — enter the amount received."
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 mb-2", children: [
+            /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-600 shrink-0", children: approveInvoiceModal.invoice.currency || "LKR" }),
+            /* @__PURE__ */ jsx("input", {
+              type: "number",
+              min: "0",
+              step: "0.01",
+              disabled: acceptingInvoiceId === approveInvoiceModal.invoice.id,
+              className: "flex-1 px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50",
+              placeholder: "0.00",
+              value: approveInvoiceModal.paidAmount,
+              onChange: (event) => setApproveInvoiceModal((prev) => ({ ...prev, paidAmount: event.target.value, error: "" }))
+            })
+          ] }),
+          approveInvoiceModal.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-4", children: approveInvoiceModal.error }) : null,
+          /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6", children: [
+            /* @__PURE__ */ jsx(Button, {
+              variant: "ghost",
+              className: "flex-1",
+              onClick: () => setApproveInvoiceModal({ open: false, invoice: null, paidAmount: "", error: "" }),
+              children: "Cancel"
+            }),
+            /* @__PURE__ */ jsx(Button, {
+              className: "flex-1 bg-emerald-600 hover:bg-emerald-700 text-white",
+              disabled: acceptingInvoiceId === approveInvoiceModal.invoice.id,
+              onClick: async () => {
+                const inv = approveInvoiceModal.invoice;
+                const parsed = parseFloat(String(approveInvoiceModal.paidAmount || "").trim());
+                if (!Number.isFinite(parsed) || parsed <= 0) {
+                  setApproveInvoiceModal((prev) => ({ ...prev, error: "Enter a valid amount greater than zero." }));
+                  return;
+                }
+                const balanceDue = invoiceBalanceDue(inv);
+                if (parsed > balanceDue + 0.009) {
+                  setApproveInvoiceModal((prev) => ({
+                    ...prev,
+                    error: `Receipt amount cannot exceed the outstanding balance (${balanceDue.toLocaleString()}).`,
+                  }));
+                  return;
+                }
+                setAcceptingInvoiceId(inv.id);
+                const result = await onUpdateInvoice({
+                  ...inv,
+                  status: "Paid",
+                  paidAmount: parsed,
+                  generatedReceiptUrl: `REC-${inv.id}.pdf`
+                });
+                setAcceptingInvoiceId(null);
+                if (!result?.ok) {
+                  setApproveInvoiceModal((prev) => ({ ...prev, error: result?.error || "Failed to approve payment." }));
+                  return;
+                }
+                setApproveInvoiceModal({ open: false, invoice: null, paidAmount: "", error: "" });
+                const approvedStatus = String(result?.data?.status || "").trim();
+                onNotify?.(
+                  approvedStatus === "Partially Paid" ? "Partial payment approved" : "Payment approved",
+                  approvedStatus === "Partially Paid"
+                    ? `Invoice ${inv.id} — partial payment recorded.`
+                    : `Invoice ${inv.id} payment evidence was approved.`,
+                  "success"
+                );
+              },
+              children: acceptingInvoiceId === approveInvoiceModal.invoice.id ? "Approving…" : "Approve"
+            })
+          ] })
+        ]
+      })
     })
   ] });
 };

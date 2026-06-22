@@ -50,7 +50,7 @@ function formatIssueDate(inv) {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-const OPEN_STATUSES = new Set(["Pending", "Overdue", "Verifying"]);
+const OPEN_STATUSES = new Set(["Pending", "Overdue", "Verifying", "Partially Paid"]);
 
 const DashboardCard = ({ title, value, icon, trend, trendColor, highlight, onClick }) =>
   /* @__PURE__ */ jsxs(

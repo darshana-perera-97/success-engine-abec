@@ -133,6 +133,13 @@ function publicInvoiceRecord(req, invoice) {
     return u;
   };
   if (next.paymentProofUrl) next.paymentProofUrl = absolutize(next.paymentProofUrl);
+  if (Array.isArray(next.paymentProofHistory)) {
+    next.paymentProofHistory = next.paymentProofHistory.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      const url = entry.url ? absolutize(entry.url) : entry.url;
+      return { ...entry, url };
+    });
+  }
   if (next.attachmentFileUrl) next.attachmentFileUrl = absolutize(next.attachmentFileUrl);
   if (next.attachmentLink) next.attachmentLink = String(next.attachmentLink || "").trim();
   if (next.generatedReceiptUrl) {

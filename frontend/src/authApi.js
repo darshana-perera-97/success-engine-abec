@@ -1121,12 +1121,24 @@ export async function updateInvoice(appointmentId, payload) {
   }
 }
 
-export async function uploadInvoicePaymentProof(invoiceId, dataUrl, fileName) {
+export async function uploadInvoicePaymentProof(invoiceId, dataUrl, fileName, options = {}) {
   try {
+    const payload = {};
+    if (dataUrl) {
+      payload.dataUrl = dataUrl;
+      payload.fileName = fileName || "payment-proof";
+    }
+    const claimedAmount = Number(options.claimedAmount);
+    if (Number.isFinite(claimedAmount) && claimedAmount > 0) {
+      payload.claimedAmount = claimedAmount;
+    }
+    if (options.paymentMethod) {
+      payload.paymentMethod = String(options.paymentMethod);
+    }
     const res = await fetch(`${API_BASE}/api/invoices/${encodeURIComponent(invoiceId)}/payment-proof`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl, fileName })
+      body: JSON.stringify(payload)
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.data) {
@@ -1252,6 +1264,7 @@ export async function updateStudent(studentId, payload) {
       documentWhatsappNotifications: Array.isArray(data.documentWhatsappNotifications)
         ? data.documentWhatsappNotifications
         : [],
+      inquiryScheduledCallWhatsapp: data.inquiryScheduledCallWhatsapp || null,
     };
   } catch {
     return { ok: false, error: "Cannot reach student server. Please contact the Support team." };

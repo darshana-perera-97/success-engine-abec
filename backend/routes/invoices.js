@@ -8,12 +8,88 @@ const { deliverInvoicePackageToStudentWhatsapp, notifyInvoicePaymentDecision } =
 const { readSystemData } = require("../models/systemData");
 const { isCounselorRole } = require("../services/roles");
 
+function normalizePaidAmount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function invoiceInvoicedAmount(invoice) {
+  const amount = Number(invoice?.amount);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+function approvedPaidAmount(invoice) {
+  const paid = Number(invoice?.paidAmount);
+  return Number.isFinite(paid) && paid > 0 ? paid : 0;
+}
+
+function invoiceBalanceDue(invoice) {
+  return Math.max(0, invoiceInvoicedAmount(invoice) - approvedPaidAmount(invoice));
+}
+
+function isInvoiceFullyPaid(invoice) {
+  if (String(invoice?.status || "").trim() === "Paid") return true;
+  return invoiceBalanceDue(invoice) <= 0.009;
+}
+
 async function actorCanReviewInvoicePayment(actorRole) {
   const role = String(actorRole || "").trim();
   if (role === "Admin" || role === "Manager" || role === "Accountant") return true;
   if (!isCounselorRole(role)) return false;
   const systemData = await readSystemData();
   return systemData.counselorCanAcceptPayments === true;
+}
+
+function archiveCurrentPaymentProof(
+  invoice,
+  {
+    outcome = "superseded",
+    rejectionReason = "",
+    approvedAmount = null,
+    claimedAmount = null,
+    balanceDueAtUpload = null,
+    paidBeforeUpload = null,
+  } = {}
+) {
+  const url = String(invoice?.paymentProofUrl || "").trim();
+  const history = Array.isArray(invoice?.paymentProofHistory) ? [...invoice.paymentProofHistory] : [];
+  const archivedClaimedEarly = normalizePaidAmount(claimedAmount ?? invoice.paymentProofClaimedAmount);
+  const archivedApprovedEarly = normalizePaidAmount(approvedAmount);
+  if (!url && archivedClaimedEarly == null && archivedApprovedEarly == null) return history;
+  const entry = {
+    url: invoice.paymentProofUrl || "",
+    name: String(
+      invoice.paymentProofName ||
+        (String(invoice?.paymentMethod || "").trim() === "Cash" ? "Cash payment" : "Payment evidence")
+    ).trim(),
+    uploadedAt: String(invoice.paymentProofUploadedAt || invoice.updatedAt || new Date().toISOString()).trim(),
+    outcome,
+    rejectionReason: String(rejectionReason || invoice.paymentRejectionReason || "").trim(),
+  };
+  const archivedClaimed = normalizePaidAmount(claimedAmount ?? invoice.paymentProofClaimedAmount);
+  if (archivedClaimed != null) entry.claimedAmount = archivedClaimed;
+  const archivedApproved = normalizePaidAmount(approvedAmount);
+  if (archivedApproved != null) entry.approvedAmount = archivedApproved;
+  const archivedBalance = normalizePaidAmount(balanceDueAtUpload ?? invoice.paymentProofBalanceDue);
+  if (archivedBalance != null) entry.balanceDueAtUpload = archivedBalance;
+  const archivedPaidBefore = normalizePaidAmount(paidBeforeUpload ?? invoice.paymentProofPaidBefore);
+  if (archivedPaidBefore != null) entry.paidBeforeUpload = archivedPaidBefore;
+  history.push(entry);
+  return history;
+}
+
+function clearCurrentPaymentProofFields(invoice) {
+  return {
+    ...invoice,
+    paymentProofUrl: "",
+    paymentProofName: "",
+    paymentProofUploadedAt: "",
+    paymentProofClaimedAmount: "",
+    paymentProofBalanceDue: "",
+    paymentProofPaidBefore: "",
+    paymentRejectionReason: "",
+    paymentRejectedAt: "",
+  };
 }
 
 async function handle(req, res, url) {
@@ -350,6 +426,17 @@ async function handle(req, res, url) {
       const nextStatus = String(body.status || currentInvoice.status || "");
       const isAcceptingPayment = nextStatus === "Paid" && prevStatus === "Verifying";
       const isRejectingPayment = nextStatus === "Pending" && prevStatus === "Verifying";
+      const wasFullyPaid = isInvoiceFullyPaid(currentInvoice);
+      if (wasFullyPaid) {
+        if (nextStatus !== "Paid") {
+          sendJson(res, 403, { ok: false, error: "Approved payments cannot be reversed." });
+          return true;
+        }
+        if (body.paidAmount !== undefined || body.amount !== undefined) {
+          sendJson(res, 403, { ok: false, error: "Paid amount cannot be changed after approval." });
+          return true;
+        }
+      }
       const canReviewInvoicePayment = await actorCanReviewInvoicePayment(actorRole);
       if (isAcceptingPayment && !canReviewInvoicePayment) {
         sendJson(res, 403, {
@@ -365,16 +452,69 @@ async function handle(req, res, url) {
         });
         return true;
       }
-      const { actorRole: _actorRole, actorId: _actorId, ...safeBody } = body;
+      const {
+        actorRole: _actorRole,
+        actorId: _actorId,
+        paidAmount: bodyPaidAmount,
+        amount: bodyAmount,
+        paidAmountRecordedAt: _paidAmountRecordedAt,
+        ...safeBody
+      } = body;
       const merged = {
         ...currentInvoice,
         ...safeBody,
         id: currentInvoice.id,
         updatedAt: new Date().toISOString(),
       };
+      if (wasFullyPaid) {
+        merged.status = "Paid";
+        merged.amount = currentInvoice.amount;
+        merged.paidAmount = currentInvoice.paidAmount;
+      }
+      if (isAcceptingPayment) {
+        const receiptAmount =
+          normalizePaidAmount(bodyPaidAmount ?? bodyAmount) ??
+          normalizePaidAmount(currentInvoice.paymentProofClaimedAmount);
+        if (receiptAmount == null) {
+          sendJson(res, 400, {
+            ok: false,
+            error: "Enter the amount received when approving payment evidence.",
+          });
+          return true;
+        }
+        if (receiptAmount > invoiceBalanceDue(currentInvoice) + 0.009) {
+          sendJson(res, 400, {
+            ok: false,
+            error: `Receipt amount (${receiptAmount}) cannot exceed the outstanding balance (${invoiceBalanceDue(currentInvoice)}).`,
+          });
+          return true;
+        }
+        const invoiced = invoiceInvoicedAmount(currentInvoice);
+        const previousPaid = approvedPaidAmount(currentInvoice);
+        const newPaidTotal = previousPaid + receiptAmount;
+        if (newPaidTotal > invoiced + 0.009) {
+          sendJson(res, 400, {
+            ok: false,
+            error: `Approved total (${newPaidTotal}) cannot exceed the invoiced amount (${invoiced}).`,
+          });
+          return true;
+        }
+        merged.paidAmount = newPaidTotal;
+        merged.amount = invoiced || currentInvoice.amount;
+        merged.paidAmountRecordedAt = new Date().toISOString();
+        merged.status = newPaidTotal >= invoiced - 0.009 ? "Paid" : "Partially Paid";
+        merged.paymentProofHistory = archiveCurrentPaymentProof(currentInvoice, {
+          outcome: "approved",
+          rejectionReason: "",
+          approvedAmount: receiptAmount,
+        });
+        Object.assign(merged, clearCurrentPaymentProofFields(merged));
+      }
       if (isRejectingPayment) {
         merged.paymentRejectionReason = String(body.paymentRejectionReason || merged.paymentRejectionReason || "").trim();
         merged.paymentRejectedAt = new Date().toISOString();
+        const balanceDue = invoiceBalanceDue(currentInvoice);
+        merged.status = balanceDue < invoiceInvoicedAmount(currentInvoice) - 0.009 ? "Partially Paid" : "Pending";
       }
       if (isAcceptingPayment) {
         merged.paymentRejectionReason = "";
@@ -419,19 +559,23 @@ async function handle(req, res, url) {
         return true;
       }
       const body = await parseBody(req);
+      const rawPaymentMethod = String(body.paymentMethod || "").trim();
+      const paymentMethod = rawPaymentMethod === "Cash" ? "Cash" : "Bank Transfer";
       const dataUrl = String(body.dataUrl || "");
       const fileName = String(body.fileName || "payment-proof");
-      if (!dataUrl.startsWith("data:")) {
+      let stored = null;
+      if (dataUrl.startsWith("data:")) {
+        stored = await storePaymentProofDataUrl(dataUrl, fileName);
+        if (!stored) {
+          sendJson(res, 400, { ok: false, error: "Unsupported payment proof format. Use PDF, JPG, PNG, DOC, or DOCX." });
+          return true;
+        }
+        if (stored.error) {
+          sendJson(res, 400, { ok: false, error: stored.error });
+          return true;
+        }
+      } else if (paymentMethod !== "Cash") {
         sendJson(res, 400, { ok: false, error: "Invalid payment proof payload." });
-        return true;
-      }
-      const stored = await storePaymentProofDataUrl(dataUrl, fileName);
-      if (!stored) {
-        sendJson(res, 400, { ok: false, error: "Unsupported payment proof format. Use PDF, JPG, PNG, DOC, or DOCX." });
-        return true;
-      }
-      if (stored.error) {
-        sendJson(res, 400, { ok: false, error: stored.error });
         return true;
       }
       const invoices = await readInvoices();
@@ -440,12 +584,50 @@ async function handle(req, res, url) {
         sendJson(res, 404, { ok: false, error: "Invoice not found." });
         return true;
       }
+      const current = invoices[idx];
+      const currentStatus = String(current.status || "").trim();
+      if (currentStatus === "Verifying") {
+        sendJson(res, 400, { ok: false, error: "Payment evidence is already awaiting review for this invoice." });
+        return true;
+      }
+      if (isInvoiceFullyPaid(current)) {
+        sendJson(res, 400, { ok: false, error: "This invoice is already fully paid." });
+        return true;
+      }
+      const balanceDue = invoiceBalanceDue(current);
+      const claimedAmount = normalizePaidAmount(body.claimedAmount);
+      if (claimedAmount == null) {
+        sendJson(res, 400, { ok: false, error: "Enter the amount on this receipt (full or partial)." });
+        return true;
+      }
+      if (claimedAmount > balanceDue + 0.009) {
+        sendJson(res, 400, {
+          ok: false,
+          error: `Receipt amount cannot exceed the outstanding balance (${balanceDue}).`,
+        });
+        return true;
+      }
+      const paymentProofHistory = current.paymentProofUrl
+        ? archiveCurrentPaymentProof(current, {
+            outcome: current.paymentRejectionReason ? "rejected" : "superseded",
+            rejectionReason: current.paymentRejectionReason,
+          })
+        : Array.isArray(current.paymentProofHistory)
+          ? [...current.paymentProofHistory]
+          : [];
       const merged = {
-        ...invoices[idx],
+        ...current,
         status: "Verifying",
-        paymentMethod: "Bank Transfer",
-        paymentProofUrl: `http://${req.headers.host}${stored.url}`,
-        paymentProofName: stored.name,
+        paymentMethod,
+        paymentProofUrl: stored ? `http://${req.headers.host}${stored.url}` : "",
+        paymentProofName: stored ? stored.name : "",
+        paymentProofUploadedAt: new Date().toISOString(),
+        paymentProofHistory,
+        paymentRejectionReason: "",
+        paymentRejectedAt: "",
+        paymentProofClaimedAmount: claimedAmount,
+        paymentProofBalanceDue: balanceDue,
+        paymentProofPaidBefore: approvedPaidAmount(current),
         updatedAt: new Date().toISOString(),
       };
       const updated = [...invoices];

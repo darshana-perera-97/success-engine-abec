@@ -971,6 +971,15 @@ function App({ initialView = "dashboard" }) {
               tryShowDesktopAssignmentNotice("Invoice payment approved", approvedMsg);
             }
           }
+          if (shouldNotify && newStatus === "Partially Paid" && prevStatus === "Verifying") {
+            const partialMsg = concernsStudent
+              ? `A partial payment for invoice ${id} was approved. Upload another receipt for the remaining balance when ready.`
+              : `Partial payment for ${studentName}'s invoice ${id} was approved.`;
+            addNotification("Partial payment approved", partialMsg, "success", studentId ? { studentId } : null, 5000, `invoice:${id}:partial`);
+            if (!concernsStudent) {
+              tryShowDesktopAssignmentNotice("Partial payment approved", partialMsg);
+            }
+          }
           if (shouldNotify && newStatus === "Pending" && prevStatus === "Verifying") {
             const rejectedMsg = concernsStudent
               ? `Payment evidence for invoice ${id} was rejected. Check Finance for details.`
@@ -1488,6 +1497,32 @@ function App({ initialView = "dashboard" }) {
     setStudents((prev) => prev.map((s) => s.id === savedStudent.id ? savedStudent : s));
     if (selectedStudent?.id === savedStudent.id) {
       setSelectedStudent(savedStudent);
+    }
+    const inquiryWa = persisted.inquiryScheduledCallWhatsapp;
+    if (inquiryWa) {
+      if (inquiryWa.status === "sent") {
+        addNotification(
+          "WhatsApp sent",
+          String(payload.inquiryScheduledCallAt || "").trim() &&
+            String(previous?.inquiryScheduledCallAt || "").trim() &&
+            String(previous.inquiryScheduledCallAt).trim() !== String(payload.inquiryScheduledCallAt).trim()
+            ? "Inquiry call reschedule sent to the student."
+            : "Inquiry call schedule sent to the student.",
+          "success"
+        );
+      } else if (inquiryWa.status === "failed") {
+        addNotification(
+          "WhatsApp failed",
+          inquiryWa.reason || "Could not send inquiry call schedule to the student.",
+          "warning"
+        );
+      } else if (inquiryWa.status === "skipped") {
+        addNotification(
+          "WhatsApp skipped",
+          inquiryWa.reason || "Inquiry call schedule was not sent via WhatsApp.",
+          "warning"
+        );
+      }
     }
     const prevStage = normalizePipelineStatus(previous?.status);
     const nextStage = normalizePipelineStatus(savedStudent.status);

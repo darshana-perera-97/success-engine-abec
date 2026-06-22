@@ -1,5 +1,7 @@
 const { COMPANY_NAME } = require("../config");
 
+const PAYMENT_NOT_REFUNDABLE_NOTICE = "Payment is not refundable.";
+
 function buildStudentAccountDetailsWhatsappMessage({ studentName, emailAddress, password, loginUrl }) {
   const lines = [
     `${COMPANY_NAME} — your student portal login`,
@@ -75,6 +77,35 @@ function buildMeetingReminderWhatsappMessage({ studentName, title, date, time, m
   return lines.join("\n");
 }
 
+function buildInquiryCallScheduledWhatsappMessage({ studentName, scheduledLabel, isReschedule = false }) {
+  const action = isReschedule ? "rescheduled" : "scheduled";
+  const lines = [
+    `${COMPANY_NAME} — Inquiry Call ${isReschedule ? "Rescheduled" : "Scheduled"}`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    `Your inquiry call with your counselor has been ${action}.`,
+    scheduledLabel ? `Date & time: ${scheduledLabel}` : "",
+    "",
+    "Please be available at the scheduled time. Your counselor will call you.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function buildInquiryCallReminderWhatsappMessage({ studentName, scheduledLabel }) {
+  const lines = [
+    `${COMPANY_NAME} — Inquiry Call Reminder`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your inquiry call with your counselor starts in about 15 minutes.",
+    scheduledLabel ? `Scheduled for: ${scheduledLabel}` : "",
+    "",
+    "Please be ready — your counselor will call you shortly.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function formatPaymentAccountForMessage(paymentAccount) {
   if (!paymentAccount || typeof paymentAccount !== "object") return [];
   const lines = ["Payment details:"];
@@ -121,6 +152,8 @@ function buildInvoiceWhatsappMessage({
       ? `Attached document${attachmentFileName ? ` (${attachmentFileName})` : ""}: ${attachmentFileUrl}`
       : "",
     generatedReceiptUrl ? `Invoice image: ${generatedReceiptUrl}` : "",
+    "",
+    PAYMENT_NOT_REFUNDABLE_NOTICE,
     "",
     "Please complete the payment before the due date. You can also view full details in your student portal under Finance.",
   ].filter((line) => line !== null && line !== undefined && String(line).trim() !== "");
@@ -300,6 +333,8 @@ module.exports = {
   buildAppointmentLinkWhatsappMessage,
   buildCounselorAssignmentWhatsappMessage,
   buildMeetingReminderWhatsappMessage,
+  buildInquiryCallScheduledWhatsappMessage,
+  buildInquiryCallReminderWhatsappMessage,
   buildInvoiceWhatsappMessage,
   formatPaymentAccountForMessage,
   buildInvoicePaymentDecisionWhatsappMessage,

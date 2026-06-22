@@ -61,17 +61,75 @@ export function buildCounselorTeamEntries(student, employees) {
   });
 }
 
-function isAssignedCounselorId(value) {
+export function isAssignedCounselorId(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized !== "" && normalized !== "unassigned" && normalized !== "none" && normalized !== "null";
+}
+
+/** Unique counselor IDs linked on the student (enrolling, primary, previous). */
+export function getAssignedCounselorIds(student) {
+  const byNorm = /* @__PURE__ */ new Map();
+  const add = (value) => {
+    const id = String(value || "").trim();
+    if (!isAssignedCounselorId(id)) return;
+    const norm = id.toLowerCase();
+    if (!byNorm.has(norm)) byNorm.set(norm, id);
+  };
+  add(student?.inquiryCounselorId);
+  add(student?.counselor);
+  const history = Array.isArray(student?.counselorHistory) ? student.counselorHistory : [];
+  for (const entry of history) add(entry);
+  return [...byNorm.values()];
+}
+
+export function wouldStudentHaveNoCounselorsAfterRemoval(student, counselorId) {
+  const targetNorm = String(counselorId || "").trim().toLowerCase();
+  if (!targetNorm) return false;
+  const ids = getAssignedCounselorIds(student);
+  if (!ids.some((id) => id.toLowerCase() === targetNorm)) return false;
+  return ids.length <= 1;
+}
+
+function resolveCounselorDisplayName(counselorId, employees) {
+  const id = String(counselorId || "").trim();
+  if (!id) return "";
+  const emp = Array.isArray(employees)
+    ? employees.find((entry) => String(entry?.id || "").trim() === id)
+    : null;
+  return String(emp?.name || emp?.username || "").trim();
+}
+
+/**
+ * Pick the next primary counselor after one is removed: enrolling (inquiry) first, then previous transfers.
+ */
+export function pickNextPrimaryCounselorId(student, removedCounselorId, afterRemoval = {}) {
+  const removedNorm = String(removedCounselorId || "").trim().toLowerCase();
+  const isRemoved = (value) => String(value || "").trim().toLowerCase() === removedNorm;
+
+  const inquiry = Object.prototype.hasOwnProperty.call(afterRemoval, "inquiryCounselorId")
+    ? String(afterRemoval.inquiryCounselorId || "").trim()
+    : String(student?.inquiryCounselorId || "").trim();
+  if (isAssignedCounselorId(inquiry) && !isRemoved(inquiry)) return inquiry;
+
+  const history = Object.prototype.hasOwnProperty.call(afterRemoval, "counselorHistory")
+    ? afterRemoval.counselorHistory
+    : Array.isArray(student?.counselorHistory)
+      ? student.counselorHistory.map((entry) => String(entry || "").trim()).filter(Boolean)
+      : [];
+  for (const entry of history) {
+    const historyId = String(entry || "").trim();
+    if (isAssignedCounselorId(historyId) && !isRemoved(historyId)) return historyId;
+  }
+  return "";
 }
 
 /**
  * Build a partial student update that unlinks a counselor from all roles on the record.
  */
-export function buildStudentCounselorRemovalPatch(student, counselorId) {
+export function buildStudentCounselorRemovalPatch(student, counselorId, employees = []) {
   const id = String(counselorId || "").trim();
   if (!id || !isAssignedCounselorId(id)) return null;
+  if (wouldStudentHaveNoCounselorsAfterRemoval(student, id)) return null;
 
   const patch = {};
   const inquiry = String(student?.inquiryCounselorId || "").trim();
@@ -83,13 +141,31 @@ export function buildStudentCounselorRemovalPatch(student, counselorId) {
   if (inquiry === id) {
     patch.inquiryCounselorId = "";
   }
-  if (primary === id) {
-    patch.counselor = "Unassigned";
-    patch.counselorName = "";
-  }
   const nextHistory = history.filter((entry) => entry !== id);
   if (nextHistory.length !== history.length) {
     patch.counselorHistory = nextHistory;
+  }
+
+  if (primary === id) {
+    const afterRemoval = {
+      inquiryCounselorId: Object.prototype.hasOwnProperty.call(patch, "inquiryCounselorId")
+        ? patch.inquiryCounselorId
+        : inquiry,
+      counselorHistory: Object.prototype.hasOwnProperty.call(patch, "counselorHistory")
+        ? patch.counselorHistory
+        : nextHistory,
+    };
+    const nextPrimary = pickNextPrimaryCounselorId(student, id, afterRemoval);
+    if (nextPrimary) {
+      patch.counselor = nextPrimary;
+      patch.counselorName = resolveCounselorDisplayName(nextPrimary, employees);
+      if (nextPrimary !== inquiry && history.includes(nextPrimary)) {
+        patch.counselorHistory = nextHistory.filter((entry) => entry !== nextPrimary);
+      }
+    } else {
+      patch.counselor = "Unassigned";
+      patch.counselorName = "";
+    }
   }
 
   return Object.keys(patch).length > 0 ? patch : null;

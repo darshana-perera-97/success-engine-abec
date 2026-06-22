@@ -6,7 +6,7 @@ const { PORT, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS } = requi
 const { corsHeaders, sendJson } = require("./lib/httpUtils");
 const { logEvent } = require("./lib/logger");
 const { initializeWhatsappSessionsOnStartup, reconnectActiveWhatsappSessions } = require("./services/whatsapp");
-const { processMeetingReminders } = require("./services/notifications");
+const { processMeetingReminders, processInquiryScheduledCallReminders } = require("./services/notifications");
 
 const authRoutes = require("./routes/auth");
 const accountRoutes = require("./routes/accounts");
@@ -119,6 +119,9 @@ server.listen(PORT, async () => {
   setInterval(() => {
     processMeetingReminders().catch((error) => {
       console.error("Meeting reminder processing failed:", error);
+    });
+    processInquiryScheduledCallReminders().catch((error) => {
+      console.error("Inquiry call reminder processing failed:", error);
     });
   }, MEETING_REMINDER_POLL_MS);
 });

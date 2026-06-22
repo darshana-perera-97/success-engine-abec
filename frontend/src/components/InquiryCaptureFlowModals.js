@@ -89,6 +89,11 @@ const InquiryCaptureFlowModals = ({
   const [isSavingSummary, setIsSavingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState("");
   const [dismissAlertId, setDismissAlertId] = useState(null);
+  const [scheduleLaterOpen, setScheduleLaterOpen] = useState(false);
+  const [scheduleLaterStudent, setScheduleLaterStudent] = useState(null);
+  const [scheduleLaterAt, setScheduleLaterAt] = useState("");
+  const [scheduleLaterError, setScheduleLaterError] = useState("");
+  const [isSavingScheduleLater, setIsSavingScheduleLater] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +134,8 @@ const InquiryCaptureFlowModals = ({
       setInquiryOpen(false);
       setSummaryOpen(false);
       setSummaryStudent(null);
+      setScheduleLaterOpen(false);
+      setScheduleLaterStudent(null);
       setDismissAlertId(null);
       return;
     }
@@ -160,6 +167,8 @@ const InquiryCaptureFlowModals = ({
     setInquiryOpen(true);
     setSummaryOpen(false);
     setSummaryStudent(null);
+    setScheduleLaterOpen(false);
+    setScheduleLaterStudent(null);
   }, [target?._key, branchRecords, globalCountries, branchCountriesEnabled, offices]);
 
   const resolveStudentById = (studentId) => {
@@ -180,22 +189,17 @@ const InquiryCaptureFlowModals = ({
     onClear?.();
   };
 
-  const handleSaveInquiry = async (e) => {
-    e.preventDefault();
+  const saveInquiryForm = async () => {
     const studentId = String(target?.student?.id || "").trim();
-    if (!studentId) return;
+    if (!studentId) return { ok: false, error: "Student not found." };
     const existingStudent = resolveStudentById(studentId) || target?.student;
     if (!existingStudent) {
-      setInquiryError("Student not found.");
-      return;
+      return { ok: false, error: "Student not found." };
     }
     const validation = validateInquiryFormRequired(inquiryForm, { requireBudget: false });
     if (!validation.ok) {
-      setInquiryError(validation.error);
-      return;
+      return { ok: false, error: validation.error };
     }
-    setIsSavingInquiry(true);
-    setInquiryError("");
     const updatedStudent = inquiryFormToStudentFields(inquiryForm, {
       ...existingStudent,
       status: existingStudent.status,
@@ -203,19 +207,67 @@ const InquiryCaptureFlowModals = ({
     });
     try {
       await onUpdateStudent?.(updatedStudent);
-      setSummaryStudent(updatedStudent);
-      setSummaryAction("meeting-note");
-      setSummaryNote("");
-      setSummaryBranch(updatedStudent.nearestOffice || updatedStudent.branch || offices[0] || "");
-      setSummaryScheduledAt(getDefaultScheduleCallValue());
-      setSummaryError("");
-      setInquiryOpen(false);
-      setSummaryOpen(true);
+      return { ok: true, student: updatedStudent };
     } catch {
-      setInquiryError("Failed to save student details.");
-    } finally {
-      setIsSavingInquiry(false);
+      return { ok: false, error: "Failed to save student details." };
     }
+  };
+
+  const validateScheduledCallAt = (raw) => {
+    const value = String(raw || "").trim();
+    if (!value) {
+      return { ok: false, error: "Please choose a date and time for the call." };
+    }
+    const scheduledMs = new Date(value).getTime();
+    const nowMs = Date.now();
+    if (Number.isNaN(scheduledMs)) {
+      return { ok: false, error: "Invalid date and time." };
+    }
+    if (scheduledMs <= nowMs) {
+      return { ok: false, error: "Scheduled time must be in the future." };
+    }
+    if (scheduledMs > nowMs + INQUIRY_SCHEDULE_CALL_MAX_MS) {
+      return { ok: false, error: "Scheduled time must be within the next 7 days." };
+    }
+    return { ok: true, scheduledMs };
+  };
+
+  const handleSaveInquiry = async (e) => {
+    e.preventDefault();
+    setIsSavingInquiry(true);
+    setInquiryError("");
+    const result = await saveInquiryForm();
+    if (!result.ok) {
+      setInquiryError(result.error || "Failed to save student details.");
+      setIsSavingInquiry(false);
+      return;
+    }
+    setSummaryStudent(result.student);
+    setSummaryAction("meeting-note");
+    setSummaryNote("");
+    setSummaryBranch(result.student.nearestOffice || result.student.branch || offices[0] || "");
+    setSummaryScheduledAt(getDefaultScheduleCallValue());
+    setSummaryError("");
+    setInquiryOpen(false);
+    setSummaryOpen(true);
+    setIsSavingInquiry(false);
+  };
+
+  const handleScheduleLaterFromInquiry = async () => {
+    setIsSavingInquiry(true);
+    setInquiryError("");
+    const result = await saveInquiryForm();
+    if (!result.ok) {
+      setInquiryError(result.error || "Failed to save student details.");
+      setIsSavingInquiry(false);
+      return;
+    }
+    setScheduleLaterStudent(result.student);
+    setScheduleLaterAt(getDefaultScheduleCallValue());
+    setScheduleLaterError("");
+    setInquiryOpen(false);
+    setScheduleLaterOpen(true);
+    setIsSavingInquiry(false);
   };
 
   const closeSummaryPopup = () => {
@@ -224,6 +276,41 @@ const InquiryCaptureFlowModals = ({
     setSummaryStudent(null);
     setSummaryError("");
     onClear?.();
+  };
+
+  const closeScheduleLaterPopup = () => {
+    if (isSavingScheduleLater) return;
+    setScheduleLaterOpen(false);
+    setScheduleLaterStudent(null);
+    setScheduleLaterError("");
+    onClear?.();
+  };
+
+  const handleSaveScheduleLater = async (e) => {
+    e.preventDefault();
+    if (!scheduleLaterStudent) return;
+    const studentId = String(scheduleLaterStudent.id || "").trim();
+    if (!studentId) return;
+    setIsSavingScheduleLater(true);
+    setScheduleLaterError("");
+    try {
+      const validation = validateScheduledCallAt(scheduleLaterAt);
+      if (!validation.ok) {
+        setScheduleLaterError(validation.error);
+        return;
+      }
+      const merged = {
+        ...scheduleLaterStudent,
+        inquiryScheduledCallAt: new Date(validation.scheduledMs).toISOString()
+      };
+      await onUpdateStudent?.(merged);
+      if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
+      setScheduleLaterOpen(false);
+      setScheduleLaterStudent(null);
+      onClear?.();
+    } finally {
+      setIsSavingScheduleLater(false);
+    }
   };
 
   const saveMeetingNoteFromSummary = async () => {
@@ -281,32 +368,15 @@ const InquiryCaptureFlowModals = ({
         return;
       }
       if (summaryAction === "schedule-call-later") {
-        const raw = String(summaryScheduledAt || "").trim();
-        if (!raw) {
-          setSummaryError("Please choose a date and time for the call.");
-          setIsSavingSummary(false);
-          return;
-        }
-        const scheduledMs = new Date(raw).getTime();
-        const nowMs = Date.now();
-        if (Number.isNaN(scheduledMs)) {
-          setSummaryError("Invalid date and time.");
-          setIsSavingSummary(false);
-          return;
-        }
-        if (scheduledMs <= nowMs) {
-          setSummaryError("Scheduled time must be in the future.");
-          setIsSavingSummary(false);
-          return;
-        }
-        if (scheduledMs > nowMs + INQUIRY_SCHEDULE_CALL_MAX_MS) {
-          setSummaryError("Scheduled time must be within the next 7 days.");
+        const validation = validateScheduledCallAt(summaryScheduledAt);
+        if (!validation.ok) {
+          setSummaryError(validation.error);
           setIsSavingSummary(false);
           return;
         }
         const merged = {
           ...summaryStudent,
-          inquiryScheduledCallAt: new Date(scheduledMs).toISOString()
+          inquiryScheduledCallAt: new Date(validation.scheduledMs).toISOString()
         };
         await onUpdateStudent?.(merged);
         if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
@@ -350,7 +420,7 @@ const InquiryCaptureFlowModals = ({
     }
   };
 
-  if (!inquiryOpen && !summaryOpen) return null;
+  if (!inquiryOpen && !summaryOpen && !scheduleLaterOpen) return null;
 
   const scheduleCallBounds = getScheduleCallBounds();
 
@@ -390,6 +460,7 @@ const InquiryCaptureFlowModals = ({
                 isSaving: isSavingInquiry,
                 onSubmit: handleSaveInquiry,
                 onCancel: closeInquiryPopup,
+                onScheduleLater: handleScheduleLaterFromInquiry,
                 submitLabel: "Save",
                 cancelLabel: "Cancel",
                 showBudgetField: false
@@ -545,7 +616,7 @@ const InquiryCaptureFlowModals = ({
                         }),
                         /* @__PURE__ */ jsx("p", {
                           className: "text-xs text-slate-500 mt-1",
-                          children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold."
+                          children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold. The student receives a WhatsApp when the call is scheduled or rescheduled, and a reminder 15 minutes before."
                         })
                       ]
                     }),
@@ -565,6 +636,80 @@ const InquiryCaptureFlowModals = ({
                         children: "Cancel"
                       }),
                       /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isSavingSummary, children: "Save" })
+                    ]
+                  })
+                ]
+              })
+            ]
+          })
+        }),
+      scheduleLaterOpen &&
+        scheduleLaterStudent &&
+        /* @__PURE__ */ jsx("div", {
+          className: "fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center px-4",
+          children: /* @__PURE__ */ jsxs("div", {
+            className: "bg-white w-full max-w-md rounded-xl shadow-2xl border border-gray-200 overflow-hidden",
+            children: [
+              /* @__PURE__ */ jsxs("div", {
+                className: "flex items-center justify-between p-4 border-b border-gray-100",
+                children: [
+                  /* @__PURE__ */ jsxs("div", {
+                    children: [
+                      /* @__PURE__ */ jsx("h3", { className: "text-lg font-semibold text-slate-900", children: "Schedule Call Later" }),
+                      /* @__PURE__ */ jsx("p", {
+                        className: "text-xs text-slate-500 mt-0.5",
+                        children: scheduleLaterStudent?.name || "Choose when to follow up"
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsx("button", {
+                    onClick: closeScheduleLaterPopup,
+                    className: "text-slate-400 hover:text-slate-700 p-1",
+                    children: /* @__PURE__ */ jsx(X, { size: 18 })
+                  })
+                ]
+              }),
+              /* @__PURE__ */ jsxs("form", {
+                onSubmit: handleSaveScheduleLater,
+                className: "p-5 space-y-4",
+                children: [
+                  scheduleLaterError
+                    ? /* @__PURE__ */ jsx("div", {
+                        className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2",
+                        children: scheduleLaterError
+                      })
+                    : null,
+                  /* @__PURE__ */ jsxs("div", {
+                    children: [
+                      /* @__PURE__ */ jsx("label", {
+                        className: "text-xs font-semibold text-slate-700 mb-1 block",
+                        children: "Call date and time"
+                      }),
+                      /* @__PURE__ */ jsx("input", {
+                        type: "datetime-local",
+                        className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+                        value: scheduleLaterAt,
+                        min: scheduleCallBounds.min,
+                        max: scheduleCallBounds.max,
+                        onChange: (e) => setScheduleLaterAt(e.target.value)
+                      }),
+                      /* @__PURE__ */ jsx("p", {
+                        className: "text-xs text-slate-500 mt-1",
+                        children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold. The student receives a WhatsApp when the call is scheduled or rescheduled, and a reminder 15 minutes before."
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsxs("div", {
+                    className: "flex flex-wrap justify-end items-center gap-2 pt-2 border-t border-gray-100",
+                    children: [
+                      /* @__PURE__ */ jsx(Button, {
+                        type: "button",
+                        variant: "ghost",
+                        onClick: closeScheduleLaterPopup,
+                        disabled: isSavingScheduleLater,
+                        children: "Cancel"
+                      }),
+                      /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isSavingScheduleLater, children: "Schedule" })
                     ]
                   })
                 ]

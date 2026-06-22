@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Users, X } from "lucide-react";
 import { PersonContactCard } from "./PersonContactCard";
-import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
+import { buildCounselorTeamEntriesWithFallback, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 /**
  * Roster of counselors involved with this student (enrolling, primary, previous).
  * Shown to staff after Specialized Notes on the student profile.
@@ -32,7 +32,7 @@ export function StudentProfileCounselorsRoster({
           avatarClassName: "h-12 w-12 text-base"
         }
       ),
-      canRemoveCounselor && onRemoveCounselor ? /* @__PURE__ */ jsx(
+      canRemoveCounselor && onRemoveCounselor && !wouldStudentHaveNoCounselorsAfterRemoval(student, c.id) ? /* @__PURE__ */ jsx(
         "button",
         {
           type: "button",

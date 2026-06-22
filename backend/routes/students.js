@@ -29,6 +29,7 @@ const {
   studentTimeMs,
 } = require("../services/pipeline");
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
+const { notifyInquiryCallScheduled } = require("../services/notifications");
 const {
   deliverCounselorMessageToStudentWhatsapp,
   normalizeSriLankaStudentPhone,
@@ -40,6 +41,11 @@ const {
   buildUniversityOfferWhatsappMessage,
 } = require("../services/whatsappMessages");
 const { sendStudentPortalAccountDetails } = require("../services/studentAccountDetails");
+const {
+  validateStudentCounselorAssignment,
+  promoteRemainingCounselorToPrimary,
+  isCounselorStillLinkedOnStudent,
+} = require("../services/studentCounselors");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
   storeImageDataUrl,
@@ -415,25 +421,41 @@ async function handle(req, res, url) {
         }
         merged.phone = normalizedPhone;
       }
+      Object.assign(merged, promoteRemainingCounselorToPrimary(merged));
+      const counselorAssignmentError = validateStudentCounselorAssignment(merged, body);
+      if (counselorAssignmentError) {
+        sendJson(res, 400, { ok: false, error: counselorAssignmentError });
+        return true;
+      }
       const nextCounselor = String(merged?.counselor || "").trim();
       const nextCounselorNorm = nextCounselor.toLowerCase();
       const prevCounselorNorm = previousCounselor.toLowerCase();
       if (previousCounselor && previousCounselor !== nextCounselor) {
         const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
         const normalized = history.map((id) => String(id || "").trim()).filter(Boolean);
+        const previousStillLinked = isCounselorStillLinkedOnStudent(merged, previousCounselor);
+        const nextWasAlreadyOnTeam = isCounselorStillLinkedOnStudent(previous, nextCounselor);
         if (
           nextCounselor &&
           nextCounselorNorm !== "unassigned" &&
           nextCounselorNorm !== "none" &&
           nextCounselorNorm !== "null"
         ) {
-          normalized.push(previousCounselor);
-          merged.counselorHistory = Array.from(new Set(normalized));
-          logEvent("student", "counselor transferred", {
-            studentId,
-            from: previousCounselor,
-            to: nextCounselor,
-          });
+          if (!previousStillLinked && !nextWasAlreadyOnTeam) {
+            normalized.push(previousCounselor);
+            merged.counselorHistory = Array.from(new Set(normalized));
+          }
+          logEvent(
+            "student",
+            !previousStillLinked && nextWasAlreadyOnTeam
+              ? "counselor removed; promoted remaining counselor"
+              : "counselor transferred",
+            {
+              studentId,
+              from: previousCounselor,
+              to: nextCounselor,
+            }
+          );
         } else if (
           prevCounselorNorm &&
           prevCounselorNorm !== "unassigned" &&
@@ -634,6 +656,27 @@ async function handle(req, res, url) {
         }
       }
 
+      let inquiryScheduledCallWhatsapp = null;
+      const prevScheduledCallAt = String(previous?.inquiryScheduledCallAt || "").trim();
+      const nextScheduledCallAt = String(merged?.inquiryScheduledCallAt || "").trim();
+      if (nextScheduledCallAt !== prevScheduledCallAt) {
+        merged.inquiryScheduledCallReminderWhatsappDelivery = null;
+        if (nextScheduledCallAt) {
+          inquiryScheduledCallWhatsapp = await notifyInquiryCallScheduled({
+            student: merged,
+            studentId,
+            previousScheduledAt: prevScheduledCallAt,
+          });
+          merged.inquiryScheduledCallWhatsappDelivery = {
+            ...inquiryScheduledCallWhatsapp,
+            scheduledAt: nextScheduledCallAt,
+            sentAt: new Date().toISOString(),
+          };
+        } else {
+          merged.inquiryScheduledCallWhatsappDelivery = null;
+        }
+      }
+
       const updated = [...studemts];
       updated[idx] = merged;
       await writeStudemts(updated);
@@ -642,6 +685,7 @@ async function handle(req, res, url) {
         data: publicStudentRecord(req, merged),
         documentWhatsappNotifications,
         counselorAssignmentWhatsapp,
+        inquiryScheduledCallWhatsapp,
       });
     } catch (error) {
       console.error("Student PUT failed:", error);

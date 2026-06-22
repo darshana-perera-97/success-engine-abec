@@ -5,7 +5,7 @@ import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } 
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
-import { buildStudentCounselorRemovalPatch } from "../studentContactHelpers";
+import { buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
@@ -268,9 +268,13 @@ const StudentList = ({
   const removeCounselorFromStudent = async (student) => {
     const counselorId = String(student?.counselor || "").trim();
     if (!counselorId || isUnassignedCounselor(counselorId)) return;
+    if (wouldStudentHaveNoCounselorsAfterRemoval(student, counselorId)) {
+      window.alert("Each student must keep at least one counselor. Assign another counselor before removing the last one.");
+      return;
+    }
     const counselor = counselorOptions.find((item) => String(item.id || "") === counselorId);
     const counselorName = counselor?.name || student.counselorName || counselorId;
-    const patch = buildStudentCounselorRemovalPatch(student, counselorId);
+    const patch = buildStudentCounselorRemovalPatch(student, counselorId, counselorOptions);
     if (!patch) return;
     const confirmed = window.confirm(`Remove ${counselorName} from ${student.name || "this student"}?`);
     if (!confirmed) return;
@@ -576,7 +580,7 @@ const StudentList = ({
         ] }) : null,
         /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-2", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: () => setAssigningStudentId(null), children: "Cancel" }),
-          !isUnassignedCounselor(assigningStudent.counselor) && canManageCounselors ? /* @__PURE__ */ jsxs(Button, { type: "button", variant: "ghost", className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50", onClick: () => removeCounselorFromStudent(assigningStudent), children: [
+          !isUnassignedCounselor(assigningStudent.counselor) && canManageCounselors && !wouldStudentHaveNoCounselorsAfterRemoval(assigningStudent, assigningStudent.counselor) ? /* @__PURE__ */ jsxs(Button, { type: "button", variant: "ghost", className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50", onClick: () => removeCounselorFromStudent(assigningStudent), children: [
             /* @__PURE__ */ jsx(X, { size: 14, className: "mr-1.5" }),
             "Remove"
           ] }) : null,

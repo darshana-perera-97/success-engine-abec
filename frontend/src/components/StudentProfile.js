@@ -71,7 +71,7 @@ import {
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId, getUniversityPrograms } from "../authApi";
-import { buildCounselorTeamEntriesWithFallback, buildStudentCounselorRemovalPatch } from "../studentContactHelpers";
+import { buildCounselorTeamEntriesWithFallback, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import {
   isCounselorEquivalentAccountRole,
   isCounselorEquivalentPortalRole,
@@ -1440,7 +1440,15 @@ const StudentProfile = ({
     const counselorId = String(counselorEntry?.id || "").trim();
     const counselorName = String(counselorEntry?.name || "").trim() || "Counselor";
     if (!counselorId) return;
-    const patch = buildStudentCounselorRemovalPatch(localStudent, counselorId);
+    if (wouldStudentHaveNoCounselorsAfterRemoval(localStudent, counselorId)) {
+      onNotify?.(
+        "Cannot remove counselor",
+        "Each student must keep at least one counselor. Assign another counselor before removing the last one.",
+        "error"
+      );
+      return;
+    }
+    const patch = buildStudentCounselorRemovalPatch(localStudent, counselorId, employees);
     if (!patch) return;
     const confirmed = window.confirm(`Remove ${counselorName} from ${localStudent.name || "this student"}?`);
     if (!confirmed) return;
@@ -1940,7 +1948,7 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: setActiveTab }),
               visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger", activeTab, tabName: "ledger", onClick: setActiveTab })
+              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger & Payments", activeTab, tabName: "ledger", onClick: setActiveTab })
             ] }) }) }),
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 overflow-y-auto", children: renderContent() })
           ] }),

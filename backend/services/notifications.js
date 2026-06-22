@@ -1,13 +1,15 @@
 const crypto = require("crypto");
 const { MEETING_REMINDER_MIN_MS, MEETING_REMINDER_MAX_MS } = require("../config");
 const { readUsers } = require("../models/users");
-const { readStudemts } = require("../models/students");
+const { readStudemts, writeStudemts } = require("../models/students");
 const { readActivities, writeActivities } = require("../models/activities");
 const { readAppointments, writeAppointments } = require("../models/appointments");
 const { appendPortalChatMessage } = require("../models/chats");
 const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("./whatsapp");
 const {
   buildMeetingReminderWhatsappMessage,
+  buildInquiryCallScheduledWhatsappMessage,
+  buildInquiryCallReminderWhatsappMessage,
   buildInvoicePaymentDecisionWhatsappMessage,
   buildCounselorInvoiceDecisionPortalMessage,
 } = require("./whatsappMessages");
@@ -314,22 +316,6 @@ async function notifyInvoicePaymentDecision({
   };
 }
 
-function appointmentStartMs(appointment) {
-  const date = String(appointment?.date || "").trim();
-  const time = String(appointment?.time || "").trim();
-  if (!date || !time) return NaN;
-  return new Date(`${date}T${time}:00+05:30`).getTime();
-}
-
-function isWithinMeetingReminderWindow(appointment, nowMs = Date.now()) {
-  if (String(appointment?.status || "") !== "Scheduled") return false;
-  const startMs = appointmentStartMs(appointment);
-  if (!Number.isFinite(startMs)) return false;
-  const msUntil = startMs - nowMs;
-  if (msUntil < 0) return false;
-  return msUntil >= MEETING_REMINDER_MIN_MS && msUntil <= MEETING_REMINDER_MAX_MS;
-}
-
 async function processMeetingReminders() {
   const appointments = await readAppointments();
   const now = Date.now();
@@ -390,6 +376,178 @@ async function processMeetingReminders() {
   }
 }
 
+function appointmentStartMs(appointment) {
+  const date = String(appointment?.date || "").trim();
+  const time = String(appointment?.time || "").trim();
+  if (!date || !time) return NaN;
+  return new Date(`${date}T${time}:00+05:30`).getTime();
+}
+
+function isWithinMeetingReminderWindow(appointment, nowMs = Date.now()) {
+  if (String(appointment?.status || "") !== "Scheduled") return false;
+  const startMs = appointmentStartMs(appointment);
+  if (!Number.isFinite(startMs)) return false;
+  const msUntil = startMs - nowMs;
+  if (msUntil < 0) return false;
+  return msUntil >= MEETING_REMINDER_MIN_MS && msUntil <= MEETING_REMINDER_MAX_MS;
+}
+
+function parseInquiryScheduledCallMs(student) {
+  const raw = String(student?.inquiryScheduledCallAt || "").trim();
+  if (!raw) return NaN;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function formatInquiryScheduledCallLabelForWhatsapp(iso) {
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toLocaleString("en-LK", {
+    timeZone: "Asia/Colombo",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function pickInquiryCallWhatsappSenderId(student) {
+  const inquiry = String(student?.inquiryCounselorId || "").trim();
+  const primary = String(student?.counselor || "").trim();
+  if (inquiry && inquiry.toLowerCase() !== "unassigned") return inquiry;
+  if (primary && primary.toLowerCase() !== "unassigned") return primary;
+  return "";
+}
+
+function isWithinInquiryCallReminderWindow(scheduledMs, nowMs = Date.now()) {
+  if (!Number.isFinite(scheduledMs)) return false;
+  const msUntil = scheduledMs - nowMs;
+  if (msUntil < 0) return false;
+  return msUntil >= MEETING_REMINDER_MIN_MS && msUntil <= MEETING_REMINDER_MAX_MS;
+}
+
+async function notifyInquiryCallScheduled({ student, studentId, previousScheduledAt }) {
+  const scheduledAt = String(student?.inquiryScheduledCallAt || "").trim();
+  if (!scheduledAt) {
+    return { attempted: false, status: "skipped", reason: "No scheduled call time." };
+  }
+  const senderId = pickInquiryCallWhatsappSenderId(student);
+  if (!senderId) {
+    return { attempted: false, status: "skipped", reason: "Student has no assigned counselor for WhatsApp." };
+  }
+  const previous = String(previousScheduledAt || "").trim();
+  const isReschedule = Boolean(previous && previous !== scheduledAt);
+  const scheduledLabel = formatInquiryScheduledCallLabelForWhatsapp(scheduledAt);
+  const message = buildInquiryCallScheduledWhatsappMessage({
+    studentName: String(student?.name || "").trim(),
+    scheduledLabel,
+    isReschedule,
+  });
+  try {
+    const result = await deliverCounselorMessageToStudentWhatsapp({
+      senderId,
+      receiverId: String(studentId || student?.id || "").trim(),
+      content: message,
+    });
+    logEvent("student", "inquiry call schedule sent to student via whatsapp", {
+      studentId: String(studentId || student?.id || "").trim(),
+      counselorId: senderId,
+      status: result?.status || "unknown",
+      isReschedule,
+    });
+    return {
+      attempted: Boolean(result?.attempted),
+      status: String(result?.status || "skipped"),
+      reason: String(result?.reason || ""),
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      status: "failed",
+      reason: String(error?.message || "Failed to send WhatsApp inquiry call schedule."),
+    };
+  }
+}
+
+async function processInquiryScheduledCallReminders() {
+  const studemts = await readStudemts();
+  const now = Date.now();
+  let changed = false;
+  const nextStudents = [];
+  for (const student of studemts) {
+    let next = student;
+    const scheduledAt = String(student?.inquiryScheduledCallAt || "").trim();
+    const schedMs = parseInquiryScheduledCallMs(student);
+    if (!scheduledAt || !Number.isFinite(schedMs) || schedMs <= now) {
+      nextStudents.push(next);
+      continue;
+    }
+    const reminderDelivery = student?.inquiryScheduledCallReminderWhatsappDelivery;
+    const reminderForAt = String(reminderDelivery?.scheduledAt || "").trim();
+    const alreadySentForThisSchedule = Boolean(reminderDelivery?.sentAt && reminderForAt === scheduledAt);
+    if (isWithinInquiryCallReminderWindow(schedMs, now) && !alreadySentForThisSchedule) {
+      const senderId = pickInquiryCallWhatsappSenderId(student);
+      const studentId = String(student?.id || "").trim();
+      if (!senderId) {
+        next = {
+          ...next,
+          inquiryScheduledCallReminderWhatsappDelivery: {
+            attempted: false,
+            status: "skipped",
+            reason: "Student has no assigned counselor for WhatsApp.",
+            scheduledAt,
+            sentAt: new Date().toISOString(),
+          },
+        };
+        changed = true;
+      } else {
+        try {
+          const scheduledLabel = formatInquiryScheduledCallLabelForWhatsapp(scheduledAt);
+          const result = await deliverCounselorMessageToStudentWhatsapp({
+            senderId,
+            receiverId: studentId,
+            content: buildInquiryCallReminderWhatsappMessage({
+              studentName: String(student?.name || "").trim(),
+              scheduledLabel,
+            }),
+          });
+          next = {
+            ...next,
+            inquiryScheduledCallReminderWhatsappDelivery: {
+              attempted: Boolean(result?.attempted),
+              status: String(result?.status || "skipped"),
+              reason: String(result?.reason || ""),
+              scheduledAt,
+              sentAt: new Date().toISOString(),
+            },
+          };
+          changed = true;
+          logEvent("student", "inquiry call reminder sent to student via whatsapp", {
+            studentId,
+            counselorId: senderId,
+            status: next.inquiryScheduledCallReminderWhatsappDelivery.status,
+          });
+        } catch (error) {
+          next = {
+            ...next,
+            inquiryScheduledCallReminderWhatsappDelivery: {
+              attempted: true,
+              status: "failed",
+              reason: String(error?.message || "Failed to send WhatsApp inquiry call reminder."),
+              scheduledAt,
+              sentAt: new Date().toISOString(),
+            },
+          };
+          changed = true;
+          console.error("Inquiry call reminder WhatsApp send failed:", error);
+        }
+      }
+    }
+    nextStudents.push(next);
+  }
+  if (changed) {
+    await writeStudemts(nextStudents);
+  }
+}
+
 module.exports = {
   aggregateWhatsappDeliveryResults,
   deliverInvoicePackageToStudentWhatsapp,
@@ -400,6 +558,10 @@ module.exports = {
   appendFinanceActivityForInvoiceDecision,
   notifyInvoicePaymentDecision,
   processMeetingReminders,
+  processInquiryScheduledCallReminders,
+  notifyInquiryCallScheduled,
   appointmentStartMs,
   isWithinMeetingReminderWindow,
+  parseInquiryScheduledCallMs,
+  isWithinInquiryCallReminderWindow,
 };
