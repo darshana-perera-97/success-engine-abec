@@ -8,6 +8,8 @@ const {
   whatsappSessionRecoveryChains,
   WHATSAPP_CONNECTIONS_DIR,
   WHATSAPP_RECONNECT_INTERVAL_MS,
+  WHATSAPP_WEB_VERSION,
+  WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
 } = require("../config");
 const { readUsers } = require("../models/users");
 const { readSystemData } = require("../models/systemData");
@@ -16,7 +18,7 @@ const { readChats, writeChats } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { isCounselorRole } = require("./roles");
 
-const STAFF_WHATSAPP_ROLES = new Set(["Manager", "Team Lead"]);
+const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
 const { appendWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
@@ -89,9 +91,44 @@ function ensureWhatsappState(userId) {
     whatsappProfilePicUrl: "",
     lastUpdatedAt: new Date().toISOString(),
     client: null,
+    authenticatedTimeout: null,
+    authTimedOut: false,
   };
   whatsappSessions.set(key, created);
   return created;
+}
+
+function clearWhatsappAuthenticatedTimeout(state) {
+  if (!state || !state.authenticatedTimeout) return;
+  clearTimeout(state.authenticatedTimeout);
+  state.authenticatedTimeout = null;
+}
+
+function markWhatsappAuthenticatedTimeout(state) {
+  if (!state || state.status !== "authenticated") return;
+  state.authTimedOut = true;
+  state.status = "error";
+  state.error = "WhatsApp sign-in timed out after QR scan. Please connect again to generate a fresh QR code.";
+  state.qrCodeDataUrl = "";
+  state.lastUpdatedAt = new Date().toISOString();
+  clearWhatsappAuthenticatedTimeout(state);
+  const staleClient = state.client;
+  state.client = null;
+  if (staleClient && typeof staleClient.destroy === "function") {
+    staleClient.destroy().catch(() => {
+      // Ignore cleanup failure; the timed-out client has already been detached.
+    });
+  }
+}
+
+function scheduleWhatsappAuthenticatedTimeout(state) {
+  clearWhatsappAuthenticatedTimeout(state);
+  state.authenticatedTimeout = setTimeout(() => {
+    markWhatsappAuthenticatedTimeout(state);
+  }, AUTHENTICATED_STUCK_TIMEOUT_MS);
+  if (typeof state.authenticatedTimeout.unref === "function") {
+    state.authenticatedTimeout.unref();
+  }
 }
 
 function snapshotWhatsappState(userId) {
@@ -101,9 +138,7 @@ function snapshotWhatsappState(userId) {
     const isStaleAuthenticated =
       Number.isFinite(lastUpdateMs) && Date.now() - lastUpdateMs > AUTHENTICATED_STUCK_TIMEOUT_MS;
     if (isStaleAuthenticated) {
-      state.status = "error";
-      state.error = "WhatsApp sign-in is taking too long. Please disconnect and connect again.";
-      state.lastUpdatedAt = new Date().toISOString();
+      markWhatsappAuthenticatedTimeout(state);
     }
   }
   return {
@@ -145,6 +180,15 @@ async function startWhatsappSession(userId) {
       clientId: sanitizeUserIdForPath(cleanUserId),
       dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
     }),
+    webVersion: WHATSAPP_WEB_VERSION,
+    webVersionCache: {
+      type: "remote",
+      remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
+      strict: false,
+    },
+    authTimeoutMs: 120000,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 10000,
     puppeteer: {
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -158,6 +202,8 @@ async function startWhatsappSession(userId) {
   state.whatsappName = "";
   state.whatsappNumber = "";
   state.whatsappProfilePicUrl = "";
+  state.authTimedOut = false;
+  clearWhatsappAuthenticatedTimeout(state);
   state.lastUpdatedAt = new Date().toISOString();
 
   client.on("qr", async (qr) => {
@@ -165,6 +211,8 @@ async function startWhatsappSession(userId) {
       state.qrCodeDataUrl = await QRCode.toDataURL(qr);
       state.status = "awaiting_qr_scan";
       state.error = "";
+      state.authTimedOut = false;
+      clearWhatsappAuthenticatedTimeout(state);
       state.lastUpdatedAt = new Date().toISOString();
     } catch {
       state.error = "Failed to render WhatsApp QR code.";
@@ -175,10 +223,13 @@ async function startWhatsappSession(userId) {
   client.on("authenticated", () => {
     state.status = "authenticated";
     state.error = "";
+    state.authTimedOut = false;
+    scheduleWhatsappAuthenticatedTimeout(state);
     state.lastUpdatedAt = new Date().toISOString();
   });
 
   client.on("ready", async () => {
+    clearWhatsappAuthenticatedTimeout(state);
     const info = client.info || {};
     const widSerialized =
       (info.wid && (info.wid._serialized || info.wid.user)) || "";
@@ -199,19 +250,25 @@ async function startWhatsappSession(userId) {
     state.whatsappName = String(info.pushname || info.platform || "WhatsApp User");
     state.whatsappNumber = String(numberFromWid || "");
     state.whatsappProfilePicUrl = profilePicUrl;
+    state.authTimedOut = false;
     state.lastUpdatedAt = new Date().toISOString();
   });
 
   client.on("auth_failure", (message) => {
+    clearWhatsappAuthenticatedTimeout(state);
     state.status = "auth_failed";
     state.error = String(message || "WhatsApp authentication failed.");
     state.lastUpdatedAt = new Date().toISOString();
   });
 
   client.on("disconnected", () => {
-    state.status = "disconnected";
+    clearWhatsappAuthenticatedTimeout(state);
+    state.status = state.authTimedOut ? "error" : "disconnected";
     state.qrCodeDataUrl = "";
     state.connectedAt = "";
+    if (!state.authTimedOut) {
+      state.error = "";
+    }
     state.lastUpdatedAt = new Date().toISOString();
   });
 
@@ -229,6 +286,7 @@ async function startWhatsappSession(userId) {
   client
     .initialize()
     .catch((error) => {
+      clearWhatsappAuthenticatedTimeout(state);
       state.status = "error";
       state.error = String(error?.message || "Failed to initialize WhatsApp client.");
       state.lastUpdatedAt = new Date().toISOString();
@@ -248,6 +306,7 @@ async function stopWhatsappSession(userId) {
       // Ignore cleanup failure and clear in-memory state anyway.
     }
   }
+  clearWhatsappAuthenticatedTimeout(state);
   state.client = null;
   state.status = "disconnected";
   state.qrCodeDataUrl = "";
@@ -256,6 +315,7 @@ async function stopWhatsappSession(userId) {
   state.whatsappName = "";
   state.whatsappNumber = "";
   state.whatsappProfilePicUrl = "";
+  state.authTimedOut = false;
   state.lastUpdatedAt = new Date().toISOString();
   const userConnectionDir = path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId));
   try {
@@ -354,7 +414,7 @@ async function waitForWhatsappSessionConnected(userId, timeoutMs = 120000) {
   while (Date.now() - started < timeoutMs) {
     const state = ensureWhatsappState(key);
     const ready =
-      state.client && (state.status === "connected" || state.status === "authenticated");
+      state.client && state.status === "connected";
     if (ready) return;
     const terminal = state.status === "error" || state.status === "auth_failed";
     if (terminal) {

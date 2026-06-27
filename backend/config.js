@@ -38,6 +38,11 @@ const DOC_MAPPING_FILE = path.join(DATA_DIR, "docMapping.json");
 const WEB_FORMS_FILE = path.join(DATA_DIR, "webForms.json");
 const STAGES_FILE = path.join(DATA_DIR, "stages.json");
 const WHATSAPP_CONNECTIONS_DIR = path.join(DATA_DIR, "whatsapp-connections");
+const WHATSAPP_WEB_VERSION = String(process.env.WHATSAPP_WEB_VERSION || "2.3000.1017054665").trim();
+const WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH = String(
+  process.env.WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH ||
+    "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html"
+).trim();
 const WHATSAPP_INCOMING_FILE = path.join(DATA_DIR, "whatsapp-incoming.json");
 const CHAT_FILES_DIR = path.join(DATA_DIR, "chats");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
@@ -187,6 +192,8 @@ module.exports = {
   WEB_FORMS_FILE,
   STAGES_FILE,
   WHATSAPP_CONNECTIONS_DIR,
+  WHATSAPP_WEB_VERSION,
+  WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
   WHATSAPP_INCOMING_FILE,
   CHAT_FILES_DIR,
   ASSETS_DIR,
