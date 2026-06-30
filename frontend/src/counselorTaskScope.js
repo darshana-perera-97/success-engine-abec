@@ -1,6 +1,6 @@
 /**
  * Task visibility for counselors: keep in sync with Task Manager (Counselor role).
- * A task counts if the counselor is in assigned_to / counselor_ids, or the task
+ * A task counts if the counselor is in assigned_to, or the task
  * belongs to a monitored student and every assignee is either the counselor (any
  * linked id/email/name) or the student id (portal convention for shared queues).
  * Tasks assigned only to other counselors on the same student are excluded.
@@ -27,6 +27,23 @@ function buildCounselorIdentitySet(currentUser) {
 }
 
 /**
+ * Normalized ids/emails/names for the signed-in counselor (or explicit override from App).
+ */
+export function resolveCounselorIdentitySet(currentUser, identitySetOverride) {
+  if (identitySetOverride instanceof Set && identitySetOverride.size > 0) {
+    return identitySetOverride;
+  }
+  return buildCounselorIdentitySet(currentUser);
+}
+
+/** True when the task lists the counselor in assigned_to. */
+export function isTaskDirectlyAssignedToIdentities(task, identitySet) {
+  if (!(identitySet instanceof Set) || identitySet.size === 0) return false;
+  const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
+  return assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
+}
+
+/**
  * Same visibility rules as {@link filterTasksForCounselor}, but uses an explicit
  * identity set (e.g. merged account + employee aliases for manager roster math).
  *
@@ -39,10 +56,8 @@ export function filterTasksForCounselorIdentities(tasks, identitySet, monitoredS
   const studentIds = buildMonitoredStudentIdSet(monitoredStudents);
   return (tasks || []).filter((task) => {
     const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
-    const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
     const isAssigned = assignedTo.some((assignee) => identitySet.has(normalize(assignee)));
-    const isRelatedCounselorTask = relatedCounselorIds.some((counselorId) => identitySet.has(normalize(counselorId)));
-    if (isAssigned || isRelatedCounselorTask) return true;
+    if (isAssigned) return true;
     if (task?.requiresStudentDocuments === true) return false;
     const sid = String(task.student_id || task.studentId || "").trim();
     const isMonitoredStudentTask = sid ? studentIds.has(sid) : false;
@@ -67,6 +82,15 @@ function buildMonitoredStudentIdSet(monitoredStudents) {
   );
 }
 
+/** All tasks linked to students in the counselor/coordinator monitored list (any assignee). */
+export function filterTasksForMonitoredStudents(tasks, monitoredStudents) {
+  const studentIds = buildMonitoredStudentIdSet(monitoredStudents);
+  return (tasks || []).filter((task) => {
+    const sid = String(task.student_id || task.studentId || "").trim();
+    return sid && studentIds.has(sid);
+  });
+}
+
 /**
  * @param {Array} tasks
  * @param {object} currentUser
@@ -81,6 +105,21 @@ export function filterTasksForCounselor(tasks, currentUser, monitoredStudents, i
       ? identitySetOverride
       : buildCounselorIdentitySet(currentUser);
   return filterTasksForCounselorIdentities(tasks, identitySet, monitoredStudents);
+}
+
+export function isNewStudentIntakeTask(task) {
+  return String(task?.task || "").trim().startsWith("New student intake");
+}
+
+export function findPendingStudentIntakeTasks(tasks, studentId) {
+  const sid = String(studentId || "").trim();
+  if (!sid) return [];
+  return (tasks || []).filter((t) => {
+    const tid = String(t.student_id || t.studentId || "").trim();
+    if (tid !== sid) return false;
+    if (!isNewStudentIntakeTask(t)) return false;
+    return String(t.status || "").trim().toLowerCase() !== "completed";
+  });
 }
 
 export function isTaskOverdueByDate(task) {

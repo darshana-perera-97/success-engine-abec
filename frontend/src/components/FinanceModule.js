@@ -119,6 +119,27 @@ function hasRejectedPaymentEvidence(inv) {
   return Boolean(String(inv?.paymentRejectionReason || "").trim());
 }
 
+function allocatePaymentAcrossInvoices(invoices, totalAmount) {
+  const sorted = [...invoices].sort((a, b) => {
+    const dateA = new Date(a?.issueDate || a?.dueDate || 0).getTime();
+    const dateB = new Date(b?.issueDate || b?.dueDate || 0).getTime();
+    if (dateA !== dateB) return dateA - dateB;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+  let remaining = totalAmount;
+  const allocations = [];
+  for (const inv of sorted) {
+    if (remaining <= 0.009) break;
+    const due = invoiceBalanceDue(inv);
+    const alloc = Math.min(remaining, due);
+    if (alloc > 0.009) {
+      allocations.push({ invoice: inv, amount: alloc });
+      remaining -= alloc;
+    }
+  }
+  return { allocations, unallocated: remaining };
+}
+
 function collectInvoiceEvidenceItems(inv) {
   const items = [];
   const history = Array.isArray(inv?.paymentProofHistory) ? inv.paymentProofHistory : [];
@@ -418,7 +439,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     loadStudentInvoices();
   };
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState([]);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [detailsInvoice, setDetailsInvoice] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("card");
@@ -449,7 +470,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     }
   };
   const handlePayClick = (invoice) => {
-    setSelectedInvoice(invoice);
+    setSelectedInvoiceIds([String(invoice.id)]);
     setIsPaymentModalOpen(true);
     setPaymentMethod(canUploadEvidence ? "upload" : "card");
     setPaymentProofFile(null);
@@ -461,7 +482,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     setIsDetailsModalOpen(true);
   };
   const handlePaymentSubmit = async () => {
-    if (!onUpdateInvoice || !selectedInvoice) return;
+    if (!onUpdateInvoice) return;
+    const selectedInvoices = studentInvoices.filter((inv) => selectedInvoiceIds.includes(String(inv.id)));
+    if (selectedInvoices.length === 0) {
+      setPaymentError(isStudentView ? "Select at least one invoice for this receipt." : "Select at least one invoice for this evidence.");
+      return;
+    }
+    const selectedCurrency = String(selectedInvoices[0]?.currency || "LKR").trim();
+    if (selectedInvoices.some((inv) => String(inv?.currency || "LKR").trim() !== selectedCurrency)) {
+      setPaymentError("Selected invoices must use the same currency.");
+      return;
+    }
     setPaymentError("");
     setIsSubmittingPayment(true);
     if (canUploadEvidence && paymentMethod === "card") {
@@ -470,6 +501,12 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       return;
     }
     if (paymentMethod === "card") {
+      if (selectedInvoices.length !== 1) {
+        setPaymentError("Card payment can only be applied to one invoice at a time.");
+        setIsSubmittingPayment(false);
+        return;
+      }
+      const selectedInvoice = selectedInvoices[0];
       const result = await onUpdateInvoice({
         ...selectedInvoice,
         status: "Paid",
@@ -482,7 +519,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         return;
       }
     } else {
-      const balanceDue = invoiceBalanceDue(selectedInvoice);
+      const selectedTotalBalance = selectedInvoices.reduce((sum, inv) => sum + invoiceBalanceDue(inv), 0);
       const claimedParsed = parseFloat(String(paymentClaimedAmount || "").trim());
       const isCashPayment = paymentMethod === "cash";
       if (!Number.isFinite(claimedParsed) || claimedParsed <= 0) {
@@ -490,8 +527,8 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         setIsSubmittingPayment(false);
         return;
       }
-      if (claimedParsed > balanceDue + 0.009) {
-        setPaymentError(`Amount cannot exceed the outstanding balance (${balanceDue.toLocaleString()}).`);
+      if (claimedParsed > selectedTotalBalance + 0.009) {
+        setPaymentError(`Amount cannot exceed the outstanding balance (${selectedTotalBalance.toLocaleString()}).`);
         setIsSubmittingPayment(false);
         return;
       }
@@ -534,36 +571,48 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         }
         proofFileName = paymentProofFile.name;
       }
-      const uploadResult = await uploadInvoicePaymentProof(
-        selectedInvoice.id,
-        dataUrl || null,
-        proofFileName,
-        {
-          claimedAmount: claimedParsed,
-          paymentMethod: isCashPayment ? "Cash" : "Bank Transfer"
-        }
-      );
-      if (!uploadResult.ok) {
-        setPaymentError(uploadResult.error || "Failed to submit payment.");
+      const { allocations } = allocatePaymentAcrossInvoices(selectedInvoices, claimedParsed);
+      if (allocations.length === 0) {
+        setPaymentError("No balance available on the selected invoices.");
         setIsSubmittingPayment(false);
         return;
       }
-      const updateResult = await onUpdateInvoice(uploadResult.data);
-      if (!updateResult?.ok) {
-        setPaymentError(updateResult?.error || "Payment submitted but status update failed.");
-        setIsSubmittingPayment(false);
-        return;
+      const paymentMethodLabel = isCashPayment ? "Cash" : "Bank Transfer";
+      for (const { invoice, amount } of allocations) {
+        const uploadResult = await uploadInvoicePaymentProof(
+          invoice.id,
+          dataUrl || null,
+          proofFileName,
+          {
+            claimedAmount: amount,
+            paymentMethod: paymentMethodLabel
+          }
+        );
+        if (!uploadResult.ok) {
+          setPaymentError(uploadResult.error || `Failed to submit payment for invoice ${invoice.id}.`);
+          setIsSubmittingPayment(false);
+          return;
+        }
+        const updateResult = await onUpdateInvoice(uploadResult.data);
+        if (!updateResult?.ok) {
+          setPaymentError(updateResult?.error || `Payment submitted for ${invoice.id} but status update failed.`);
+          setIsSubmittingPayment(false);
+          return;
+        }
       }
       const paymentLabel = isCashPayment && !paymentProofFile ? "Cash payment" : "payment evidence";
+      const invoiceLabel = allocations.length === 1
+        ? `invoice ${allocations[0].invoice.id}`
+        : `${allocations.length} invoices (${allocations.map(({ invoice }) => invoice.id).join(", ")})`;
       onNotify?.(
         isCashPayment && !paymentProofFile ? "Cash payment submitted" : "Evidence uploaded",
-        `${isFullPaymentReceiptAmount(claimedParsed, balanceDue) ? "Full" : "Partial"} ${paymentLabel} (${selectedInvoice.currency} ${claimedParsed.toLocaleString()}) for invoice ${selectedInvoice.id} was submitted for review.`,
+        `${isFullPaymentReceiptAmount(claimedParsed, selectedTotalBalance) ? "Full" : "Partial"} ${paymentLabel} (${selectedCurrency} ${claimedParsed.toLocaleString()}) for ${invoiceLabel} was submitted for review.`,
         "success"
       );
     }
     setIsSubmittingPayment(false);
     setIsPaymentModalOpen(false);
-    setSelectedInvoice(null);
+    setSelectedInvoiceIds([]);
     setPaymentProofFile(null);
     setPaymentClaimedAmount("");
     loadStudentInvoices();
@@ -725,6 +774,24 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     return hasRejectedPaymentEvidenceOnInvoice(inv);
   };
   const uploadableInvoices = studentInvoices.filter((inv) => canUploadForInvoice(inv));
+  const selectedPaymentInvoices = uploadableInvoices.filter((inv) => selectedInvoiceIds.includes(String(inv.id)));
+  const selectedPaymentCurrency = String(selectedPaymentInvoices[0]?.currency || "LKR").trim();
+  const selectedPaymentTotalBalance = selectedPaymentInvoices.reduce((sum, inv) => sum + invoiceBalanceDue(inv), 0);
+  const paymentAllocationPreview = selectedPaymentInvoices.length > 1 && Number.isFinite(parseFloat(String(paymentClaimedAmount || "").trim()))
+    ? allocatePaymentAcrossInvoices(selectedPaymentInvoices, parseFloat(String(paymentClaimedAmount || "").trim()))
+    : null;
+  const togglePaymentInvoiceSelection = (invoiceId) => {
+    const id = String(invoiceId);
+    setSelectedInvoiceIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.length === 1 ? prev : prev.filter((entry) => entry !== id);
+      }
+      return [...prev, id];
+    });
+    setPaymentProofFile(null);
+    setPaymentClaimedAmount("");
+    setPaymentError("");
+  };
   const handleOpenAddEvidence = () => {
     if (uploadableInvoices.length === 0) {
       onNotify?.(
@@ -735,14 +802,6 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       return;
     }
     handlePayClick(uploadableInvoices[0]);
-  };
-  const handleEvidenceInvoiceChange = (invoiceId) => {
-    const invoice = uploadableInvoices.find((inv) => String(inv.id) === String(invoiceId));
-    if (!invoice) return;
-    setSelectedInvoice(invoice);
-    setPaymentProofFile(null);
-    setPaymentClaimedAmount("");
-    setPaymentError("");
   };
   const renderInvoiceDeliveryPanel = (inv) => {
     if (!inv || !invoiceHasDeliveryDetails(inv)) return null;
@@ -941,10 +1000,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
       /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500 font-medium", children: /* @__PURE__ */ jsxs("tr", { children: [
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Invoice" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Status" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Invoiced" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Paid" }),
+        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Balance" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-right", children: "Details" })
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => {
+      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => {
+        const paidSoFar = invoiceApprovedPaid(inv);
+        const balanceDue = invoiceBalanceDue(inv);
+        const invoiceStatus = String(inv?.status || "—").trim() || "—";
         return /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors", children: [
           /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 font-medium text-slate-700", children: [
             /* @__PURE__ */ jsx("div", { className: "font-mono text-xs text-slate-500", children: inv.id }),
@@ -959,6 +1024,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
               inv.dueDate ? ` · Due: ${inv.dueDate}` : ""
             ] }) : null
           ] }),
+          /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(invoiceStatus)}`, children: invoiceStatus }) }),
           /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col", children: [
             /* @__PURE__ */ jsxs("span", { className: "font-semibold", children: [
               inv.currency,
@@ -969,6 +1035,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
               "\u2248 ",
               formatLKR(invoiceLedgerAmount(inv), inv.currency, exchangeRates)
             ] }) : null
+          ] }) }),
+          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: paidSoFar > 0 ? /* @__PURE__ */ jsxs("span", { className: "font-semibold text-emerald-700", children: [
+            inv.currency,
+            " ",
+            paidSoFar.toLocaleString()
+          ] }) : /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "—" }) }),
+          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: isInvoiceFullyPaid(inv) ? /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-emerald-600", children: "Settled" }) : /* @__PURE__ */ jsxs("span", { className: "font-semibold text-amber-700", children: [
+            inv.currency,
+            " ",
+            balanceDue.toLocaleString()
           ] }) }),
           /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => handleOpenDetails(inv), children: "View" }) })
         ] }, inv.id);
@@ -1110,37 +1186,78 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsDetailsModalOpen(false), children: "Close" })
       ] })
     ] }) }),
-    isPaymentModalOpen && selectedInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    isPaymentModalOpen && selectedInvoiceIds.length > 0 && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: canUploadEvidence ? isStudentView ? "Upload receipt" : "Upload payment evidence" : "Process Payment" }),
-        /* @__PURE__ */ jsxs("button", { onClick: () => setIsPaymentModalOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
+        /* @__PURE__ */ jsxs("button", { onClick: () => {
+          setIsPaymentModalOpen(false);
+          setSelectedInvoiceIds([]);
+        }, className: "text-slate-400 hover:text-slate-600", children: [
           /* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }),
           /* @__PURE__ */ jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: "2", d: "M6 18L18 6M6 6l12 12" }) })
         ] })
       ] }),
-      canUploadEvidence && hasRejectedPaymentEvidenceOnInvoice(selectedInvoice) ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-6", children: "Previous receipt was rejected — upload a corrected slip" }) : null,
-      !canUploadEvidence && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100", children: [
+      canUploadEvidence && uploadableInvoices.length > 0 ? /* @__PURE__ */ jsxs("div", { className: "mb-6 space-y-2", children: [
+        /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block", children: isStudentView ? "Apply receipt to invoice(s)" : "Apply evidence to invoice(s)" }),
+        /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: isStudentView ? "Select one or more open invoices. One receipt can cover multiple invoices — the amount is applied oldest first." : "Select one or more open invoices. One slip can cover multiple invoices — the amount is applied oldest first." }),
+        /* @__PURE__ */ jsx("div", { className: "max-h-52 overflow-y-auto space-y-2 rounded-xl border border-gray-200 p-3 bg-slate-50/50", children: [...uploadableInvoices].sort((a, b) => {
+          const dateA = new Date(a?.issueDate || a?.dueDate || 0).getTime();
+          const dateB = new Date(b?.issueDate || b?.dueDate || 0).getTime();
+          if (dateA !== dateB) return dateA - dateB;
+          return String(a?.id || "").localeCompare(String(b?.id || ""));
+        }).map((inv) => {
+          const checked = selectedInvoiceIds.includes(String(inv.id));
+          const balanceDue = invoiceBalanceDue(inv);
+          const rejected = hasRejectedPaymentEvidenceOnInvoice(inv);
+          return /* @__PURE__ */ jsxs("label", { className: `flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${checked ? "border-indigo-300 bg-indigo-50/80" : "border-transparent bg-white hover:border-slate-200"}`, children: [
+            /* @__PURE__ */ jsx("input", { type: "checkbox", className: "mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500", checked, onChange: () => togglePaymentInvoiceSelection(inv.id) }),
+            /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+              /* @__PURE__ */ jsxs("p", { className: "text-sm font-medium text-slate-900 truncate", children: [
+                inv.description || "Invoice",
+                " · ",
+                /* @__PURE__ */ jsx("span", { className: "font-mono text-slate-600", children: inv.id })
+              ] }),
+              /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-0.5", children: [
+                "Balance ",
+                inv.currency || "LKR",
+                " ",
+                balanceDue.toLocaleString(),
+                inv.issueDate ? ` · Issued ${inv.issueDate}` : ""
+              ] }),
+              rejected ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-1", children: "Previous receipt rejected — re-upload needed" }) : null
+            ] })
+          ] }, inv.id);
+        }) }),
+        selectedPaymentInvoices.length > 1 ? /* @__PURE__ */ jsxs("p", { className: "text-xs font-medium text-slate-700", children: [
+          "Combined balance: ",
+          selectedPaymentCurrency,
+          " ",
+          selectedPaymentTotalBalance.toLocaleString()
+        ] }) : null
+      ] }) : null,
+      canUploadEvidence && selectedPaymentInvoices.some((inv) => hasRejectedPaymentEvidenceOnInvoice(inv)) ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-6", children: "Previous receipt was rejected — upload a corrected slip" }) : null,
+      !canUploadEvidence && selectedPaymentInvoices[0] && /* @__PURE__ */ jsxs("div", { className: "mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100", children: [
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 uppercase font-bold mb-1", children: "Amount to be paid" }),
         /* @__PURE__ */ jsxs("p", { className: "text-2xl font-bold text-amber-700", children: [
-          selectedInvoice.currency,
+          selectedPaymentInvoices[0].currency,
           " ",
-          invoiceBalanceDue(selectedInvoice).toLocaleString()
+          invoiceBalanceDue(selectedPaymentInvoices[0]).toLocaleString()
         ] }),
         /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-600 mt-1", children: [
           "Invoiced ",
-          selectedInvoice.currency,
+          selectedPaymentInvoices[0].currency,
           " ",
-          invoiceInvoicedAmount(selectedInvoice).toLocaleString(),
+          invoiceInvoicedAmount(selectedPaymentInvoices[0]).toLocaleString(),
           " · Paid ",
-          selectedInvoice.currency,
+          selectedPaymentInvoices[0].currency,
           " ",
-          invoiceApprovedPaid(selectedInvoice).toLocaleString()
+          invoiceApprovedPaid(selectedPaymentInvoices[0]).toLocaleString()
         ] }),
-        selectedInvoice.currency !== "LKR" && /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-1", children: [
+        selectedPaymentInvoices[0].currency !== "LKR" && /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-400 mt-1", children: [
           "\u2248 ",
-          formatLKR(invoiceBalanceDue(selectedInvoice), selectedInvoice.currency, exchangeRates)
+          formatLKR(invoiceBalanceDue(selectedPaymentInvoices[0]), selectedPaymentInvoices[0].currency, exchangeRates)
         ] }),
-        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600 mt-2", children: selectedInvoice.description }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-600 mt-2", children: selectedPaymentInvoices[0].description }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium mt-3", children: PAYMENT_NOT_REFUNDABLE_NOTICE })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-4 mb-6", children: [
@@ -1173,7 +1290,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Amount on this receipt" }),
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
-            /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-600 shrink-0", children: selectedInvoice.currency || "LKR" }),
+            /* @__PURE__ */ jsx("span", { className: "text-sm font-medium text-slate-600 shrink-0", children: selectedPaymentCurrency || "LKR" }),
             /* @__PURE__ */ jsx("input", {
               type: "number",
               min: "0",
@@ -1184,7 +1301,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
               onChange: (event) => setPaymentClaimedAmount(event.target.value)
             })
           ] }),
-          /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1", children: paymentMethod === "cash" ? "Enter the cash amount paid. You can upload additional receipts until the invoice is fully paid." : "Enter the exact amount on this slip. You can upload additional receipts until the invoice is fully paid." })
+          /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1", children: selectedPaymentInvoices.length > 1 ? `Enter the total on this slip (max ${selectedPaymentTotalBalance.toLocaleString()}). Applied to oldest invoice first.` : paymentMethod === "cash" ? "Enter the cash amount paid. You can upload additional receipts until the invoice is fully paid." : "Enter the exact amount on this slip. You can upload additional receipts until the invoice is fully paid." }),
+          paymentAllocationPreview?.allocations?.length > 1 ? /* @__PURE__ */ jsxs("div", { className: "mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1.5", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] font-semibold text-slate-600 uppercase", children: "Allocation preview" }),
+            paymentAllocationPreview.allocations.map(({ invoice, amount }) => /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-600", children: [
+              /* @__PURE__ */ jsx("span", { className: "font-mono text-slate-800", children: invoice.id }),
+              ": ",
+              selectedPaymentCurrency,
+              " ",
+              amount.toLocaleString()
+            ] }, invoice.id))
+          ] }) : null
         ] }),
         /* @__PURE__ */ jsxs("label", { className: "border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:bg-slate-50 cursor-pointer transition-colors block", children: [
           /* @__PURE__ */ jsx("input", { type: "file", accept: ".jpg,.jpeg,.png,.pdf,.doc,.docx", className: "hidden", onChange: (event) => setPaymentProofFile(event.target.files?.[0] || null) }),
@@ -1195,7 +1322,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       ] }),
       paymentError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mb-4", children: paymentError }) : null,
       /* @__PURE__ */ jsxs("div", { className: "flex gap-3", children: [
-        /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => setIsPaymentModalOpen(false), children: "Cancel" }),
+        /* @__PURE__ */ jsx(Button, { variant: "ghost", className: "flex-1", onClick: () => {
+          setIsPaymentModalOpen(false);
+          setSelectedInvoiceIds([]);
+        }, children: "Cancel" }),
         /* @__PURE__ */ jsx(Button, { className: "flex-1 bg-indigo-600 hover:bg-indigo-700 text-white", onClick: handlePaymentSubmit, isLoading: isSubmittingPayment, children: paymentMethod === "card" ? "Pay Now" : paymentMethod === "cash" ? "Submit Cash Payment" : "Submit Receipt" })
       ] })
     ] }) }),

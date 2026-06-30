@@ -1,6 +1,18 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Mail, Phone } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
+
+function counselorBadgeClassName(label) {
+  const normalized = String(label || "").trim().toLowerCase();
+  if (normalized === "primary") {
+    return "bg-indigo-600 text-white";
+  }
+  if (normalized === "secondary") {
+    return "bg-slate-100 text-slate-600 border border-slate-200";
+  }
+  return "bg-indigo-100 text-indigo-800";
+}
+
 export function PersonContactCard({
   name,
   role,
@@ -20,7 +32,7 @@ export function PersonContactCard({
         event.currentTarget.src = DEFAULT_USER_AVATAR;
       } }) : name.charAt(0) }),
       /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
-        badgeLine.length > 0 && /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-1 mb-1", children: badgeLine.map((b) => /* @__PURE__ */ jsx("span", { className: "text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800", children: b }, b)) }),
+        badgeLine.length > 0 && /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-1 mb-1", children: badgeLine.map((b) => /* @__PURE__ */ jsx("span", { className: `text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${counselorBadgeClassName(b)}`, children: b }, b)) }),
         /* @__PURE__ */ jsx("p", { className: "font-bold text-slate-900 truncate", children: name }),
         role && /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 truncate", children: role })
       ] })

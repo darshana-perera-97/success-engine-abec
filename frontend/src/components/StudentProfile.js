@@ -775,7 +775,8 @@ const StudentProfile = ({
   allStudents = [],
   onDismissAssignmentAlert,
   onStudentMovedToRequests,
-  onSelectStudent
+  onSelectStudent,
+  onCompleteStudentIntakeTask
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
@@ -1078,7 +1079,6 @@ const StudentProfile = ({
         id: `T-SLA-${localStudent.id}-${counselorId}-${now}-${idx}`,
         task: `${TASK_PREFIX}: ${missShort} — ${localStudent.name}`.slice(0, 500),
         assigned_to: [counselorId],
-        counselor_ids: [counselorId],
         student_id: localStudent.id,
         priority: "High",
         status: "Pending",
@@ -1508,17 +1508,9 @@ const StudentProfile = ({
         });
       }
       const taskUpdates = remainingStudentTasks.map((task) => {
-        const selectedAction = advanceDialog.taskActions?.[task.id] || "assign-me";
-        const actionType = !shouldAssignAnother && selectedAction === "assign-next" ? "assign-me" : selectedAction;
-        if (shouldAssignAnother && actionType === "assign-next") {
-          return {
-            ...task,
-            assigned_to: nextCounselorId ? [nextCounselorId] : task.assigned_to || [],
-            isPrivate: true
-          };
-        }
+        const actionType = advanceDialog.taskActions?.[task.id] || "assign-me";
         if (actionType === "student-task") {
-          const recipients = [localStudent.id, currentCounselorId, nextCounselorId].filter(Boolean);
+          const recipients = [localStudent.id, currentCounselorId].filter(Boolean);
           return {
             ...task,
             assigned_to: Array.from(new Set(recipients)),
@@ -1537,6 +1529,22 @@ const StudentProfile = ({
         counselor: shouldAssignAnother ? advanceDialog.counselorId : localStudent.counselor,
         counselorName: shouldAssignAnother ? selectedCounselor?.name || selectedCounselor?.username || localStudent.counselorName : localStudent.counselorName
       };
+      if (shouldAssignAnother && nextCounselorId) {
+        const prevCounselorId = String(localStudent.counselor || "").trim();
+        const history = Array.isArray(localStudent.counselorHistory)
+          ? localStudent.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean)
+          : [];
+        const inquiryId = String(localStudent.inquiryCounselorId || "").trim();
+        const prevStillLinked =
+          prevCounselorId &&
+          prevCounselorId.toLowerCase() !== "unassigned" &&
+          (prevCounselorId === inquiryId || history.includes(prevCounselorId));
+        let nextHistory = history.filter((id) => id.toLowerCase() !== nextCounselorId.toLowerCase());
+        if (prevCounselorId && prevCounselorId !== nextCounselorId && !prevStillLinked) {
+          nextHistory.push(prevCounselorId);
+        }
+        updated.counselorHistory = Array.from(new Set(nextHistory));
+      }
       handleUpdateStudentLocal(updated);
       onAddActivity?.({
         user: userRole,
@@ -1723,7 +1731,7 @@ const StudentProfile = ({
       initial: { opacity: 0, x: 20 },
       animate: { opacity: 1, x: 0 },
       transition: { duration: 0.3 },
-      className: "h-full flex flex-col p-6 bg-slate-50/50 font-sans",
+      className: "h-full flex flex-col min-w-0 overflow-x-hidden p-6 bg-slate-50/50 font-sans",
       children: [
         /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row md:items-center justify-between mb-4 flex-shrink-0 gap-4", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
@@ -1891,7 +1899,7 @@ const StudentProfile = ({
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "mb-8 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-5", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ jsxs("p", { className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600 flex items-center gap-x-2.5 min-w-0 overflow-x-auto whitespace-nowrap", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs sm:text-sm font-bold uppercase tracking-wide text-slate-600 flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0", children: [
               /* @__PURE__ */ jsx("span", { children: "Staging Progress" }),
               /* @__PURE__ */ jsx("span", { className: "text-slate-400 font-normal", children: "|" }),
               /* @__PURE__ */ jsxs("span", { className: "text-indigo-700", children: [
@@ -1941,16 +1949,16 @@ const StudentProfile = ({
             )
           ] }) : null
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex-1 grid grid-cols-12 gap-6 min-h-0", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex-1 grid grid-cols-12 gap-6 min-h-0 min-w-0", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-8 flex flex-col min-w-0", children: [
-            /* @__PURE__ */ jsx("div", { className: "border-b border-gray-200 bg-white/50 rounded-t-xl overflow-hidden", children: /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("div", { className: "flex min-w-max", children: [
+            /* @__PURE__ */ jsx("div", { className: "border-b border-gray-200 bg-white/50 rounded-t-xl overflow-hidden", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap", children: [
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Pipeline", activeTab, tabName: "pipeline", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: setActiveTab }),
               visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
               /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger & Payments", activeTab, tabName: "ledger", onClick: setActiveTab })
-            ] }) }) }),
-            /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 overflow-y-auto", children: renderContent() })
+            ] }) }),
+            /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 min-w-0 overflow-y-auto overflow-x-hidden", children: renderContent() })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
 
@@ -2090,7 +2098,7 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4 overflow-y-auto flex-1 min-h-0", children: [
             /* @__PURE__ */ jsxs("div", { className: "bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800", children: [
               /* @__PURE__ */ jsxs("p", { className: "font-semibold", children: ["Upcoming stage: ", nextStep || "N/A"] }),
-              /* @__PURE__ */ jsx("p", { className: "mt-1", children: "Review pending tasks and assign who will continue counseling for remaining stages." })
+              /* @__PURE__ */ jsx("p", { className: "mt-1", children: "Remaining open tasks stay with the current counselor. Choose a new primary counselor for upcoming stages if needed." })
             ] }),
             nextStep === "Enrolled" && enrolledAdvanceBlockReasons.length > 0 && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 space-y-2", children: [
               /* @__PURE__ */ jsx("p", { className: "font-bold", children: "Enrolled is blocked until:" }),
@@ -2109,19 +2117,15 @@ const StudentProfile = ({
                 /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: ["Status: ", task.status, task.dueDate ? ` | Due: ${task.dueDate}` : ""] }),
                 /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
                   /* @__PURE__ */ jsx("label", { className: "text-[11px] font-semibold text-slate-700", children: "Action for this task" }),
-                  /* @__PURE__ */ jsx("select", { value: advanceDialog.counselorMode !== "another" && (advanceDialog.taskActions?.[task.id] || "assign-me") === "assign-next" ? "assign-me" : advanceDialog.taskActions?.[task.id] || "assign-me", onChange: (e) => setAdvanceDialog((prev) => ({
+                  /* @__PURE__ */ jsx("select", { value: advanceDialog.taskActions?.[task.id] || "assign-me", onChange: (e) => setAdvanceDialog((prev) => ({
                     ...prev,
                     taskActions: {
                       ...prev.taskActions,
                       [task.id]: e.target.value
                     }
-                  })), className: "w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 bg-white", children: advanceDialog.counselorMode === "another" ? [
-                    /* @__PURE__ */ jsx("option", { value: "assign-me", children: "Assign for current counselor" }),
-                    /* @__PURE__ */ jsx("option", { value: "assign-next", children: "Assign for next counselor" }),
-                    /* @__PURE__ */ jsx("option", { value: "student-task", children: "Add as Student Task (Student + Me + Next Counselor)" })
-                  ] : [
-                    /* @__PURE__ */ jsx("option", { value: "assign-me", children: "Assign for current counselor" }),
-                    /* @__PURE__ */ jsx("option", { value: "student-task", children: "Assign for student as a task and for me also" })
+                  })), className: "w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 bg-white", children: [
+                    /* @__PURE__ */ jsx("option", { value: "assign-me", children: "Keep with current counselor" }),
+                    /* @__PURE__ */ jsx("option", { value: "student-task", children: "Share with student (student + current counselor)" })
                   ] })
                 ] })
               ] }, task.id)) }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "No pending tasks for this student." })
@@ -2155,7 +2159,8 @@ const StudentProfile = ({
           onUpdateStudent: handleUpdateStudentLocal,
           onDismissAssignmentAlert,
           onStudentMovedToRequests,
-          onSelectStudent
+          onSelectStudent,
+          onCompleteStudentIntakeTask
         })
       ]
     }
@@ -2165,7 +2170,7 @@ const TabButton = ({ icon: Icon, label, activeTab, tabName, onClick }) => /* @__
   "button",
   {
     onClick: () => onClick(tabName),
-    className: `shrink-0 whitespace-nowrap py-3 px-4 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-nexgenai-navy ${activeTab === tabName ? "border-indigo-600 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:bg-slate-50"}`,
+    className: `flex-1 sm:flex-none min-w-0 py-3 px-3 sm:px-4 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-nexgenai-navy ${activeTab === tabName ? "border-indigo-600 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:bg-slate-50"}`,
     children: [
       /* @__PURE__ */ jsx(Icon, { size: 16, strokeWidth: 1.5 }),
       label

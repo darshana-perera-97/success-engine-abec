@@ -26,7 +26,7 @@ const MultiSelect = ({ options, value, onChange, placeholder = "Select...", labe
     (opt) => opt.label.toLowerCase().includes(searchTerm.toLowerCase()) || opt.subLabel?.toLowerCase().includes(searchTerm.toLowerCase())
   );
   return /* @__PURE__ */ jsxs("div", { className: "space-y-1.5", ref: containerRef, children: [
-    /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 uppercase tracking-wide", children: label }),
+    label ? /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-700 uppercase tracking-wide", children: label }) : null,
     /* @__PURE__ */ jsxs("div", { className: "relative", children: [
       /* @__PURE__ */ jsxs(
         "div",

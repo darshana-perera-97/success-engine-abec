@@ -3,6 +3,7 @@ import { ClipboardList, Eye, FileUp, Info, RefreshCw, Trash2, UserPlus, X } from
 import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getCountries, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import { InlineLoading } from "./LoadingPlaceholder";
+import { MultiSelect } from "./MultiSelect";
 import { isCounselorEquivalentAccountRole } from "../roles";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { mapMetaLeadRow, parseMetaLeadsFile } from "../utils/metaLeadsImport";
@@ -115,6 +116,14 @@ function counselorOptionsForRow(_userRole, _scopeBranch, _requestRow, accounts) 
     });
 }
 
+function counselorRowsToMultiSelectOptions(rows) {
+  return (rows || []).map((c) => ({
+    value: String(c.id || ""),
+    label: c.username || c.email || c.id || "Counselor",
+    subLabel: c.branch ? String(c.branch) : undefined
+  }));
+}
+
 export function RequestedStudents({
   userRole = "Admin",
   scopeBranch = null,
@@ -126,7 +135,8 @@ export function RequestedStudents({
   const [error, setError] = useState("");
 
   const [pipelineRow, setPipelineRow] = useState(null);
-  const [counselorId, setCounselorId] = useState("");
+  const [primaryCounselorId, setPrimaryCounselorId] = useState("");
+  const [viewAccessCounselorIds, setViewAccessCounselorIds] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [counselorRows, setCounselorRows] = useState([]);
   const [modalError, setModalError] = useState("");
@@ -246,7 +256,10 @@ export function RequestedStudents({
       const seq = ++counselorFetchSeq.current;
       setAccountsLoading(true);
       setModalError("");
-      if (!preserveCounselorSelection) setCounselorId("");
+      if (!preserveCounselorSelection) {
+        setPrimaryCounselorId("");
+        setViewAccessCounselorIds([]);
+      }
       try {
         const res = await getAccounts();
         if (seq !== counselorFetchSeq.current) return;
@@ -258,14 +271,17 @@ export function RequestedStudents({
         const filtered = counselorOptionsForRow(userRole, scopeBranch, pipelineRow, res.data);
         setCounselorRows(filtered);
         if (preserveCounselorSelection) {
-          setCounselorId((prev) => {
+          setPrimaryCounselorId((prev) => {
             const ok = filtered.some((c) => String(c.id) === String(prev));
             if (ok) return prev;
             if (filtered.length === 1) return String(filtered[0].id || "");
             return "";
           });
+          setViewAccessCounselorIds((prev) =>
+            prev.filter((id) => filtered.some((c) => String(c.id) === String(id)))
+          );
         } else if (filtered.length === 1) {
-          setCounselorId(String(filtered[0].id || ""));
+          setPrimaryCounselorId(String(filtered[0].id || ""));
         }
       } finally {
         if (seq === counselorFetchSeq.current) setAccountsLoading(false);
@@ -277,7 +293,8 @@ export function RequestedStudents({
   useEffect(() => {
     if (!pipelineRow || !onAddFromRequestRef.current) {
       setCounselorRows([]);
-      setCounselorId("");
+      setPrimaryCounselorId("");
+      setViewAccessCounselorIds([]);
       setModalError("");
       return;
     }
@@ -287,11 +304,41 @@ export function RequestedStudents({
 
   const closeModal = () => {
     setPipelineRow(null);
-    setCounselorId("");
+    setPrimaryCounselorId("");
+    setViewAccessCounselorIds([]);
     setModalError("");
     setModalSaving(false);
     setPipelinePriority("Medium");
   };
+
+  const counselorMultiSelectOptions = useMemo(
+    () => counselorRowsToMultiSelectOptions(counselorRows),
+    [counselorRows]
+  );
+
+  const viewAccessOptions = useMemo(
+    () =>
+      counselorMultiSelectOptions.filter(
+        (opt) => String(opt.value) !== String(primaryCounselorId || "")
+      ),
+    [counselorMultiSelectOptions, primaryCounselorId]
+  );
+
+  const selectedViewAccessCounselors = useMemo(
+    () =>
+      viewAccessCounselorIds.map((id) => {
+        const match = counselorMultiSelectOptions.find((opt) => String(opt.value) === String(id));
+        return match || { value: String(id), label: String(id), subLabel: undefined };
+      }),
+    [viewAccessCounselorIds, counselorMultiSelectOptions]
+  );
+
+  useEffect(() => {
+    if (!primaryCounselorId) return;
+    setViewAccessCounselorIds((prev) =>
+      prev.filter((id) => String(id) !== String(primaryCounselorId))
+    );
+  }, [primaryCounselorId]);
 
   const closeImportPreview = () => {
     setImportPreviewOpen(false);
@@ -416,13 +463,21 @@ export function RequestedStudents({
   const handleAddToPipeline = async (e) => {
     e.preventDefault();
     if (!pipelineRow || !onAddFromRequest) return;
+    const counselorId = String(primaryCounselorId || "").trim();
     if (!counselorId) {
-      setModalError("Choose a counselor for this student.");
+      setModalError("Choose a primary counselor for this student.");
       return;
     }
+    const viewAccess = Array.from(
+      new Set(viewAccessCounselorIds.map((id) => String(id || "").trim()).filter(Boolean))
+    ).filter((id) => id !== counselorId);
     setModalSaving(true);
     setModalError("");
-    const result = await onAddFromRequest(pipelineRow, { counselorId, priority: pipelinePriority });
+    const result = await onAddFromRequest(pipelineRow, {
+      counselorId,
+      viewAccessCounselorIds: viewAccess,
+      priority: pipelinePriority
+    });
     setModalSaving(false);
     if (!result?.ok) {
       setModalError(result?.error || "Could not create student.");
@@ -801,14 +856,14 @@ export function RequestedStudents({
           onClick={closeModal}
         >
           <div
-            className="my-auto w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl"
+            className="my-auto w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-2xl"
             onClick={(ev) => ev.stopPropagation()}
           >
             <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Add to system</h2>
                 <p className="mt-1 text-xs text-slate-500">
-                  Creates a student record (Inquiry) and assigns a counselor. A login password is generated automatically.
+                  Creates a student record (Inquiry), assigns a primary counselor, and optionally grants view access to others. A login password is generated automatically.
                 </p>
               </div>
               <button
@@ -855,7 +910,7 @@ export function RequestedStudents({
               <div>
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Assign counselor
+                    Assign counselor (primary)
                   </label>
                   <Button
                     type="button"
@@ -881,8 +936,8 @@ export function RequestedStudents({
                   <select
                     required
                     disabled={accountsLoading}
-                    value={counselorId}
-                    onChange={(e) => setCounselorId(e.target.value)}
+                    value={primaryCounselorId}
+                    onChange={(e) => setPrimaryCounselorId(e.target.value)}
                     className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <option value="">Select counselor…</option>
@@ -892,6 +947,55 @@ export function RequestedStudents({
                       </option>
                     ))}
                   </select>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  View access
+                </label>
+                <p className="mb-2 text-xs text-slate-500">
+                  Optional — additional counselors who can view this student in their portal (not primary).
+                </p>
+                {selectedViewAccessCounselors.length > 0 ? (
+                  <ul className="mb-3 flex flex-wrap gap-2">
+                    {selectedViewAccessCounselors.map((counselor) => (
+                      <li
+                        key={counselor.value}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700"
+                      >
+                        <span className="font-medium text-slate-900">{counselor.label}</span>
+                        {counselor.subLabel ? (
+                          <span className="text-slate-500">· {counselor.subLabel}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setViewAccessCounselorIds((prev) =>
+                              prev.filter((id) => String(id) !== String(counselor.value))
+                            )
+                          }
+                          className="ml-0.5 rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                          aria-label={`Remove ${counselor.label} from view access`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mb-3 text-xs text-slate-400 italic">No counselors selected for view access yet.</p>
+                )}
+                {accountsLoading && counselorRows.length === 0 ? (
+                  <p className="text-sm text-slate-500">Loading counselors…</p>
+                ) : counselorRows.length === 0 ? null : (
+                  <MultiSelect
+                    label=""
+                    options={viewAccessOptions}
+                    value={viewAccessCounselorIds}
+                    onChange={setViewAccessCounselorIds}
+                    placeholder="Search counselors for view access…"
+                  />
                 )}
               </div>
 
@@ -905,7 +1009,7 @@ export function RequestedStudents({
                 </Button>
                 <Button
                   type="submit"
-                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !counselorId}
+                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !primaryCounselorId}
                   isLoading={modalSaving}
                 >
                   Add student

@@ -6,7 +6,7 @@ import { BarChart, Bar, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getChats } from "../authApi";
 import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
-import { filterTasksForCounselor, isTaskOverdueByDate } from "../counselorTaskScope";
+import { filterTasksForCounselor, isNewStudentIntakeTask, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   normalizePipelineStatus,
   computePipelineEscalations,
@@ -28,9 +28,6 @@ function parseIsoMs(value) {
   if (!value) return null;
   const ms = new Date(value).getTime();
   return Number.isNaN(ms) ? null : ms;
-}
-function isNewStudentIntakeTask(task) {
-  return /new student intake/i.test(String(task?.task || ""));
 }
 function CounselorWeeklyActivityTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
@@ -61,7 +58,8 @@ const CounselorDashboard = ({
   assignmentAlerts = [],
   onDismissAssignmentAlert,
   onUpdateStudent,
-  onStudentMovedToRequests
+  onStudentMovedToRequests,
+  onCompleteStudentIntakeTask
 }) => {
   const [chatMessages, setChatMessages] = useState([]);
   const [clockTick, setClockTick] = useState(0);
@@ -649,7 +647,8 @@ const CounselorDashboard = ({
       onUpdateStudent,
       onDismissAssignmentAlert,
       onStudentMovedToRequests,
-      onSelectStudent
+      onSelectStudent,
+      onCompleteStudentIntakeTask
     })
   ] });
 };

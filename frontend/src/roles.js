@@ -46,6 +46,11 @@ export function isRecognizedPortalRole(role) {
 
 const STAFF_OMNI_CHANNEL_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 
+/** Roles that connect and send from their own WhatsApp account (counselor-style integration). */
+export function isWhatsappIntegrationRole(role) {
+  return isCounselorEquivalentPortalRole(role) || String(role || "").trim() === "Country Coordinator";
+}
+
 /** Admin messaging setting unlocks Omni-Channel send + Integrations for these roles. */
 export function isStaffOmniChannelMessenger(role, adminChatEnabled = false) {
   if (adminChatEnabled !== true) return false;

@@ -3,7 +3,7 @@ import { Users, X } from "lucide-react";
 import { PersonContactCard } from "./PersonContactCard";
 import { buildCounselorTeamEntriesWithFallback, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 /**
- * Roster of counselors involved with this student (enrolling, primary, previous).
+ * Roster of counselors involved with this student (primary counselor/visa officer, then secondary staff).
  * Shown to staff after Specialized Notes on the student profile.
  */
 export function StudentProfileCounselorsRoster({
@@ -19,7 +19,7 @@ export function StudentProfileCounselorsRoster({
       /* @__PURE__ */ jsx(Users, { size: 16, className: "text-indigo-600", strokeWidth: 1.75 }),
       "Counselors handling this student"
     ] }),
-    counselors.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No counselors linked on this record yet." }) : /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-72 overflow-y-auto pr-1", children: counselors.map((c) => /* @__PURE__ */ jsxs("div", { className: "relative group", children: [
+    counselors.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No counselors linked on this record yet." }) : /* @__PURE__ */ jsx("div", { className: "space-y-3 max-h-72 overflow-y-auto pr-1", children: counselors.map((c) => /* @__PURE__ */ jsxs("div", { className: `relative group rounded-xl ${c.isPrimary ? "ring-2 ring-indigo-200 ring-offset-1" : ""}`, children: [
       /* @__PURE__ */ jsx(
         PersonContactCard,
         {

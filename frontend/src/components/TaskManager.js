@@ -3,7 +3,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { AlertCircle, Plus, Upload, CheckCircle, Hourglass, Filter, X } from "lucide-react";
 import { Button } from "./Button";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskOverdueByDate } from "../counselorTaskScope";
+import { filterTasksForMonitoredStudents, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { findTaskDocumentForSlot } from "../taskDocumentRequests";
@@ -141,6 +141,7 @@ const TaskManager = ({
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showCompletedTasks, setShowCompletedTasks] = useState(true);
+  const [onlyMyAssignedTasks, setOnlyMyAssignedTasks] = useState(false);
   const [taskFilters, setTaskFilters] = useState(defaultTaskFilters);
   const [taskFiltersOpen, setTaskFiltersOpen] = useState(false);
   const [slaClock, setSlaClock] = useState(() => Date.now());
@@ -219,24 +220,30 @@ const TaskManager = ({
     if (userRole === "Manager") {
       return tasks.filter((task) => task.priority === "High" || task.status === "Overdue" || task.status === "In Review");
     }
-    if (isCounselorEquivalentPortalRole(userRole)) {
-      return filterTasksForCounselor(tasks, currentUser, monitoredStudents, counselorIdentitySet);
-    }
-    if (userRole === "Country Coordinator") {
-      const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
-      return (tasks || []).filter((task) => ids.has(String(task.student_id || task.studentId || "").trim()));
+    if (isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") {
+      return filterTasksForMonitoredStudents(tasks, monitoredStudents);
     }
     if (userRole === "Student") {
       return tasks.filter((task) => task.student_id === student?.id && !task.isPrivate);
     }
     return [];
   })();
+  const showMyAssignedToggle =
+    isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator";
+  const myIdentitySet = useMemo(
+    () => resolveCounselorIdentitySet(currentUser, counselorIdentitySet),
+    [currentUser, counselorIdentitySet]
+  );
+  const assigneeScopedTasks =
+    showMyAssignedToggle && onlyMyAssignedTasks
+      ? roleScopedTasks.filter((task) => isTaskDirectlyAssignedToIdentities(task, myIdentitySet))
+      : roleScopedTasks;
   const showTaskFilters = userRole === "Admin" || userRole === "Manager";
   const activeTaskFilterCount = useMemo(() => countActiveTaskFilters(taskFilters), [taskFilters]);
   const taskFilterOptions = useMemo(() => {
     const counselorMap = new Map();
     const countries = new Set();
-    for (const task of roleScopedTasks) {
+    for (const task of assigneeScopedTasks) {
       const ctx = getStudentContextForTask(task);
       if (!ctx) continue;
       const counselorId = String(ctx.counselor || "").trim();
@@ -252,10 +259,10 @@ const TaskManager = ({
         .sort((a, b) => a.label.localeCompare(b.label)),
       countries: [...countries].sort((a, b) => a.localeCompare(b))
     };
-  }, [roleScopedTasks, studentLookup, employees]);
+  }, [assigneeScopedTasks, studentLookup, employees]);
   const completedFilteredTasks = showCompletedTasks
-    ? roleScopedTasks
-    : roleScopedTasks.filter((task) => String(task?.status || "").trim() !== "Completed");
+    ? assigneeScopedTasks
+    : assigneeScopedTasks.filter((task) => String(task?.status || "").trim() !== "Completed");
   const filteredTasks = showTaskFilters
     ? filterTasksByPanel(completedFilteredTasks, taskFilters, {
         getStudentContextForTask,
@@ -362,9 +369,11 @@ const TaskManager = ({
   const emptyTasksMessage =
     filteredTasks.length === 0 && completedFilteredTasks.length > 0 && showTaskFilters && activeTaskFilterCount > 0
       ? "No tasks match the current filters."
-      : filteredTasks.length === 0 && roleScopedTasks.length > 0 && !showCompletedTasks
+      : filteredTasks.length === 0 && assigneeScopedTasks.length > 0 && !showCompletedTasks
         ? "No active tasks. Turn Completed tasks on to see finished items."
-        : "No tasks found.";
+        : filteredTasks.length === 0 && onlyMyAssignedTasks && roleScopedTasks.length > 0
+          ? "No tasks are assigned directly to you. Turn off Assigned to me to see your full pipeline queue."
+          : "No tasks found.";
   const studentTaskDocTasks =
     userRole === "Student" && student
       ? studentTasks.filter(
@@ -447,12 +456,20 @@ const TaskManager = ({
   const rootClass = ["space-y-6 animate-in fade-in duration-500", wrapClassName].filter(Boolean).join(" ");
   const managerTitleClass = "text-xl font-semibold tracking-tight text-[#0F172A]";
   const defaultTitleClass = "text-2xl font-semibold tracking-tight text-[#0F172A]";
+  const pipelineTasksTitle =
+    userRole === "Student"
+      ? "My Action Plan"
+      : userRole === "Manager"
+        ? "Task Desk"
+        : showMyAssignedToggle
+          ? "Pipeline Tasks"
+          : "Task Manager";
   return /* @__PURE__ */ jsxs("div", { className: rootClass, children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap justify-between items-start gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         userRole === "Manager"
-          ? /* @__PURE__ */ jsx("h2", { className: managerTitleClass, children: "Task Desk" })
-          : /* @__PURE__ */ jsx("h1", { className: defaultTitleClass, children: userRole === "Student" ? "My Action Plan" : "Task Manager" }),
+          ? /* @__PURE__ */ jsx("h2", { className: managerTitleClass, children: pipelineTasksTitle })
+          : /* @__PURE__ */ jsx("h1", { className: defaultTitleClass, children: pipelineTasksTitle }),
         /* @__PURE__ */ jsx("p", {
           className: userRole === "Manager" ? "text-sm text-slate-500 mt-1 max-w-2xl" : "text-sm text-slate-500 mt-1",
           children: userRole === "Manager" ? "High priority items requiring attention." : "Track your to-do list and SLAs."
@@ -479,6 +496,36 @@ const TaskManager = ({
                   : null
               ]
             })
+          }),
+        showMyAssignedToggle &&
+          /* @__PURE__ */ jsxs("div", {
+            className: "inline-flex items-center gap-2.5 select-none",
+            children: [
+              /* @__PURE__ */ jsx("span", { className: "text-sm text-slate-600", children: "Assigned to me" }),
+              /* @__PURE__ */ jsx("button", {
+                type: "button",
+                role: "switch",
+                "aria-checked": onlyMyAssignedTasks,
+                "aria-label": "Show only tasks assigned to me",
+                onClick: () => setOnlyMyAssignedTasks((v) => !v),
+                className: [
+                  "relative inline-block h-7 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2",
+                  onlyMyAssignedTasks ? "bg-indigo-600" : "bg-slate-300"
+                ].join(" "),
+                children: /* @__PURE__ */ jsx("span", {
+                  className: [
+                    "pointer-events-none absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform duration-200 ease-in-out",
+                    onlyMyAssignedTasks ? "translate-x-4" : "translate-x-0"
+                  ].join(" "),
+                  "aria-hidden": true
+                })
+              }),
+              /* @__PURE__ */ jsx("span", {
+                className: `text-xs font-medium tabular-nums ${onlyMyAssignedTasks ? "text-indigo-700" : "text-slate-400"}`,
+                children: onlyMyAssignedTasks ? "On" : "Off"
+              })
+            ]
           }),
         /* @__PURE__ */ jsxs("div", {
           className: "inline-flex items-center gap-2.5 select-none",

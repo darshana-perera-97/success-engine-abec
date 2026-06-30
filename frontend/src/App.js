@@ -36,11 +36,17 @@ import {
   findCounselorMeetingReminder,
   formatMeetingReminderWhen
 } from "./meetingReminders";
-import { filterTasksForCounselor } from "./counselorTaskScope";
+import {
+  filterTasksForMonitoredStudents,
+  findPendingStudentIntakeTasks,
+  isTaskDirectlyAssignedToIdentities,
+  resolveCounselorIdentitySet,
+} from "./counselorTaskScope";
 import {
   isCounselorEquivalentPortalRole,
   isRecognizedPortalRole,
   isStaffOmniChannelMessenger,
+  isWhatsappIntegrationRole,
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "./roles";
@@ -567,17 +573,22 @@ function App({ initialView = "dashboard" }) {
   const navMyTasksCount = useMemo(() => {
     const isIncompleteTask = (task) => String(task?.status || "").trim() !== "Completed";
     if (isCounselorEquivalentPortalRole(currentRole)) {
-      return filterTasksForCounselor(tasks, currentUser, counselorScopedStudents, counselorIdentitySet).filter(
-        isIncompleteTask
-      ).length;
+      return filterTasksForMonitoredStudents(tasks, counselorScopedStudents)
+        .filter(
+          (task) =>
+            isIncompleteTask(task) && isTaskDirectlyAssignedToIdentities(task, counselorIdentitySet)
+        )
+        .length;
     }
     if (currentRole === "Country Coordinator") {
       const coordTasks = countryCoordinatorScope.active ? countryCoordinatorScopedTasks : tasks;
       const monitoredStudents = countryCoordinatorScopedStudents;
-      const ids = new Set((monitoredStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean));
-      return (coordTasks || []).filter(
-        (task) => ids.has(String(task.student_id || task.studentId || "").trim()) && isIncompleteTask(task)
-      ).length;
+      const coordIdentitySet = resolveCounselorIdentitySet(currentUser, counselorIdentitySet);
+      return filterTasksForMonitoredStudents(coordTasks, monitoredStudents)
+        .filter(
+          (task) => isIncompleteTask(task) && isTaskDirectlyAssignedToIdentities(task, coordIdentitySet)
+        )
+        .length;
     }
     return void 0;
   }, [
@@ -599,11 +610,7 @@ function App({ initialView = "dashboard" }) {
     }
     const taskDirectlyAssignsIdentities = (task) => {
       const assignedTo = Array.isArray(task.assigned_to) ? task.assigned_to : [];
-      const relatedCounselorIds = Array.isArray(task.counselor_ids) ? task.counselor_ids : [];
-      return (
-        assignedTo.some((assignee) => counselorIdentitySet.has(normalizeIdentity(assignee))) ||
-        relatedCounselorIds.some((counselorId) => counselorIdentitySet.has(normalizeIdentity(counselorId)))
-      );
+      return assignedTo.some((assignee) => counselorIdentitySet.has(normalizeIdentity(assignee)));
     };
     const createdBySelf = (task) => {
       const c = normalizeIdentity(task.createdBy);
@@ -1144,10 +1151,9 @@ function App({ initialView = "dashboard" }) {
   }, [currentRole, addNotification, staffBranchLabel]);
   useEffect(() => {
     let cancelled = false;
-    const isCounselor = isCounselorEquivalentPortalRole(currentRole);
-    const isStaffMessenger = isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+    const canPollWhatsapp = isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
     const userId = String(currentUser?.id || "").trim();
-    if ((!isCounselor && !isStaffMessenger) || !userId) {
+    if (!canPollWhatsapp || !userId) {
       whatsappPollUserIdRef.current = "";
       setWhatsappConnectionStatus("disconnected");
       return;
@@ -1180,9 +1186,8 @@ function App({ initialView = "dashboard" }) {
     };
   }, [currentRole, currentUser?.id, adminChatEnabled]);
   useEffect(() => {
-    const isCounselor = isCounselorEquivalentPortalRole(currentRole);
-    const isStaffMessenger = isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
-    if (!isCounselor && !isStaffMessenger) return;
+    const canPollWhatsapp = isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+    if (!canPollWhatsapp) return;
     const userId = String(currentUser?.id || "").trim();
     if (!userId) return;
     const tick = () => {
@@ -1413,7 +1418,6 @@ function App({ initialView = "dashboard" }) {
         countryConfig,
         existingTasks: tasks,
         assigneeId: counselorId || actingCounselorId,
-        relatedCounselorIds: assigneeIds,
       });
       if (missingDocTasks.length > 0) {
         newTasks = [...newTasks, ...missingDocTasks];
@@ -1528,12 +1532,7 @@ function App({ initialView = "dashboard" }) {
     const nextStage = normalizePipelineStatus(savedStudent.status);
     if (previous && prevStage !== "Application" && nextStage === "Application") {
       const sid = String(savedStudent.id || "").trim();
-      const pendingIntake = tasksRef.current.filter((t) => {
-        const tid = String(t.student_id || t.studentId || "").trim();
-        if (!sid || tid !== sid) return false;
-        if (!String(t.task || "").trim().startsWith("New student intake")) return false;
-        return String(t.status || "").trim().toLowerCase() !== "completed";
-      });
+      const pendingIntake = findPendingStudentIntakeTasks(tasksRef.current, sid);
       if (pendingIntake.length > 0) {
         handleUpdateTasks(pendingIntake.map((t) => ({ ...t, status: "Completed" })));
       }
@@ -1660,7 +1659,6 @@ function App({ initialView = "dashboard" }) {
         task: `New student intake — ${created.name}`,
         student_id: created.id,
         assigned_to: [counselorKey],
-        counselor_ids: [counselorKey],
         priority: "High",
         status: "Pending",
         dueDate,
@@ -1690,10 +1688,19 @@ function App({ initialView = "dashboard" }) {
 
     return { ok: true, data: created };
   };
-  const handleAddFromRequest = async (requestRow, { counselorId, priority: rawPriority }) => {
+  const handleAddFromRequest = async (requestRow, { counselorId, viewAccessCounselorIds = [], priority: rawPriority }) => {
     if (!requestRow || !counselorId) {
       return { ok: false, error: "Select a counselor to continue." };
     }
+    const primaryCounselorId = String(counselorId || "").trim();
+    const viewAccess = Array.from(
+      new Set(
+        (Array.isArray(viewAccessCounselorIds) ? viewAccessCounselorIds : [])
+          .map((id) => String(id || "").trim())
+          .filter(Boolean)
+          .filter((id) => id !== primaryCounselorId)
+      )
+    );
     const allowedPriorities = new Set(["Low", "Medium", "High"]);
     const priority = allowedPriorities.has(String(rawPriority || "").trim())
       ? String(rawPriority).trim()
@@ -1701,10 +1708,10 @@ function App({ initialView = "dashboard" }) {
     let counselorBranch = "";
     const accountsRes = await getAccounts();
     if (accountsRes.ok) {
-      const acc = accountsRes.data.find((a) => String(a.id || "") === String(counselorId));
+      const acc = accountsRes.data.find((a) => String(a.id || "") === String(primaryCounselorId));
       if (acc) counselorBranch = String(acc.branch || "").trim();
     }
-    const byEmp = employees.find((e) => String(e.id || "") === String(counselorId));
+    const byEmp = employees.find((e) => String(e.id || "") === String(primaryCounselorId));
     if (!counselorBranch && byEmp) counselorBranch = String(byEmp.branch || "").trim();
     const branch =
       (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active && managerDataScope.branchLabel
@@ -1726,7 +1733,8 @@ function App({ initialView = "dashboard" }) {
       status: "Inquiry",
       budget: "",
       priority,
-      counselor: counselorId,
+      counselor: primaryCounselorId,
+      ...(viewAccess.length > 0 ? { counselorHistory: viewAccess } : {}),
       notes,
       city: String(requestRow.city || "").trim(),
       livingStatus: String(requestRow.livingStatus || "").trim(),
@@ -1870,6 +1878,12 @@ function App({ initialView = "dashboard" }) {
       updateTask(updatedTask.id, updatedTask);
     });
   };
+  const completePendingStudentIntakeTasks = (studentId) => {
+    const pendingIntake = findPendingStudentIntakeTasks(tasksRef.current, studentId);
+    if (pendingIntake.length === 0) return;
+    const completedAt = new Date().toISOString();
+    handleUpdateTasks(pendingIntake.map((t) => ({ ...t, status: "Completed", completedAt })));
+  };
   const handleSendMessage = async (text, receiverId, attachment = null) => {
     const result = await sendChatMessage({
       senderId: currentUser.id,
@@ -1926,7 +1940,6 @@ function App({ initialView = "dashboard" }) {
       task: `Reassign (manager): Review handoff for "${truncated}" — ${studentName}`,
       student_id: sid,
       assigned_to: [counselorId],
-      counselor_ids: [counselorId],
       priority: "High",
       status: "Pending",
       dueDate,
@@ -2263,7 +2276,7 @@ function App({ initialView = "dashboard" }) {
   };
   const renderContent = () => {
     if (currentView === "integration") {
-      if (isCounselorEquivalentPortalRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled)) {
+      if (isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled)) {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
     }
@@ -2358,7 +2371,8 @@ function App({ initialView = "dashboard" }) {
       allStudents: students,
       onDismissAssignmentAlert: handleDismissAssignmentAlert,
       onStudentMovedToRequests: handleStudentMovedToRequests,
-      onSelectStudent: handleSelectStudent
+      onSelectStudent: handleSelectStudent,
+      onCompleteStudentIntakeTask: completePendingStudentIntakeTasks
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
@@ -2399,7 +2413,7 @@ function App({ initialView = "dashboard" }) {
           onOpenStudent: openEscalationStudent
         });
       }
-      if (isCounselorEquivalentPortalRole(currentRole) && currentView === "integration") {
+      if (isWhatsappIntegrationRole(currentRole) && currentView === "integration") {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
       }
       if (currentView === "branch") {
@@ -2412,7 +2426,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: coordBranch || null
         });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onCompleteStudentIntakeTask: completePendingStudentIntakeTasks });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
       if (currentView === "student-detail") {
@@ -2725,7 +2739,7 @@ function App({ initialView = "dashboard" }) {
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
         pageLoading: !appDataLoaded,
-        showWhatsappNavIndicator: isCounselorEquivalentPortalRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled),
+        showWhatsappNavIndicator: isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled),
         whatsappConnectionStatus,
         adminChatEnabled,
         onLogout: () => {

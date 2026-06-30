@@ -21,6 +21,15 @@ function isCounselorRole(role) {
   );
 }
 
+function isCountryCoordinatorRole(role) {
+  return String(role || "").trim() === "Country Coordinator";
+}
+
+/** Counselors and country coordinators connect their own WhatsApp sessions. */
+function isWhatsappIntegratedStaffRole(role) {
+  return isCounselorRole(role) || isCountryCoordinatorRole(role);
+}
+
 /** Manager, Admin, Team Lead, and Country Coordinator: same portal welcome as counselors but role-specific copy. */
 function isStaffWelcomeEmailRole(role) {
   const r = String(role || "").trim();
@@ -61,6 +70,8 @@ module.exports = {
   normalizeEmail,
   normalizeRoleKey,
   isCounselorRole,
+  isCountryCoordinatorRole,
+  isWhatsappIntegratedStaffRole,
   isStaffWelcomeEmailRole,
   staffWelcomeRolePhrase,
   staffWelcomeEmailCopy,

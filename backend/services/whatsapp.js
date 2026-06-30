@@ -16,7 +16,7 @@ const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
 const { readChats, writeChats } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
-const { isCounselorRole } = require("./roles");
+const { isWhatsappIntegratedStaffRole } = require("./roles");
 
 const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
@@ -32,7 +32,7 @@ async function resolveCounselor(userId) {
   const users = await readUsers();
   const matched = users.find((user) => String(user.id || "") === id);
   if (!matched) return null;
-  if (!isCounselorRole(matched.role)) return null;
+  if (!isWhatsappIntegratedStaffRole(matched.role)) return null;
   return matched;
 }
 
@@ -352,13 +352,13 @@ async function userHasSavedWhatsappSession(userId) {
 async function initializeWhatsappSessionsOnStartup() {
   try {
     const users = await readUsers();
-    const counselors = users.filter((user) => isCounselorRole(user.role));
-    for (const counselor of counselors) {
-      const counselorId = String(counselor.id || "").trim();
-      if (!counselorId) continue;
-      const hasSavedSession = await userHasSavedWhatsappSession(counselorId);
+    const integratedStaff = users.filter((user) => isWhatsappIntegratedStaffRole(user.role));
+    for (const staffUser of integratedStaff) {
+      const staffUserId = String(staffUser.id || "").trim();
+      if (!staffUserId) continue;
+      const hasSavedSession = await userHasSavedWhatsappSession(staffUserId);
       if (!hasSavedSession) continue;
-      await startWhatsappSession(counselorId);
+      await startWhatsappSession(staffUserId);
     }
     if (await isStaffWhatsappMessagingEnabled()) {
       const hasAdminSession = await userHasSavedWhatsappSession(ADMIN_WHATSAPP_USER_ID);

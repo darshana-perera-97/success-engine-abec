@@ -54,7 +54,8 @@ const InquiryCaptureFlowModals = ({
   onUpdateStudent,
   onDismissAssignmentAlert,
   onStudentMovedToRequests,
-  onSelectStudent
+  onSelectStudent,
+  onCompleteStudentIntakeTask
 }) => {
   const [branchRecords, setBranchRecords] = useState([]);
   const [globalCountries, setGlobalCountries] = useState([]);
@@ -286,6 +287,10 @@ const InquiryCaptureFlowModals = ({
     onClear?.();
   };
 
+  const completeIntakeTaskForStudent = (studentId) => {
+    onCompleteStudentIntakeTask?.(studentId);
+  };
+
   const handleSaveScheduleLater = async (e) => {
     e.preventDefault();
     if (!scheduleLaterStudent) return;
@@ -342,6 +347,7 @@ const InquiryCaptureFlowModals = ({
         : {})
     };
     await onUpdateStudent?.(merged);
+    completeIntakeTaskForStudent(studentId);
     if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
     setSummaryOpen(false);
     setSummaryStudent(null);
@@ -379,6 +385,7 @@ const InquiryCaptureFlowModals = ({
           inquiryScheduledCallAt: new Date(validation.scheduledMs).toISOString()
         };
         await onUpdateStudent?.(merged);
+        completeIntakeTaskForStudent(studentId);
         if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
         setSummaryOpen(false);
         setSummaryStudent(null);
@@ -399,6 +406,7 @@ const InquiryCaptureFlowModals = ({
           return;
         }
         onStudentMovedToRequests?.(studentId);
+        completeIntakeTaskForStudent(studentId);
         if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
         setSummaryOpen(false);
         setSummaryStudent(null);
@@ -407,6 +415,7 @@ const InquiryCaptureFlowModals = ({
       }
       if (summaryAction === "open-profile") {
         const latest = resolveStudentById(studentId) || summaryStudent;
+        completeIntakeTaskForStudent(studentId);
         if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
         setSummaryOpen(false);
         setSummaryStudent(null);

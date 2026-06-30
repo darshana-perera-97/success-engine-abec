@@ -1,3 +1,5 @@
+import { API_BASE } from "./apiConfig";
+
 export const WEB_FORM_FIELD_CATALOG = [
   {
     key: "name",
@@ -215,7 +217,9 @@ export function normalizeWebFormRecord(input) {
 }
 
 export function buildWebFormEmbedUrl(formId, origin = "") {
-  const base = String(origin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
+  const base = String(
+    origin || API_BASE || (typeof window !== "undefined" ? window.location.origin : "")
+  ).replace(/\/+$/, "");
   return `${base}/web-form/${encodeURIComponent(formId)}`;
 }
 

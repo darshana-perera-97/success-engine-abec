@@ -18,45 +18,59 @@ function resolveEmployee(employees, id) {
 }
 
 /**
- * Ordered counselor roster: enrolling (inquiry), primary, previous transfers — deduped with role badges.
+ * Ordered counselor roster: current primary counselor/visa officer first, then secondary staff.
  */
 export function buildCounselorTeamEntries(student, employees) {
   const inquiry = String(student.inquiryCounselorId || "").trim();
   const primary = String(student.counselor || "").trim();
   const history = Array.isArray(student.counselorHistory) ? student.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean) : [];
+  const visaAgentIds = normalizeVisaAgentIds(student);
   const badgesById = /* @__PURE__ */ new Map();
   const addBadge = (id, badge) => {
-    if (!id || id.toLowerCase() === "unassigned") return;
+    if (!isAssignedCounselorId(id)) return;
     if (!badgesById.has(id)) badgesById.set(id, []);
     const arr = badgesById.get(id);
     if (!arr.includes(badge)) arr.push(badge);
   };
-  addBadge(inquiry, "Enrolling");
-  addBadge(primary, "Primary");
-  for (const hid of history) addBadge(hid, "Previous");
+  if (isAssignedCounselorId(primary)) {
+    addBadge(primary, "Primary");
+  }
+  if (isAssignedCounselorId(inquiry) && inquiry !== primary) {
+    addBadge(inquiry, "Secondary");
+  }
+  for (const hid of history) {
+    if (hid !== primary) addBadge(hid, "Secondary");
+  }
+  for (const visaId of visaAgentIds) {
+    if (visaId !== primary) addBadge(visaId, "Secondary");
+  }
   const orderedIds = [];
   const pushUnique = (id) => {
     const sid = String(id || "").trim();
-    if (!sid || sid.toLowerCase() === "unassigned") return;
+    if (!isAssignedCounselorId(sid)) return;
     if (!badgesById.has(sid)) return;
     if (!orderedIds.includes(sid)) orderedIds.push(sid);
   };
-  pushUnique(inquiry);
   pushUnique(primary);
+  pushUnique(inquiry);
   for (const hid of history) pushUnique(hid);
+  for (const visaId of visaAgentIds) pushUnique(visaId);
   for (const id of badgesById.keys()) pushUnique(id);
   return orderedIds.map((id) => {
     const emp = resolveEmployee(employees, id);
     const badges = badgesById.get(id) || [];
+    const isPrimary = badges.includes("Primary");
+    const fallbackName = isPrimary ? String(student.counselorName || "").trim() : "";
     return {
       id,
       badges,
+      isPrimary,
       badgeLabel: badges.join(" · "),
-      name: emp?.name || emp?.username || String(student.counselorName || "").trim() || "Counselor",
-      role: normalizeCounselorRoleDisplay(emp?.role || emp?.position || student.counselorRole),
-      email: emp?.email || student.counselorEmail || "Not available",
-      phone: emp?.phone || student.counselorPhone || "Not available",
-      avatar: toAbsoluteAssetUrl(emp?.avatar || student.counselorAvatar || "")
+      name: emp?.name || emp?.username || fallbackName || (isVisaAgentEmployee(emp) ? "Visa Officer" : "Counselor"),
+      role: normalizeCounselorRoleDisplay(emp?.role || emp?.position || (isPrimary ? student.counselorRole : "")),
+      email: emp?.email || (isPrimary ? student.counselorEmail : "") || "Not available",
+      phone: emp?.phone || (isPrimary ? student.counselorPhone : "") || "Not available",
+      avatar: toAbsoluteAssetUrl(emp?.avatar || (isPrimary ? student.counselorAvatar : "") || "")
     };
   });
 }
@@ -181,6 +195,7 @@ export function buildCounselorTeamEntriesWithFallback(student, employees) {
     {
       id: primary,
       badges: ["Primary"],
+      isPrimary: true,
       badgeLabel: "Primary",
       name: emp?.name || emp?.username || String(student.counselorName || "").trim() || "Assigned Counselor",
       role: normalizeCounselorRoleDisplay(emp?.role || emp?.position || student.counselorRole),

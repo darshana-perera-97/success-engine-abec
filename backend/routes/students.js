@@ -309,6 +309,15 @@ async function handle(req, res, url) {
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
       const message = String(body.message || "").trim();
+      const counselorHistoryRaw = Array.isArray(body.counselorHistory) ? body.counselorHistory : [];
+      const counselorHistory = Array.from(
+        new Set(
+          counselorHistoryRaw
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .filter((id) => id.toLowerCase() !== "unassigned" && id !== counselor)
+        )
+      );
 
       if (!name || !country || !branch || !email || !phoneInput || !gpa || !password) {
         sendJson(res, 400, { ok: false, error: "Name, country, branch, email, phone, GPA and password are required." });
@@ -381,6 +390,9 @@ async function handle(req, res, url) {
         createdAt: nowIso,
         stageEnteredAt: nowIso
       };
+      if (counselorHistory.length > 0) {
+        student.counselorHistory = counselorHistory;
+      }
       const updated = [...studemts, student];
       await writeStudemts(updated);
       sendJson(res, 201, { ok: true, data: publicStudentRecord(req, student) });
@@ -434,28 +446,29 @@ async function handle(req, res, url) {
         const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
         const normalized = history.map((id) => String(id || "").trim()).filter(Boolean);
         const previousStillLinked = isCounselorStillLinkedOnStudent(merged, previousCounselor);
-        const nextWasAlreadyOnTeam = isCounselorStillLinkedOnStudent(previous, nextCounselor);
+        const prevIsValid =
+          prevCounselorNorm &&
+          prevCounselorNorm !== "unassigned" &&
+          prevCounselorNorm !== "none" &&
+          prevCounselorNorm !== "null";
         if (
           nextCounselor &&
           nextCounselorNorm !== "unassigned" &&
           nextCounselorNorm !== "none" &&
           nextCounselorNorm !== "null"
         ) {
-          if (!previousStillLinked && !nextWasAlreadyOnTeam) {
-            normalized.push(previousCounselor);
-            merged.counselorHistory = Array.from(new Set(normalized));
-          }
-          logEvent(
-            "student",
-            !previousStillLinked && nextWasAlreadyOnTeam
-              ? "counselor removed; promoted remaining counselor"
-              : "counselor transferred",
-            {
-              studentId,
-              from: previousCounselor,
-              to: nextCounselor,
-            }
+          let nextHistory = normalized.filter(
+            (id) => String(id || "").trim().toLowerCase() !== nextCounselorNorm
           );
+          if (!previousStillLinked && prevIsValid) {
+            nextHistory.push(previousCounselor);
+          }
+          merged.counselorHistory = Array.from(new Set(nextHistory));
+          logEvent("student", "counselor transferred", {
+            studentId,
+            from: previousCounselor,
+            to: nextCounselor,
+          });
         } else if (
           prevCounselorNorm &&
           prevCounselorNorm !== "unassigned" &&

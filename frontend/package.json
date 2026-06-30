@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "homepage": "/",
+  "proxy": "http://localhost:3334",
   "scripts": {
     "sync-profile-assets": "node scripts/syncProfilePublicAssets.js",
     "prestart": "npm run sync-profile-assets",

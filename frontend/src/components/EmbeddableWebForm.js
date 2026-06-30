@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { API_BASE } from "../apiConfig";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { EDUCATION_LEVELS, LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
@@ -484,7 +485,7 @@ export function PublicWebFormPage({ formId }) {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/web-forms/public/${encodeURIComponent(formId)}`);
+        const res = await fetch(`${API_BASE}/api/web-forms/public/${encodeURIComponent(formId)}`);
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
         if (!res.ok || !data.ok) {

@@ -208,7 +208,7 @@ const Layout = ({
     { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
     { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
     { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
-    { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
+    { id: "tasks", label: "Pipeline Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
   ];
   const withStaffMessagingNav = (items) => {
     if (!adminChatEnabled) return items;
@@ -244,11 +244,12 @@ const Layout = ({
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "Country students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
+          { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) },
           { id: "branch", label: "My Branch", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "stage-escalations", label: "Stage SLA", icon: /* @__PURE__ */ jsx(AlertTriangle, { size: 20 }), badge: counselorStageEscalationBadge },
           { id: "university", label: "Uni Finder", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "messages", label: "Inbox", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }), badge: unreadMessageCount > 0 ? String(unreadMessageCount) : "" },
-          { id: "tasks", label: "My Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
+          { id: "tasks", label: "Pipeline Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
         ];
       case "Accountant":
         return [

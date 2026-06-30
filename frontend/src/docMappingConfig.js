@@ -250,7 +250,6 @@ export function buildStageTransitionTasks({
         stageSourceKey,
         task: String(cfg.title).trim(),
         assigned_to: assignees,
-        counselor_ids: assignees,
         student_id: studentId,
         priority: cfg.priority || "Medium",
         status: "Pending",
@@ -985,7 +984,6 @@ export function buildMissingStageDocTasks({
   countryConfig,
   existingTasks = [],
   assigneeId = "",
-  relatedCounselorIds = [],
 }) {
   const studentId = String(student?.id || "").trim();
   if (!studentId) return [];
@@ -1012,14 +1010,7 @@ export function buildMissingStageDocTasks({
   );
 
   const counselorId = String(assigneeId || student?.counselor || "").trim();
-  const related = Array.from(
-    new Set(
-      [counselorId, ...(relatedCounselorIds || []).map((id) => String(id || "").trim())].filter(
-        (id) => id && id !== "Unassigned"
-      )
-    )
-  );
-  const assignedTo = counselorId ? [counselorId] : related;
+  const assignedTo = counselorId ? [counselorId] : [];
 
   const buildDueDate = (daysFromNow = 3) => {
     const due = new Date();
@@ -1042,7 +1033,6 @@ export function buildMissingStageDocTasks({
       id: `T-DOC-${studentId}-${now}-${idx}`,
       task: `Upload ${docType}`,
       assigned_to: assignedTo,
-      counselor_ids: related.length > 0 ? related : assignedTo,
       student_id: studentId,
       priority: "High",
       status: "Pending",
