@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye, Plane } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentManager } from "./DocumentManager";
@@ -14,6 +14,7 @@ import {
   downloadFileFromUrl,
   resolveGeneratedCvPdfDownload,
 } from "../utils/cvPdf";
+import { toAbsoluteAssetUrl } from "../apiConfig";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -60,14 +61,16 @@ const StudentDashboard = ({
   const visualIndex = Math.max(0, getStudentPipelineStepIndex(student.status, countryDocConfig?.stages));
   const steps = pipelineSteps.map((label, i) => ({ label, icon: String(i + 1) }));
   const progressPercentage = steps.length <= 1 ? 0 : visualIndex / (steps.length - 1) * 100;
-  const pendingTasks = tasks.filter((t) => t.student_id === student.id && t.status !== "Completed");
-  const sortedActions = pendingTasks.sort((a, b) => {
-    if (a.isBlocking && !b.isBlocking) return -1;
-    if (!a.isBlocking && b.isBlocking) return 1;
-    if (a.priority === "High" && b.priority !== "High") return -1;
-    if (a.priority !== "High" && b.priority === "High") return 1;
-    return 0;
-  });
+  const sortedActions = useMemo(() => {
+    const pending = tasks.filter((t) => t.student_id === student.id && t.status !== "Completed");
+    return [...pending].sort((a, b) => {
+      if (a.isBlocking && !b.isBlocking) return -1;
+      if (!a.isBlocking && b.isBlocking) return 1;
+      if (a.priority === "High" && b.priority !== "High") return -1;
+      if (a.priority !== "High" && b.priority === "High") return 1;
+      return 0;
+    });
+  }, [tasks, student.id]);
   const scrollToPipelineDocs = () => {
     setDocTab("pipeline");
     pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -186,11 +189,11 @@ const StudentDashboard = ({
               ] })
             ] }),
             /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-              /* @__PURE__ */ jsx("a", { href: student.cvFile.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", children: [
+              /* @__PURE__ */ jsx("a", { href: toAbsoluteAssetUrl(student.cvFile.url) || student.cvFile.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", children: [
                 /* @__PURE__ */ jsx(Eye, { size: 14, className: "mr-1" }),
                 " View"
               ] }) }),
-              /* @__PURE__ */ jsx("a", { href: student.cvFile.url, target: "_blank", rel: "noopener noreferrer", download: student.cvFile.name || "resume.pdf", children: /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-emerald-600 hover:bg-emerald-700", children: [
+              /* @__PURE__ */ jsx("a", { href: toAbsoluteAssetUrl(student.cvFile.url) || student.cvFile.url, target: "_blank", rel: "noopener noreferrer", download: student.cvFile.name || "resume.pdf", children: /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-emerald-600 hover:bg-emerald-700", children: [
                 /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1" }),
                 " Download"
               ] }) })

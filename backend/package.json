@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:dev": "node server.js",
+    "start:prod": "NODE_ENV=production node --max-old-space-size=1536 server.js",
     "seed:doc-mapping": "node scripts/seed-doc-mapping.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

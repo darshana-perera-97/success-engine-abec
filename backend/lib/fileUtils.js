@@ -18,6 +18,12 @@ async function atomicWriteFile(filePath, data) {
   const tempFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tempFile, data, "utf8");
   await fs.rename(tempFile, filePath);
+  try {
+    const { invalidateJsonCache } = require("./jsonCache");
+    invalidateJsonCache(filePath);
+  } catch {
+    /* cache module optional during early boot */
+  }
 }
 
 function safeJsonParse(raw, filePath) {

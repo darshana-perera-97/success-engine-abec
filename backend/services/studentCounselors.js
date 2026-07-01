@@ -72,9 +72,30 @@ function isCounselorStillLinkedOnStudent(student, counselorId) {
   return getAssignedCounselorIds(student).some((id) => id.toLowerCase() === targetNorm);
 }
 
+/** When primary counselor changes, retain every previously linked counselor as secondary. */
+function applyCounselorTransferHistory(previous, merged) {
+  const previousCounselor = String(previous?.counselor || "").trim();
+  const nextCounselor = String(merged?.counselor || "").trim();
+  const nextCounselorNorm = nextCounselor.toLowerCase();
+  if (!previousCounselor || previousCounselor.toLowerCase() === nextCounselorNorm) return merged;
+  if (!isAssignedCounselorId(nextCounselor)) return merged;
+
+  const linked = getAssignedCounselorIds(previous);
+  const fromPrevious = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
+  const fromMerged = Array.isArray(merged?.counselorHistory) ? merged.counselorHistory : [];
+  const nextHistory = [...fromPrevious, ...fromMerged, ...linked]
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .filter((id) => isAssignedCounselorId(id) && id.toLowerCase() !== nextCounselorNorm);
+
+  merged.counselorHistory = Array.from(new Set(nextHistory));
+  return merged;
+}
+
 module.exports = {
   getAssignedCounselorIds,
   validateStudentCounselorAssignment,
   promoteRemainingCounselorToPrimary,
   isCounselorStillLinkedOnStudent,
+  applyCounselorTransferHistory,
 };

@@ -1,6 +1,7 @@
 const fs = require("fs/promises");
 const path = require("path");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
+const { readJsonCached } = require("../lib/jsonCache");
 const {
   STUDEMTS_FILE,
   CHAT_FILES_DIR,
@@ -11,9 +12,7 @@ const {
 
 async function readStudemts() {
   try {
-    const raw = await fs.readFile(STUDEMTS_FILE, "utf8");
-    const parsed = safeJsonParse(raw, STUDEMTS_FILE);
-    return Array.isArray(parsed) ? parsed : [];
+    return await readJsonCached(STUDEMTS_FILE, (parsed) => (Array.isArray(parsed) ? parsed : []));
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;
@@ -194,11 +193,25 @@ function publicStudentRecord(req, student) {
   return next;
 }
 
+/** Lightweight record for list views — omits heavy nested arrays. */
+function studentSummaryRecord(req, student) {
+  if (!student || typeof student !== "object") return student;
+  const { password, documents, profileOtherDocuments, universityOfferLetters, cvFile, notes, ...rest } = student;
+  const summary = { ...rest };
+  summary.avatar = publicAssetUrl(req, summary.avatar);
+  if (Array.isArray(documents)) {
+    summary.documentCount = documents.length;
+    summary.verifiedDocCount = documents.filter((d) => String(d?.status || "") === "Verified").length;
+  }
+  return summary;
+}
+
 module.exports = {
   readStudemts,
   writeStudemts,
   stripStudentSecrets,
   publicStudentRecord,
+  studentSummaryRecord,
   publicAssetUrl,
   publicStudentDocUrl,
   publicChatFileUrl,

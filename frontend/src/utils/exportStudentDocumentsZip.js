@@ -1,5 +1,6 @@
 import JSZip from "jszip";
-import { API_BASE, toAbsoluteAssetUrl } from "../apiConfig";
+import { API_BASE } from "../apiConfig";
+import { toAbsoluteBackendUrl } from "../resolveApiBase";
 import {
   buildPipelineDocTypeGroupMap,
   buildVisaDocTypeGroupMap,
@@ -79,18 +80,11 @@ function migrateProfileOtherDocumentsToSlotEntries(value) {
   return [...bySlot.keys()].sort((a, b) => a - b).map((k) => bySlot.get(k));
 }
 
-const BACKEND_RELATIVE_PREFIXES = ["/student-docs/", "/payments/", "/chat-files/", "/assets/"];
 
 /** Resolve a stored document URL for cross-origin fetch (HTTPS, API base, relative paths). */
 function resolveDocumentFetchUrl(url) {
-  let resolved = String(url || "").trim();
+  let resolved = toAbsoluteBackendUrl(String(url || "").trim(), API_BASE);
   if (!resolved) return "";
-
-  if (BACKEND_RELATIVE_PREFIXES.some((prefix) => resolved.startsWith(prefix))) {
-    resolved = `${String(API_BASE || "").replace(/\/+$/, "")}${resolved}`;
-  } else {
-    resolved = String(toAbsoluteAssetUrl(resolved) || resolved).trim();
-  }
 
   if (
     typeof window !== "undefined" &&

@@ -1174,11 +1174,27 @@ export async function getStudents(params = {}) {
     if (params.userId) query.set("userId", params.userId);
     if (params.branch) query.set("branch", params.branch);
     if (params.country) query.set("country", params.country);
+    if (params.summary) query.set("summary", "1");
     const qs = query.toString();
     const res = await fetch(`${API_BASE}/api/students${qs ? `?${qs}` : ""}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load students." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Please contact the Support team." };
+  }
+}
+
+export async function getStudentById(studentId) {
+  try {
+    const id = String(studentId || "").trim();
+    if (!id) return { ok: false, error: "Student ID is required." };
+    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(id)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load student." };
     }
     return { ok: true, data: data.data };
   } catch {
@@ -1199,6 +1215,9 @@ export async function searchStudents(params = {}) {
     if (params.status) query.set("status", params.status);
     if (params.sortBy) query.set("sortBy", params.sortBy);
     if (params.sortDirection) query.set("sortDirection", params.sortDirection);
+    if (params.summary) query.set("summary", "1");
+    if (params.limit) query.set("limit", String(params.limit));
+    if (params.offset) query.set("offset", String(params.offset));
     const qs = query.toString();
     const res = await fetch(`${API_BASE}/api/students/search${qs ? `?${qs}` : ""}`);
     const data = await res.json().catch(() => ({}));

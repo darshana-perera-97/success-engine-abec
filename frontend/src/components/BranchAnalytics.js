@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
 import { createBranch, getBranchFinanceSummary, getBranchManagers } from "../authApi";
+import { POLL_MS } from "../runtimeConfig";
 
 const BranchAnalytics = ({
   scopeBranch = null,
@@ -45,7 +46,7 @@ const BranchAnalytics = ({
       }
     };
     loadFinanceSummary();
-    const intervalId = setInterval(loadFinanceSummary, 10000);
+    const intervalId = setInterval(loadFinanceSummary, POLL_MS.branchAnalytics);
     return () => { cancelled = true; clearInterval(intervalId); };
   }, [scopeBranch, scopeKey]);
 

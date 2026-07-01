@@ -1,7 +1,8 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Eye, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen } from "lucide-react";
 import { Button } from "./Button";
+import { DocumentViewButton, useDocumentPreview } from "./DocumentPreviewModal";
 import {
   filterChecklistForStudent,
   shouldShowUniversityOfferLetters,
@@ -11,6 +12,12 @@ import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { toAbsoluteAssetUrl } from "../apiConfig";
+
+function studentDocumentUrl(url) {
+  const resolved = toAbsoluteAssetUrl(String(url || "").trim());
+  return resolved || url;
+}
 
 /** Short label for long filenames: first few stem chars + extension (full name in title/tooltip). */
 function shortDisplayFileName(name, maxStem = 8) {
@@ -96,6 +103,7 @@ const DocumentManager = ({
   });
   const [offerLetterUploading, setOfferLetterUploading] = useState(false);
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
+  const { openDocumentPreview, documentPreviewModal } = useDocumentPreview();
   const studentDocuments = useMemo(() => student.documents || [], [student.documents]);
   const profileOtherSlotEntries = useMemo(
     () => migrateProfileOtherDocumentsToSlotEntries(student.profileOtherDocuments),
@@ -523,8 +531,8 @@ const DocumentManager = ({
             /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 shrink-0", children: [
               /* @__PURE__ */ jsx("span", { className: `px-2 py-0.5 rounded-full text-[10px] font-bold border ${getOfferStatusBadgeClass(letter.offerStatus)}`, children: letter.offerStatus === "Approved" ? "Unconditional" : letter.offerStatus || "Conditional" }),
               letter.url && /* @__PURE__ */ jsxs(Fragment, { children: [
-                /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                /* @__PURE__ */ jsx("a", { href: letter.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                /* @__PURE__ */ jsx(DocumentViewButton, { url: letter.url, name: letter.name, title: "Preview", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900" }),
+                /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(letter.url), download: letter.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
               ] })
             ] })
           ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
@@ -592,8 +600,8 @@ const DocumentManager = ({
             ),
             /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 ml-2 pl-2 border-l border-gray-200", children: [
               uploadedFile.url && /* @__PURE__ */ jsxs(Fragment, { children: [
-                /* @__PURE__ */ jsx("a", { href: uploadedFile.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                /* @__PURE__ */ jsx("a", { href: uploadedFile.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                /* @__PURE__ */ jsx(DocumentViewButton, { url: uploadedFile.url, name: uploadedFile.name, title: "Preview", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900" }),
+                /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(uploadedFile.url), download: uploadedFile.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
               ] }),
               isStaff && (uploadedFile.status === "Pending" || uploadedFile.status === "Reviewing") && /* @__PURE__ */ jsxs(Fragment, { children: [
                 /* @__PURE__ */ jsx("div", { className: "w-px h-5 bg-gray-200" }),
@@ -662,8 +670,8 @@ const DocumentManager = ({
                   /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
                 ] }),
                 entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
-                  /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                  /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                  /* @__PURE__ */ jsx(DocumentViewButton, { url: entry.url, name: entry.name, title: "View", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200" }),
+                  /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(entry.url), download: entry.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                 ] })
               ] }) : /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic mt-1", children: "No file yet. Choose Upload, add a name, then pick a file." })
             ] });
@@ -695,8 +703,8 @@ const DocumentManager = ({
                       /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString() : "" })
                     ] }),
                     entry.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-slate-200/80", children: [
-                      /* @__PURE__ */ jsx("a", { href: entry.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                      /* @__PURE__ */ jsx("a", { href: entry.url, download: entry.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                      /* @__PURE__ */ jsx(DocumentViewButton, { url: entry.url, name: entry.name, title: "View", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200" }),
+                      /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(entry.url), download: entry.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                     ] })
                   ] })
                 ] })) })
@@ -715,8 +723,8 @@ const DocumentManager = ({
                   /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-400 mt-1", children: doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "" })
                 ] }),
                 doc.url && /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 mt-auto pt-2 border-t border-emerald-100", children: [
-                  /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "View", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                  /* @__PURE__ */ jsx("a", { href: doc.url, download: doc.name || "document", target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                  /* @__PURE__ */ jsx(DocumentViewButton, { url: doc.url, name: doc.name, title: "View", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200" }),
+                  /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(doc.url), download: doc.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                 ] })
               ] }, doc.id || `approved-task-doc-${idx}`)) })
             ] })
@@ -898,7 +906,8 @@ const DocumentManager = ({
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-1 leading-relaxed", children: whatsappNotification.message })
       ] }),
       /* @__PURE__ */ jsx("button", { onClick: () => setWhatsappNotification({ show: false, message: "" }), className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 16 }) })
-    ] }) })
+    ] }) }),
+    documentPreviewModal
   ] });
 };
 export {

@@ -18,6 +18,7 @@ import {
 } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { buildPipelineHealthRows } from "../docMappingConfig";
+import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 const DAY_MS = 86400000;
 function localDayStartMs(ts) {
   const d = new Date(ts);
@@ -65,7 +66,7 @@ const CounselorDashboard = ({
   const [clockTick, setClockTick] = useState(0);
   const [inquiryTarget, setInquiryTarget] = useState(null);
   useEffect(() => {
-    const id = setInterval(() => setClockTick((t) => t + 1), 1000);
+    const id = setInterval(() => setClockTick((t) => t + 1), SLA_CLOCK_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
   useEffect(() => {
@@ -81,7 +82,7 @@ const CounselorDashboard = ({
       setChatMessages(result.data || []);
     };
     load();
-    const t = setInterval(load, 5e3);
+    const t = setInterval(load, POLL_MS.chats);
     return () => {
       cancelled = true;
       clearInterval(t);

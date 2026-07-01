@@ -1,7 +1,8 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle, AlertCircle, Unlock, Upload, FileText, Eye, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
+import { CheckCircle, AlertCircle, Unlock, Upload, FileText, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
 import { Button } from "./Button";
+import { DocumentViewButton, useDocumentPreview } from "./DocumentPreviewModal";
 import {
   isVisaPilotUnlockedForConfig,
   normalizeVisaWorkflowItem,
@@ -12,6 +13,12 @@ import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { normalizePipelineStatus } from "../pipeline";
 import { buildVisaPilotDocType } from "../studentEnrolledGate";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { toAbsoluteAssetUrl } from "../apiConfig";
+
+function studentDocumentUrl(url) {
+  const resolved = toAbsoluteAssetUrl(String(url || "").trim());
+  return resolved || url;
+}
 /** Short label for long filenames (matches Paperless Pipeline / DocumentManager). */
 function shortDisplayFileName(name, maxStem = 8) {
   const s = String(name || "").trim();
@@ -60,6 +67,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
+  const { openDocumentPreview, documentPreviewModal } = useDocumentPreview();
   const visaDocuments = useMemo(() => student.documents?.filter((doc) => String(doc.tier || "").toLowerCase() === "visapilot") || [], [student.documents]);
   const isStudent = userRole === "Student";
   const isStaff = !isStudent;
@@ -284,8 +292,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                             }
                           ),
                           doc.url && /* @__PURE__ */ jsxs(Fragment, { children: [
-                            /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Preview", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Eye, { size: 16 }) }),
-                            /* @__PURE__ */ jsx("a", { href: doc.url, target: "_blank", rel: "noopener noreferrer", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                            /* @__PURE__ */ jsx(DocumentViewButton, { url: doc.url, name: doc.name, title: "Preview", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900" }),
+                            /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(doc.url), download: doc.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                           ] }),
                           isStaff && onUpdateDocument && (docStatus === "Pending" || docStatus === "Reviewing") && /* @__PURE__ */ jsxs(Fragment, { children: [
                             /* @__PURE__ */ jsx("div", { className: "w-px h-5 bg-gray-200" }),
@@ -391,7 +399,8 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
         /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Uploading Document..." }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your file." })
       ] }) })
-    ] }) })
+    ] }) }),
+    documentPreviewModal
   ] });
 };
 export {

@@ -6,6 +6,9 @@ const { readActivities } = require("../models/activities");
 const { readAppointments } = require("../models/appointments");
 const { readCountries } = require("../models/countries");
 const { readChats } = require("../models/chats");
+const { ADMIN_AI_CONTEXT_CACHE_MS } = require("../config");
+
+let adminAiContextCache = { payload: null, fetchedAt: 0 };
 
 async function readSafe(reader, fallback) {
   try {
@@ -132,6 +135,13 @@ function buildAdminDataSummary({ users, students, branches, tasks, activities, a
 }
 
 async function buildAdminAiContext() {
+  if (ADMIN_AI_CONTEXT_CACHE_MS > 0) {
+    const age = Date.now() - adminAiContextCache.fetchedAt;
+    if (adminAiContextCache.payload && age < ADMIN_AI_CONTEXT_CACHE_MS) {
+      return adminAiContextCache.payload;
+    }
+  }
+
   const [usersRaw, studentsRaw, branches, tasks, activities, appointments, countries, chats] =
     await Promise.all([
       readSafe(readUsers, []),
@@ -180,7 +190,7 @@ async function buildAdminAiContext() {
     chats: chats || [],
   });
 
-  return {
+  const result = {
     summary,
     branches: branches || [],
     countries: countries || [],
@@ -256,6 +266,11 @@ async function buildAdminAiContext() {
     recentActivities,
     recentChats,
   };
+
+  if (ADMIN_AI_CONTEXT_CACHE_MS > 0) {
+    adminAiContextCache = { payload: result, fetchedAt: Date.now() };
+  }
+  return result;
 }
 
 module.exports = {

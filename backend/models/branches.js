@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
+const { readJsonCached } = require("../lib/jsonCache");
 const { BRANCHES_FILE } = require("../config");
 
 function normalizeCountryNames(list) {
@@ -83,9 +84,7 @@ function resolveCountriesForOfficeLoose(branches, office, globalCountries, branc
 
 async function readBranches() {
   try {
-    const raw = await fs.readFile(BRANCHES_FILE, "utf8");
-    const parsed = safeJsonParse(raw, BRANCHES_FILE);
-    return Array.isArray(parsed) ? parsed : [];
+    return await readJsonCached(BRANCHES_FILE, (parsed) => (Array.isArray(parsed) ? parsed : []));
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;

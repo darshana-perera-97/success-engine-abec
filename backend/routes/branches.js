@@ -4,12 +4,15 @@ const {
   FALLBACK_EXCHANGE_RATES_LKR,
   ADMIN_EMAIL,
   ADMIN_DISPLAY_NAME,
+  BRANCH_ANALYTICS_CACHE_MS,
 } = require("../config");
 const { readBranches, writeBranches } = require("../models/branches");
 const { readInvoices } = require("../models/invoices");
 const { readStudemts } = require("../models/students");
 const { readUsers, splitAdminRecord } = require("../models/users");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
+
+const financeSummaryCache = new Map();
 
 async function handle(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/branches") {
@@ -51,6 +54,12 @@ async function handle(req, res, url) {
     try {
       const scopeBranch = String(url.searchParams.get("branch") || "").trim();
       const scopeKey = scopeBranch ? scopeBranch.toLowerCase() : "";
+      const cacheKey = scopeKey || "__all__";
+      const cached = financeSummaryCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < BRANCH_ANALYTICS_CACHE_MS) {
+        sendJson(res, 200, { ok: true, data: cached.data });
+        return true;
+      }
 
       const [branches, studemts, invoices, users, ratesData] = await Promise.all([
         readBranches(),
@@ -169,13 +178,16 @@ async function handle(req, res, url) {
 
       const totalRevenue = branchData.reduce((sum, b) => sum + b.revenue, 0);
 
+      const responseData = {
+        branches: branchData,
+        totalRevenue,
+        exchangeRates: { rates, updatedAt: ratesData.updatedAt, live: ratesData.live !== false },
+      };
+      financeSummaryCache.set(cacheKey, { at: Date.now(), data: responseData });
+
       sendJson(res, 200, {
         ok: true,
-        data: {
-          branches: branchData,
-          totalRevenue,
-          exchangeRates: { rates, updatedAt: ratesData.updatedAt, live: ratesData.live !== false }
-        }
+        data: responseData,
       });
     } catch (err) {
       console.error("branch-analytics/finance-summary error:", err);

@@ -37,6 +37,7 @@ import { Button } from "./Button";
 import { COMPANY_AI_BRAND, COMPANY_NAME, RESUME_BUILDER_TITLE } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { buildAiCvPdfFileName, captureElementToPdfBlob, triggerBlobDownload } from "../utils/cvPdf";
+import { toAbsoluteAssetUrl } from "../apiConfig";
 function parseNotesForProgramEducation(notes) {
   const n = String(notes || "");
   const programM = n.match(/Program:\s*([^.]+?)(?:\.|\s+Education:|$)/i);
@@ -492,11 +493,11 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-        /* @__PURE__ */ jsx("a", { href: currentStudent.cvFile.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", children: [
+        /* @__PURE__ */ jsx("a", { href: toAbsoluteAssetUrl(currentStudent.cvFile.url) || currentStudent.cvFile.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", children: [
           /* @__PURE__ */ jsx(Eye, { size: 14, className: "mr-1" }),
           "View"
         ] }) }),
-        /* @__PURE__ */ jsx("a", { href: currentStudent.cvFile.url, target: "_blank", rel: "noreferrer", download: currentStudent.cvFile.name || true, children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", children: [
+        /* @__PURE__ */ jsx("a", { href: toAbsoluteAssetUrl(currentStudent.cvFile.url) || currentStudent.cvFile.url, target: "_blank", rel: "noreferrer", download: currentStudent.cvFile.name || true, children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", children: [
           /* @__PURE__ */ jsx(FileText, { size: 14, className: "mr-1" }),
           "Download"
         ] }) })

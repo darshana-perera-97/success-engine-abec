@@ -13,6 +13,8 @@ const {
   writeStudemts,
   publicAssetUrl,
   publicStudentRecord,
+  studentSummaryRecord,
+  stripStudentSecrets,
   publicStudentDocUrl,
   migrateProfileOtherDocumentsToSlotEntries,
   normalizeUniversityOfferLetters,
@@ -44,7 +46,7 @@ const { sendStudentPortalAccountDetails } = require("../services/studentAccountD
 const {
   validateStudentCounselorAssignment,
   promoteRemainingCounselorToPrimary,
-  isCounselorStillLinkedOnStudent,
+  applyCounselorTransferHistory,
 } = require("../services/studentCounselors");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
@@ -154,6 +156,7 @@ async function handle(req, res, url) {
       const userId = String(url.searchParams.get("userId") || "").trim();
       const branch = String(url.searchParams.get("branch") || "").trim();
       const country = String(url.searchParams.get("country") || "").trim();
+      const summary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
 
       let result = studemts;
       if (role) {
@@ -161,7 +164,8 @@ async function handle(req, res, url) {
         result = applyRoleScope(result, { role, userId, branch, country, users });
       }
 
-      sendJson(res, 200, { ok: true, data: result.map((student) => publicStudentRecord(req, student)) });
+      const mapper = summary ? studentSummaryRecord : publicStudentRecord;
+      sendJson(res, 200, { ok: true, data: result.map((student) => mapper(req, stripStudentSecrets(student))) });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load students." });
     }
@@ -236,12 +240,23 @@ async function handle(req, res, url) {
         return dir * String(a.status || "").localeCompare(String(b.status || ""), undefined, { sensitivity: "base" });
       });
 
+      const total = result.length;
       const countryList = Array.from(new Set(result.map((s) => String(s.country || "").trim()).filter(Boolean)));
+      const summary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
+      const limitRaw = parseInt(url.searchParams.get("limit") || "0", 10);
+      const offsetRaw = parseInt(url.searchParams.get("offset") || "0", 10);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 0;
+      const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0;
+      if (limit > 0) {
+        result = result.slice(offset, offset + limit);
+      }
+
+      const mapper = summary ? studentSummaryRecord : publicStudentRecord;
 
       sendJson(res, 200, {
         ok: true,
-        data: result.map((student) => publicStudentRecord(req, student)),
-        total: result.length,
+        data: result.map((student) => mapper(req, stripStudentSecrets(student))),
+        total,
         countries: countryList
       });
     } catch {
@@ -402,6 +417,25 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "GET" && url.pathname.startsWith("/api/students/")) {
+    const studentId = decodeURIComponent(url.pathname.replace("/api/students/", "").trim()).replace(/\/+$/, "");
+    const reserved = new Set(["search", "pipeline-counts"]);
+    if (studentId && !reserved.has(studentId) && !studentId.includes("/")) {
+      try {
+        const studemts = await readStudemts();
+        const student = studemts.find((s) => String(s.id || "") === studentId);
+        if (!student) {
+          sendJson(res, 404, { ok: false, error: "Student not found." });
+          return true;
+        }
+        sendJson(res, 200, { ok: true, data: publicStudentRecord(req, stripStudentSecrets(student)) });
+      } catch {
+        sendJson(res, 500, { ok: false, error: "Failed to load student." });
+      }
+      return true;
+    }
+  }
+
   if (req.method === "PUT" && url.pathname.startsWith("/api/students/")) {
     try {
       const studentId = decodeURIComponent(url.pathname.replace("/api/students/", "").trim());
@@ -443,27 +477,13 @@ async function handle(req, res, url) {
       const nextCounselorNorm = nextCounselor.toLowerCase();
       const prevCounselorNorm = previousCounselor.toLowerCase();
       if (previousCounselor && previousCounselor !== nextCounselor) {
-        const history = Array.isArray(previous?.counselorHistory) ? previous.counselorHistory : [];
-        const normalized = history.map((id) => String(id || "").trim()).filter(Boolean);
-        const previousStillLinked = isCounselorStillLinkedOnStudent(merged, previousCounselor);
-        const prevIsValid =
-          prevCounselorNorm &&
-          prevCounselorNorm !== "unassigned" &&
-          prevCounselorNorm !== "none" &&
-          prevCounselorNorm !== "null";
+        applyCounselorTransferHistory(previous, merged);
         if (
           nextCounselor &&
           nextCounselorNorm !== "unassigned" &&
           nextCounselorNorm !== "none" &&
           nextCounselorNorm !== "null"
         ) {
-          let nextHistory = normalized.filter(
-            (id) => String(id || "").trim().toLowerCase() !== nextCounselorNorm
-          );
-          if (!previousStillLinked && prevIsValid) {
-            nextHistory.push(previousCounselor);
-          }
-          merged.counselorHistory = Array.from(new Set(nextHistory));
           logEvent("student", "counselor transferred", {
             studentId,
             from: previousCounselor,

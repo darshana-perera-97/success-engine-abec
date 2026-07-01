@@ -321,11 +321,11 @@ async function processMeetingReminders() {
   const now = Date.now();
   let changed = false;
   const nextAppointments = [];
+  const students = await readStudemts();
   for (const apt of appointments) {
     let next = apt;
     if (isWithinMeetingReminderWindow(apt, now) && !apt.studentMeetingReminderWhatsappDelivery?.sentAt) {
       try {
-        const students = await readStudemts();
         const student = students.find((item) => String(item.id || "") === String(apt.studentId || ""));
         const result = await deliverCounselorMessageToStudentWhatsapp({
           senderId: String(apt.counselorId || "").trim(),

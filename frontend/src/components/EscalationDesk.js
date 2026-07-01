@@ -5,13 +5,14 @@ import { Button } from "./Button";
 import { isTaskOverdueByDate } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
+import { SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 
 const EscalationDesk = ({ tasks, onReassign, students = [], employees = [], variant = "escalations" }) => {
   const [stageSlaNow, setStageSlaNow] = useState(() => Date.now());
   useEffect(() => {
     if (variant !== "tasks") return void 0;
     if (typeof window === "undefined") return void 0;
-    const id = window.setInterval(() => setStageSlaNow(Date.now()), 1000);
+    const id = window.setInterval(() => setStageSlaNow(Date.now()), SLA_CLOCK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [variant]);
   const studentLookup = (students || []).reduce((acc, s) => {

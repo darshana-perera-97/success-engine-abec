@@ -80,6 +80,72 @@ export function isAssignedCounselorId(value) {
   return normalized !== "" && normalized !== "unassigned" && normalized !== "none" && normalized !== "null";
 }
 
+function isCounselorStillLinkedOnStudent(student, counselorId) {
+  const targetNorm = String(counselorId || "").trim().toLowerCase();
+  if (!targetNorm) return false;
+  return getAssignedCounselorIds(student).some((id) => id.toLowerCase() === targetNorm);
+}
+
+/**
+ * When primary counselor changes, move every previously linked counselor into
+ * counselorHistory (except the new primary) so nobody loses student access.
+ */
+export function buildCounselorTransferHistory(student, nextCounselorId, previousCounselorId = null) {
+  const next = String(nextCounselorId ?? "").trim();
+  const nextNorm = next.toLowerCase();
+  if (!isAssignedCounselorId(next)) {
+    return Array.isArray(student?.counselorHistory)
+      ? student.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
+  }
+
+  const snapshot =
+    previousCounselorId != null
+      ? { ...student, counselor: String(previousCounselorId || "").trim() || student?.counselor }
+      : student;
+  const linked = getAssignedCounselorIds(snapshot);
+  const existingHistory = Array.isArray(student?.counselorHistory)
+    ? student.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  const nextHistory = [...existingHistory, ...linked].filter(
+    (id) => isAssignedCounselorId(id) && String(id).trim().toLowerCase() !== nextNorm
+  );
+  return Array.from(new Set(nextHistory));
+}
+
+export function buildCounselorReassignPatch(student, nextCounselorId, nextCounselorName = "", employees = []) {
+  const nextId = String(nextCounselorId || "").trim();
+  if (!nextId || !isAssignedCounselorId(nextId)) return null;
+  const prevId = String(student?.counselor || "").trim();
+  if (prevId === nextId) return null;
+  const resolvedName =
+    String(nextCounselorName || "").trim() ||
+    resolveCounselorDisplayName(nextId, employees) ||
+    String(student?.counselorName || "").trim();
+  return {
+    counselor: nextId,
+    counselorName: resolvedName,
+    counselorHistory: buildCounselorTransferHistory(student, nextId, prevId),
+  };
+}
+
+export function isCounselorLinkedOnStudent(student, counselorId) {
+  const norm = String(counselorId || "").trim().toLowerCase();
+  if (!norm) return false;
+  return getAssignedCounselorIds(student).some((id) => id.toLowerCase() === norm);
+}
+
+/** Add another counselor to counselorHistory without changing the primary counselor. */
+export function buildAddSecondaryCounselorPatch(student, counselorId) {
+  const id = String(counselorId || "").trim();
+  if (!id || !isAssignedCounselorId(id)) return null;
+  if (isCounselorLinkedOnStudent(student, id)) return null;
+  const history = Array.isArray(student?.counselorHistory)
+    ? student.counselorHistory.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : [];
+  return { counselorHistory: Array.from(new Set([...history, id])) };
+}
+
 /** Unique counselor IDs linked on the student (enrolling, primary, previous). */
 export function getAssignedCounselorIds(student) {
   const byNorm = /* @__PURE__ */ new Map();

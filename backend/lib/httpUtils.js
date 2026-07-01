@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
+const zlib = require("zlib");
 const {
   MAX_JSON_BODY_BYTES,
   FRONTEND_BUILD_DIR,
@@ -46,7 +47,22 @@ function sendJson(res, status, obj) {
   res.statusCode = status;
   Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(obj));
+  const body = JSON.stringify(obj);
+  const req = res.req;
+  const acceptEncoding = String(req?.headers?.["accept-encoding"] || "").toLowerCase();
+  if (body.length > 1024 && acceptEncoding.includes("gzip")) {
+    zlib.gzip(body, (err, compressed) => {
+      if (err || !compressed) {
+        res.end(body);
+        return;
+      }
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Vary", "Accept-Encoding");
+      res.end(compressed);
+    });
+    return;
+  }
+  res.end(body);
 }
 
 function getContentType(filePath) {

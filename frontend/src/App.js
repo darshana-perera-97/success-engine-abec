@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -63,11 +63,13 @@ import {
   studentMatchesCounselorIdentitySet,
   branchesMatch
 } from "./pipeline";
+import { buildCounselorReassignPatch, buildAddSecondaryCounselorPatch } from "./studentContactHelpers";
 import {
   loadDismissedNotificationKeys,
   mergeDismissedNotificationKeys
 } from "./notificationPersistence";
 import { resolveCountryDocConfig } from "./countryDocConfigStore";
+import { POLL_MS } from "./runtimeConfig";
 import {
   buildMissingStageDocTasks,
   buildStageTransitionTasks,
@@ -76,6 +78,27 @@ import {
 const generateId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 const assignmentAlertDedupeKey = (studentId, type) =>
   `assign:${String(studentId || "").trim()}:${String(type || "new").trim()}`;
+
+function mergeStudentSummaries(prev, summaries) {
+  if (!Array.isArray(summaries)) return prev;
+  const prevById = new Map(prev.map((s) => [String(s.id ?? ""), s]));
+  return summaries.map((summary) => {
+    const id = String(summary.id ?? "");
+    const existing = prevById.get(id);
+    if (existing && Array.isArray(existing.documents)) {
+      return {
+        ...existing,
+        ...summary,
+        documents: existing.documents,
+        profileOtherDocuments: existing.profileOtherDocuments,
+        universityOfferLetters: existing.universityOfferLetters,
+        cvFile: existing.cvFile,
+        notes: summary.notes ?? existing.notes,
+      };
+    }
+    return summary;
+  });
+}
 const VIEW_TO_PATH = {
   dashboard: "/dashboard",
   students: "/students",
@@ -467,10 +490,11 @@ function App({ initialView = "dashboard" }) {
     window.addEventListener("pointerdown", onFirstInteraction, { passive: true });
     return () => window.removeEventListener("pointerdown", onFirstInteraction);
   }, [currentRole]);
-  const counselorScopedStudents = (() => {
+  const counselorScopedStudents = useMemo(() => {
     if (!isCounselorEquivalentPortalRole(currentRole)) return students;
-    return students;
-  })();
+    if (!counselorIdentitySet || counselorIdentitySet.size === 0) return students;
+    return (students || []).filter((student) => studentMatchesCounselorIdentitySet(student, counselorIdentitySet));
+  }, [students, currentRole, counselorIdentitySet]);
   const managerDataScope = useMemo(() => {
     // Branch scoping applies to managers and accountants. Admins always see all branches.
     if (currentRole !== "Manager" && currentRole !== "Accountant") {
@@ -807,17 +831,19 @@ function App({ initialView = "dashboard" }) {
     return params;
   }, [currentRole, authenticatedUser?.id, authenticatedUser?.branch, authenticatedUser?.country, currentUser?.id, currentUser?.branch, currentUser?.country]);
   useEffect(() => {
+    let cancelled = false;
     const loadStudents = async () => {
-      const result = await getStudents(studentScopeParams);
-      if (!result.ok) return;
-      setStudents(() => {
-        const nextStudents = Array.isArray(result.data) ? result.data : [];
-        return nextStudents;
-      });
+      if (typeof document !== "undefined" && document.hidden) return;
+      const result = await getStudents({ ...studentScopeParams, summary: true });
+      if (cancelled || !result.ok) return;
+      setStudents((prev) => mergeStudentSummaries(prev, result.data));
     };
     loadStudents();
-    const intervalId = setInterval(loadStudents, 5e3);
-    return () => clearInterval(intervalId);
+    const intervalId = setInterval(loadStudents, POLL_MS.students);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
   }, [studentScopeParams]);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -827,8 +853,32 @@ function App({ initialView = "dashboard" }) {
     setStudentDetailFocusTaskId(taskFocus || null);
     if (!sid) return;
     const match = students.find((s) => String(s.id ?? "").trim() === sid);
-    if (match) setSelectedStudent(match);
-    else if (students.length > 0) setSelectedStudent(null);
+    if (match) {
+      setSelectedStudent((prev) => {
+        const prevSid = String(prev?.id ?? "").trim();
+        if (prevSid === sid && Array.isArray(prev?.documents)) {
+          return {
+            ...prev,
+            ...match,
+            documents: prev.documents,
+            profileOtherDocuments: prev.profileOtherDocuments,
+            universityOfferLetters: prev.universityOfferLetters,
+            cvFile: prev.cvFile,
+            notes: match.notes ?? prev.notes,
+          };
+        }
+        return match;
+      });
+      if (!Array.isArray(match.documents)) {
+        getStudentById(sid).then((full) => {
+          if (!full.ok || !full.data) return;
+          setSelectedStudent(full.data);
+          setStudents((prev) => prev.map((s) => (String(s.id ?? "") === sid ? full.data : s)));
+        });
+      }
+    } else if (students.length > 0) {
+      setSelectedStudent(null);
+    }
   }, [searchParams, students]);
   useEffect(() => {
     let cancelled = false;
@@ -836,6 +886,7 @@ function App({ initialView = "dashboard" }) {
     taskAssignNotifySeededRef.current = false;
     previousTaskDirectAssignRef.current = /* @__PURE__ */ new Map();
     const loadTasks = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       const result = await getTasks();
       if (cancelled) return;
       if (!result.ok) return;
@@ -844,7 +895,7 @@ function App({ initialView = "dashboard" }) {
     };
     loadTasks();
     if (!isCounselorEquivalentPortalRole(currentRole) && currentRole !== "Country Coordinator") return undefined;
-    const intervalId = setInterval(loadTasks, 5e3);
+    const intervalId = setInterval(loadTasks, POLL_MS.tasks);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -882,7 +933,7 @@ function App({ initialView = "dashboard" }) {
       setAppointments(result.data);
     };
     loadAppointments();
-    const pollMs = isCounselorEquivalentPortalRole(currentRole) ? 3e4 : 0;
+    const pollMs = isCounselorEquivalentPortalRole(currentRole) ? POLL_MS.appointments : 0;
     if (!pollMs) return () => {
       cancelled = true;
     };
@@ -912,6 +963,7 @@ function App({ initialView = "dashboard" }) {
   useEffect(() => {
     let cancelled = false;
     const pollInvoices = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       const [result, stResult] = await Promise.all([getInvoices(), getStudentInvoices()]);
       setInvoicesLoading(false);
       const primary = result.ok ? result.data || [] : [];
@@ -1002,7 +1054,7 @@ function App({ initialView = "dashboard" }) {
       }
     };
     pollInvoices();
-    const intervalId = setInterval(pollInvoices, 5000);
+    const intervalId = setInterval(pollInvoices, POLL_MS.invoices);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -1057,6 +1109,7 @@ function App({ initialView = "dashboard" }) {
       return;
     }
     const loadUnreadCount = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       const result = await getChats(userId, { markRead: false });
       if (!result.ok || cancelled) return;
       const unread = (result.data || []).filter(
@@ -1103,7 +1156,7 @@ function App({ initialView = "dashboard" }) {
       }
     };
     loadUnreadCount();
-    const intervalId = setInterval(loadUnreadCount, 3000);
+    const intervalId = setInterval(loadUnreadCount, POLL_MS.chats);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -1143,7 +1196,7 @@ function App({ initialView = "dashboard" }) {
       hasRequestedStudentsHydratedRef.current = true;
     };
     loadRequestedStudents();
-    const intervalId = setInterval(loadRequestedStudents, 5e3);
+    const intervalId = setInterval(loadRequestedStudents, POLL_MS.requestedStudents);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -1179,7 +1232,7 @@ function App({ initialView = "dashboard" }) {
       setWhatsappConnectionStatus(String(result.data?.status || "disconnected"));
     };
     loadStatus();
-    const intervalId = setInterval(loadStatus, 4000);
+    const intervalId = setInterval(loadStatus, POLL_MS.whatsapp);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -1241,7 +1294,7 @@ function App({ initialView = "dashboard" }) {
       setSelectedTaskId(null);
     }
   };
-  const handleSelectStudent = (student, options) => {
+  const handleSelectStudent = async (student, options) => {
     if (!student) return;
     const sid = String(student.id ?? "").trim();
     if (!sid) return;
@@ -1264,6 +1317,11 @@ function App({ initialView = "dashboard" }) {
       qs.set("createInvoice", "1");
     }
     navigate({ pathname: path, search: `?${qs.toString()}` });
+    if (Array.isArray(latestStudent.documents)) return;
+    const full = await getStudentById(sid);
+    if (!full.ok || !full.data) return;
+    setSelectedStudent(full.data);
+    setStudents((prev) => prev.map((s) => (String(s.id ?? "") === sid ? full.data : s)));
   };
   const handleSelectTask = (taskId) => {
     const id = String(taskId || "").trim();
@@ -1407,10 +1465,14 @@ function App({ initialView = "dashboard" }) {
       const countryConfig = resolveCountryDocConfig(payload.country);
       const counselorId = String(payload.counselor || "").trim();
       const actingCounselorId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+      const historyAssignees = Array.isArray(payload.counselorHistory)
+        ? payload.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
       const assigneeIds = [
         counselorId,
         String(payload.inquiryCounselorId || "").trim(),
         actingCounselorId,
+        ...historyAssignees,
       ].filter((id) => id && id !== "Unassigned");
       const missingDocTasks = buildMissingStageDocTasks({
         student: payload,
@@ -1547,14 +1609,15 @@ function App({ initialView = "dashboard" }) {
     const targetId = String(student?.id || "").trim();
     const nextCounselorId = String(counselorId || "").trim();
     if (!targetId || !nextCounselorId) return;
+    const reassignPatch = buildCounselorReassignPatch(student, nextCounselorId, counselorName, employees);
+    if (!reassignPatch) return;
     setStudents((prev) => prev.map((s) => String(s.id || "").trim() === targetId ? {
       ...s,
-      counselor: nextCounselorId,
-      counselorName: counselorName || s.counselorName || ""
+      ...reassignPatch,
     } : s));
     const persisted = await updateStudent(targetId, {
-      counselor: nextCounselorId,
-      counselorName: counselorName || ""
+      counselor: reassignPatch.counselor,
+      counselorName: reassignPatch.counselorName,
     });
     if (!persisted.ok) {
       addNotification("Assignment failed", persisted.error || "Failed to assign counselor.", "error");
@@ -1566,24 +1629,82 @@ function App({ initialView = "dashboard" }) {
       setSelectedStudent(savedStudent);
     }
   };
-  const handleTransferStudents = (fromCounselorId, toCounselorId) => {
-    setStudents((prev) => prev.map((s) => s.counselor === fromCounselorId ? { ...s, counselor: toCounselorId } : s));
+  const handleAddSecondaryStudentCounselor = async (student, counselorId) => {
+    const targetId = String(student?.id || "").trim();
+    const nextCounselorId = String(counselorId || "").trim();
+    if (!targetId || !nextCounselorId) return;
+    const patch = buildAddSecondaryCounselorPatch(student, nextCounselorId);
+    if (!patch) return;
+    setStudents((prev) => prev.map((s) => String(s.id || "").trim() === targetId ? { ...s, ...patch } : s));
+    const persisted = await updateStudent(targetId, patch);
+    if (!persisted.ok) {
+      addNotification("Add failed", persisted.error || "Failed to add secondary counselor.", "error");
+      return;
+    }
+    const savedStudent = persisted.data;
+    setStudents((prev) => prev.map((s) => s.id === savedStudent.id ? savedStudent : s));
+    if (selectedStudent?.id === savedStudent.id) {
+      setSelectedStudent(savedStudent);
+    }
+  };
+  const handleTransferStudents = async (fromCounselorId, toCounselorId) => {
+    const fromId = String(fromCounselorId || "").trim();
+    const toId = String(toCounselorId || "").trim();
+    if (!fromId || !toId) return;
+    const toEmployee = employees.find((e) => String(e.id || "").trim() === toId);
+    const toName = String(toEmployee?.name || toEmployee?.username || "").trim();
+    const affectedStudents = (students || []).filter(
+      (s) => String(s.counselor || "").trim() === fromId
+    );
+    if (affectedStudents.length === 0) return;
+
+    setStudents((prev) => prev.map((s) => {
+      if (String(s.counselor || "").trim() !== fromId) return s;
+      const reassignPatch = buildCounselorReassignPatch(s, toId, toName, employees);
+      return reassignPatch ? { ...s, ...reassignPatch } : { ...s, counselor: toId, counselorName: toName || s.counselorName };
+    }));
     setTasks((prev) => prev.map((t) => {
-      if (t.assigned_to.includes(fromCounselorId)) {
+      if (t.assigned_to.includes(fromId)) {
         return {
           ...t,
-          assigned_to: t.assigned_to.map((id) => id === fromCounselorId ? toCounselorId : id)
+          assigned_to: t.assigned_to.map((id) => id === fromId ? toId : id)
         };
       }
       return t;
     }));
-    const fromName = employees.find((e) => e.id === fromCounselorId)?.name || fromCounselorId;
-    const toName = employees.find((e) => e.id === toCounselorId)?.name || toCounselorId;
+
+    const results = await Promise.all(
+      affectedStudents.map((student) =>
+        updateStudent(student.id, {
+          counselor: toId,
+          counselorName: toName || student.counselorName || "",
+        })
+      )
+    );
+    const failed = results.filter((result) => !result?.ok);
+    const savedStudents = results.filter((result) => result?.ok && result.data).map((result) => result.data);
+    if (savedStudents.length > 0) {
+      const savedById = new Map(savedStudents.map((student) => [String(student.id || "").trim(), student]));
+      setStudents((prev) => prev.map((s) => savedById.get(String(s.id || "").trim()) || s));
+      if (selectedStudent && savedById.has(String(selectedStudent.id || "").trim())) {
+        setSelectedStudent(savedById.get(String(selectedStudent.id || "").trim()));
+      }
+    }
+    if (failed.length > 0) {
+      addNotification(
+        "Transfer incomplete",
+        `${failed.length} student transfer(s) could not be saved. Refresh and try again.`,
+        "error"
+      );
+    }
+
+    const fromName = employees.find((e) => e.id === fromId)?.name || fromId;
+    const toDisplayName = toName || employees.find((e) => e.id === toId)?.name || toId;
     handleAddActivity({
       user: currentUser?.name || "System",
       role: currentRole,
       action: "transferred students",
-      target: `from ${fromName} to ${toName}`,
+      target: `from ${fromName} to ${toDisplayName}`,
       type: "system"
     });
   };
@@ -2372,7 +2493,12 @@ function App({ initialView = "dashboard" }) {
       onDismissAssignmentAlert: handleDismissAssignmentAlert,
       onStudentMovedToRequests: handleStudentMovedToRequests,
       onSelectStudent: handleSelectStudent,
-      onCompleteStudentIntakeTask: completePendingStudentIntakeTasks
+      onCompleteStudentIntakeTask: completePendingStudentIntakeTasks,
+      counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole)
+        ? counselorIdentitySet
+        : currentRole === "Country Coordinator"
+          ? resolveCounselorIdentitySet(currentUser, counselorIdentitySet)
+          : null
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
@@ -2427,14 +2553,14 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onCompleteStudentIntakeTask: completePendingStudentIntakeTasks });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
       if (currentView === "student-detail") {
         const selectedSid = selectedStudent ? String(selectedStudent.id ?? "").trim() : "";
         const studentInScope = selectedSid ? coordStudents.find((s) => String(s.id ?? "").trim() === selectedSid) : null;
         return selectedStudent && studentInScope
-          ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: studentInScope, userRole: currentRole })
-          : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
+          ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole })
+          : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       }
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
@@ -2453,6 +2579,7 @@ function App({ initialView = "dashboard" }) {
       const acctListProps = {
         onSelectStudent: handleSelectStudent,
         students: acctStudents,
+        employees: managerDataScope.active ? managerScopedEmployees : employees,
         onUpdateStudent: handleUpdateStudent,
         onNavigate: handleNavigate,
         onAddActivity: handleAddActivity,
@@ -2525,7 +2652,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null
         });
       }
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
         return /* @__PURE__ */ jsxs(Fragment, {
@@ -2552,7 +2679,7 @@ function App({ initialView = "dashboard" }) {
           ]
         });
       }
-      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
       if (currentView === "requested-students") {
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
@@ -2642,7 +2769,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null
         });
       case "students":
-        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "requested-students":
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
@@ -2651,7 +2778,7 @@ function App({ initialView = "dashboard" }) {
           onAddFromRequest: handleAddFromRequest
         });
       case "student-detail":
-        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
       case "finance":
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,

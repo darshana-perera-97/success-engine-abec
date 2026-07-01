@@ -1,12 +1,11 @@
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
+const { readJsonCached } = require("../lib/jsonCache");
 const { ACTIVITIES_FILE } = require("../config");
 
 async function readActivities() {
   try {
-    const raw = await fs.readFile(ACTIVITIES_FILE, "utf8");
-    const parsed = safeJsonParse(raw, ACTIVITIES_FILE);
-    return Array.isArray(parsed) ? parsed : [];
+    return await readJsonCached(ACTIVITIES_FILE, (parsed) => (Array.isArray(parsed) ? parsed : []));
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;

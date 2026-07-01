@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { Users, X } from "lucide-react";
+import { UserPlus, Users, X } from "lucide-react";
 import { PersonContactCard } from "./PersonContactCard";
 import { buildCounselorTeamEntriesWithFallback, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
+import { Button } from "./Button";
 /**
  * Roster of counselors involved with this student (primary counselor/visa officer, then secondary staff).
  * Shown to staff after Specialized Notes on the student profile.
@@ -11,9 +13,17 @@ export function StudentProfileCounselorsRoster({
   employees = [],
   canRemoveCounselor = false,
   onRemoveCounselor,
-  removingCounselorId = ""
+  removingCounselorId = "",
+  canAddSecondaryCounselor = false,
+  secondaryCounselorOptions = [],
+  onAddSecondaryCounselor,
+  addingSecondaryCounselorId = ""
 }) {
   const counselors = buildCounselorTeamEntriesWithFallback(student, employees);
+  const [selectedSecondaryId, setSelectedSecondaryId] = useState("");
+  const addableOptions = secondaryCounselorOptions.filter(
+    (option) => String(option?.id || "").trim() && !counselors.some((entry) => entry.id === option.id)
+  );
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
     /* @__PURE__ */ jsxs("h3", { className: "text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2", children: [
       /* @__PURE__ */ jsx(Users, { size: 16, className: "text-indigo-600", strokeWidth: 1.75 }),
@@ -44,6 +54,40 @@ export function StudentProfileCounselorsRoster({
           children: /* @__PURE__ */ jsx(X, { size: 14 })
         }
       ) : null
-    ] }, c.id)) })
+    ] }, c.id)) }),
+    canAddSecondaryCounselor && onAddSecondaryCounselor && addableOptions.length > 0 ? /* @__PURE__ */ jsxs("div", { className: "mt-4 pt-4 border-t border-slate-100 space-y-2", children: [
+      /* @__PURE__ */ jsxs("p", { className: "text-[11px] font-semibold text-slate-600 flex items-center gap-1.5", children: [
+        /* @__PURE__ */ jsx(UserPlus, { size: 13, className: "text-indigo-600" }),
+        "Add secondary counselor"
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "Keeps the current primary counselor and links another counselor at secondary level." }),
+      /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ jsxs(
+          "select",
+          {
+            value: selectedSecondaryId,
+            onChange: (e) => setSelectedSecondaryId(e.target.value),
+            className: "flex-1 min-w-0 text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white",
+            children: [
+              /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
+              ...addableOptions.map((option) => /* @__PURE__ */ jsx("option", { value: option.id, children: option.name || option.username || option.email || option.id }, option.id))
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsx(
+          Button,
+          {
+            size: "sm",
+            disabled: !selectedSecondaryId || Boolean(addingSecondaryCounselorId),
+            onClick: async () => {
+              if (!selectedSecondaryId) return;
+              await onAddSecondaryCounselor(selectedSecondaryId);
+              setSelectedSecondaryId("");
+            },
+            children: addingSecondaryCounselorId ? "Adding..." : "Add"
+          }
+        )
+      ] })
+    ] }) : null
   ] });
 }

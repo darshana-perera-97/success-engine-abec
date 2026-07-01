@@ -1,12 +1,11 @@
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse, parseJsonArray } = require("../lib/fileUtils");
+const { readJsonCached } = require("../lib/jsonCache");
 const { INVOICES_FILE } = require("../config");
 
 async function readInvoices() {
   try {
-    const raw = await fs.readFile(INVOICES_FILE, "utf8");
-    const parsed = safeJsonParse(raw, INVOICES_FILE);
-    return parseJsonArray(parsed);
+    return await readJsonCached(INVOICES_FILE, (parsed) => parseJsonArray(parsed));
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;

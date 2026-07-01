@@ -6,6 +6,7 @@ import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers"
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole, isStaffOmniChannelMessenger } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
@@ -52,7 +53,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       setLiveMessages(incoming);
     };
     loadChats();
-    const intervalId = setInterval(loadChats, 1e3);
+    const intervalId = setInterval(loadChats, POLL_MS.chats);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
@@ -166,7 +167,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       setWhatsappSyncStatus(String(result.data?.status || "disconnected"));
     };
     run();
-    const timer = setInterval(run, 4000);
+    const timer = setInterval(run, POLL_MS.whatsapp);
     return () => {
       stop = true;
       clearInterval(timer);

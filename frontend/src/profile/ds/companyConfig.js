@@ -1,6 +1,6 @@
 import companyIcon from "./assets/companyIcon.png";
 import companyFullLogo from "./assets/company-full-logo.png";
-import { resolveApiBase } from "../../resolveApiBase";
+import { resolveApiBase, toAbsoluteBackendUrl } from "../../resolveApiBase";
 
 // DS company branding and API configuration.
 export const ROLE_DISPLAY_NAMES = {
@@ -28,9 +28,5 @@ export function applyCompanyBrandingToDocument() {
 }
 
 export function toAbsoluteAssetUrl(path) {
-  if (!path) return path;
-  if (String(path).startsWith("/assets/")) {
-    return `${API_BASE}${path}`;
-  }
-  return path;
+  return toAbsoluteBackendUrl(path, API_BASE);
 }

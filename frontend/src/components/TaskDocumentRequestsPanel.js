@@ -1,10 +1,17 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useMemo, useRef, useState } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Eye, Download, Hourglass } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Download, Hourglass } from "lucide-react";
 import { Button } from "./Button";
+import { DocumentViewButton, useDocumentPreview } from "./DocumentPreviewModal";
 import { areAllTaskDocumentSlotsVerified, findTaskDocumentForSlot } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { toAbsoluteAssetUrl } from "../apiConfig";
+
+function studentDocumentUrl(url) {
+  const resolved = toAbsoluteAssetUrl(String(url || "").trim());
+  return resolved || url;
+}
 
 const ALLOWED_TYPES = new Set([
   "application/pdf",
@@ -27,6 +34,7 @@ export function TaskDocumentRequestsPanel({
   const [rejectionReason, setRejectionReason] = useState("");
   const [uploadingKey, setUploadingKey] = useState("");
   const [uploadError, setUploadError] = useState("");
+  const { openDocumentPreview, documentPreviewModal } = useDocumentPreview();
   const fileInputRefs = useRef({});
   const sid = String(student?.id || "").trim();
   const isStaff = userRole !== "Student";
@@ -248,18 +256,16 @@ export function TaskDocumentRequestsPanel({
                           doc?.url &&
                             /* @__PURE__ */ jsxs(Fragment, {
                               children: [
-                                /* @__PURE__ */ jsx("a", {
-                                  href: doc.url,
-                                  target: "_blank",
-                                  rel: "noopener noreferrer",
-                                  className: "p-1.5 rounded text-slate-500 hover:bg-slate-100",
+                                /* @__PURE__ */ jsx(DocumentViewButton, {
+                                  url: doc.url,
+                                  name: doc.name,
                                   title: "View",
-                                  children: /* @__PURE__ */ jsx(Eye, { size: 16 })
+                                  onOpen: openDocumentPreview,
+                                  className: "p-1.5 rounded text-slate-500 hover:bg-slate-100"
                                 }),
                                 /* @__PURE__ */ jsx("a", {
-                                  href: doc.url,
-                                  target: "_blank",
-                                  rel: "noopener noreferrer",
+                                  href: studentDocumentUrl(doc.url),
+                                  download: doc.name || "document",
                                   className: "p-1.5 rounded text-slate-500 hover:bg-slate-100",
                                   title: "Download",
                                   children: /* @__PURE__ */ jsx(Download, { size: 16 })
@@ -355,7 +361,8 @@ export function TaskDocumentRequestsPanel({
               })
             ]
           })
-        })
+        }),
+      documentPreviewModal
     ]
   });
 }

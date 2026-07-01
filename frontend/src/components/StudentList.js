@@ -5,11 +5,13 @@ import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } 
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
-import { buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
+import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, getAssignedCounselorIds, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
+
+import { SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -79,8 +81,10 @@ function StageSlaCell({ student, now }) {
 const StudentList = ({
   onSelectStudent,
   students = [],
+  employees = [],
   onUpdateStudent,
   onAssignStudentCounselor,
+  onAddSecondaryStudentCounselor,
   onNavigate,
   onAddStudent,
   userRole,
@@ -96,6 +100,7 @@ const StudentList = ({
   const [accountCounselors, setAccountCounselors] = useState([]);
   const [assigningStudentId, setAssigningStudentId] = useState(null);
   const [managerTargetCounselorId, setManagerTargetCounselorId] = useState("");
+  const [managerAssignMode, setManagerAssignMode] = useState("reassign");
   const [counselorMetaReady, setCounselorMetaReady] = useState(false);
   const [sortPrefs, setSortPrefs] = useState(() => loadSortPrefs());
   const { sortBy, sortDirection } = sortPrefs;
@@ -106,7 +111,7 @@ const StudentList = ({
   const sortMenuRef = useRef(null);
   const [stageSlaClock, setStageSlaClock] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setStageSlaClock((n) => n + 1), 1000);
+    const id = window.setInterval(() => setStageSlaClock((n) => n + 1), SLA_CLOCK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, []);
   const stageSlaNow = useMemo(() => Date.now(), [stageSlaClock]);
@@ -129,7 +134,25 @@ const StudentList = ({
     () => students.find((student) => student.id === assigningStudentId) || null,
     [students, assigningStudentId]
   );
+  const linkedCounselorIds = useMemo(() => {
+    if (!assigningStudent) return /* @__PURE__ */ new Set();
+    return new Set(getAssignedCounselorIds(assigningStudent).map((id) => String(id || "").trim().toLowerCase()));
+  }, [assigningStudent]);
   useEffect(() => {
+    if (employees.length > 0) {
+      const options = employees.filter((row) => {
+        const role = String(row.role || "").toLowerCase();
+        return isCounselorEquivalentAccountRole(role);
+      }).map((row) => ({
+        id: row.id,
+        name: row.username || row.email,
+        email: row.email || "",
+        branch: String(row.branch || row.office || "").trim()
+      }));
+      setAccountCounselors(options);
+      setCounselorMetaReady(true);
+      return;
+    }
     const loadCounselorAccounts = async () => {
       try {
         const result = await getAccounts();
@@ -149,7 +172,7 @@ const StudentList = ({
       }
     };
     loadCounselorAccounts();
-  }, []);
+  }, [employees]);
   const counselorOptions = useMemo(() => {
     let base = accountCounselors;
     if (String(userRole || "") === "Manager" && scopeBranch) {
@@ -207,6 +230,7 @@ const StudentList = ({
     if (countryFilter && countryFilter !== "All") params.country = countryFilter;
     params.sortBy = sortBy;
     params.sortDirection = sortDirection;
+    params.summary = true;
     return params;
   }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilter, sortBy, sortDirection]);
 
@@ -258,12 +282,23 @@ const StudentList = ({
   const openCounselorManageMenu = (student) => {
     setAssigningStudentId(student.id);
     setManagerTargetCounselorId("");
+    setManagerAssignMode("reassign");
   };
   const confirmCounselorAssign = (student) => {
     if (!managerTargetCounselorId) return;
-    assignStudentToCounselor(student, managerTargetCounselorId);
+    if (managerAssignMode === "secondary") {
+      if (onAddSecondaryStudentCounselor) {
+        onAddSecondaryStudentCounselor(student, managerTargetCounselorId);
+      } else if (onUpdateStudent) {
+        const patch = buildAddSecondaryCounselorPatch(student, managerTargetCounselorId);
+        if (patch) onUpdateStudent({ ...student, ...patch });
+      }
+    } else {
+      assignStudentToCounselor(student, managerTargetCounselorId);
+    }
     setAssigningStudentId(null);
     setManagerTargetCounselorId("");
+    setManagerAssignMode("reassign");
   };
   const removeCounselorFromStudent = async (student) => {
     const counselorId = String(student?.counselor || "").trim();
@@ -324,13 +359,18 @@ const StudentList = ({
     return map;
   }, [counselorOptions]);
   const getCounselor = (id) => counselorsById.get(String(id || "").trim()) || null;
-  return /* @__PURE__ */ jsxs("div", { className: "space-y-4 animate-in fade-in duration-500", children: [
-    /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4", children: [
+  return /* @__PURE__ */ jsxs("div", { className: "space-y-6 animate-in fade-in duration-500", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap justify-between items-start gap-4", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsx("h1", { className: "text-2xl font-semibold tracking-tight text-[#0F172A]", children: "Students" }),
-        null
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: scopeBranch ? `Students assigned to ${scopeBranch}.` : "Browse and manage students in your pipeline." })
       ] }),
-      /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2", children: [
+      /* @__PURE__ */ jsxs(Button, { onClick: () => setIsAddModalOpen(true), className: "bg-[#0F172A] hover:bg-slate-800 shrink-0", children: [
+        /* @__PURE__ */ jsx(UserPlus, { size: 16, className: "mr-2" }),
+        "Add Student"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2 items-center", children: [
         /* @__PURE__ */ jsxs("div", { className: "relative min-w-[190px]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
             /* @__PURE__ */ jsx(Users2, { size: 10, className: "inline mr-1 -mt-0.5" }),
@@ -451,13 +491,8 @@ const StudentList = ({
                 ]
               }
             )
-          ] }),
-          /* @__PURE__ */ jsxs(Button, { onClick: () => setIsAddModalOpen(true), className: "bg-[#0F172A] hover:bg-slate-800", children: [
-            /* @__PURE__ */ jsx(UserPlus, { size: 16, className: "mr-2" }),
-            "Add Student"
           ] })
         ] })
-      ] })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden", children: [
       /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
@@ -562,7 +597,21 @@ const StudentList = ({
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "p-5 space-y-4", children: [
         canManageCounselors ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
-          /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: isUnassignedCounselor(assigningStudent.counselor) ? "Select Counselor" : "Reassign to" }),
+          !isUnassignedCounselor(assigningStudent.counselor) ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: "Action" }),
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1.5 text-xs text-slate-700", children: [
+              /* @__PURE__ */ jsxs("label", { className: "inline-flex items-center gap-2", children: [
+                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-assign-mode", checked: managerAssignMode === "reassign", onChange: () => setManagerAssignMode("reassign") }),
+                "Reassign primary counselor"
+              ] }),
+              /* @__PURE__ */ jsxs("label", { className: "inline-flex items-center gap-2", children: [
+                /* @__PURE__ */ jsx("input", { type: "radio", name: "counselor-assign-mode", checked: managerAssignMode === "secondary", onChange: () => setManagerAssignMode("secondary") }),
+                "Add as secondary counselor"
+              ] })
+            ] }),
+            managerAssignMode === "reassign" ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "The current primary counselor stays linked as a secondary counselor." }) : /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "Keeps the current primary counselor and adds another secondary counselor." })
+          ] }) : null,
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: isUnassignedCounselor(assigningStudent.counselor) ? "Select Counselor" : managerAssignMode === "secondary" ? "Secondary counselor" : "Reassign to" }),
           /* @__PURE__ */ jsxs(
             "select",
             {
@@ -572,7 +621,14 @@ const StudentList = ({
               children: [
                 /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
                 ...counselorOptions
-                  .filter((item) => String(item.id || "") !== String(assigningStudent.counselor || ""))
+                  .filter((item) => {
+                    const itemId = String(item.id || "").trim();
+                    if (!itemId) return false;
+                    if (managerAssignMode === "secondary") {
+                      return !linkedCounselorIds.has(itemId.toLowerCase());
+                    }
+                    return itemId !== String(assigningStudent.counselor || "");
+                  })
                   .map((item) => /* @__PURE__ */ jsx("option", { value: item.id, children: item.name }, item.id))
               ]
             }
@@ -584,7 +640,7 @@ const StudentList = ({
             /* @__PURE__ */ jsx(X, { size: 14, className: "mr-1.5" }),
             "Remove"
           ] }) : null,
-          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId, onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : "Reassign" }) : null
+          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId, onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : managerAssignMode === "secondary" ? "Add secondary" : "Reassign" }) : null
         ] })
       ] })
     ] }) }) : null

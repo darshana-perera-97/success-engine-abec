@@ -65,19 +65,21 @@ import {
 } from "../docMappingConfig";
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
+import { SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 import { exportStudentDocumentsZip } from "../utils/exportStudentDocumentsZip";
 import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
 import { getInvoicesByStudentId, getUniversityPrograms } from "../authApi";
-import { buildCounselorTeamEntriesWithFallback, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
+import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch, buildCounselorTransferHistory, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import {
   isCounselorEquivalentAccountRole,
   isCounselorEquivalentPortalRole,
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "../roles";
+import { filterTasksForCounselor } from "../counselorTaskScope";
 function normalizeBranchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -286,16 +288,47 @@ const KeyDetails = ({
     ] })
   ] });
 };
-const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onNavigateToTask }) => {
+const StudentTasksPanel = ({
+  student,
+  tasks = [],
+  userRole,
+  highlightTaskId,
+  onNavigateToTask,
+  currentUser = null,
+  counselorIdentitySet = null
+}) => {
   const scrollRef = useRef(null);
+  const [taskViewScope, setTaskViewScope] = useState("mine");
   const highlightKey = highlightTaskId != null ? String(highlightTaskId).trim() : "";
   const profileKey = resolveProfileStudentKey(student);
-  const studentTasksRaw = tasks.filter((task) => {
-    const tid = resolveTaskStudentKey(task);
-    if (!profileKey || !tid || tid !== profileKey) return false;
-    if (userRole === "Student" && task.isPrivate) return false;
-    return true;
-  });
+  const showTaskScopeToggle =
+    isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator";
+  const studentTasksForStudent = useMemo(() => {
+    return (tasks || []).filter((task) => {
+      const tid = resolveTaskStudentKey(task);
+      if (!profileKey || !tid || tid !== profileKey) return false;
+      if (userRole === "Student" && task.isPrivate) return false;
+      return true;
+    });
+  }, [tasks, profileKey, userRole]);
+  const studentTasksRaw = useMemo(() => {
+    if (showTaskScopeToggle && taskViewScope === "mine") {
+      return filterTasksForCounselor(
+        studentTasksForStudent,
+        currentUser,
+        [student],
+        counselorIdentitySet
+      );
+    }
+    return studentTasksForStudent;
+  }, [
+    studentTasksForStudent,
+    showTaskScopeToggle,
+    taskViewScope,
+    currentUser,
+    student,
+    counselorIdentitySet
+  ]);
   const studentTasks = [...studentTasksRaw].sort((a, b) => {
     if (!highlightKey) return 0;
     const aid = String(a.id ?? "");
@@ -312,6 +345,29 @@ const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onN
     node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [highlightKey, student.id, studentTasks.length]);
   const pendingCount = studentTasks.filter((task) => task.status !== "Completed").length;
+  const statusBadgeClass = (status) => {
+    switch (String(status || "").trim()) {
+      case "Completed":
+        return "bg-emerald-50 text-emerald-700 border border-emerald-100";
+      case "In Progress":
+        return "bg-blue-50 text-blue-700 border border-blue-100";
+      case "In Review":
+        return "bg-purple-50 text-purple-700 border border-purple-100";
+      case "Overdue":
+        return "bg-rose-50 text-rose-700 border border-rose-100";
+      case "Pending":
+        return "bg-amber-50 text-amber-700 border border-amber-100";
+      default:
+        return "bg-slate-100 text-slate-600 border border-slate-200";
+    }
+  };
+  const emptyTasksMessage =
+    studentTasks.length === 0 &&
+    showTaskScopeToggle &&
+    taskViewScope === "mine" &&
+    studentTasksForStudent.length > 0
+      ? "No tasks assigned to you for this student. Switch to All Tasks to see the full list."
+      : "No tasks found for this student.";
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between mb-4 gap-2", children: [
       /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Student Tasks" }),
@@ -320,6 +376,36 @@ const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onN
         " Pending"
       ] })
     ] }),
+    showTaskScopeToggle &&
+      /* @__PURE__ */ jsx("div", {
+        className: "flex flex-wrap bg-slate-100 p-1 rounded-lg gap-1 mb-3",
+        role: "tablist",
+        "aria-label": "Student task scope",
+        children: [
+          /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              role: "tab",
+              "aria-selected": taskViewScope === "all",
+              onClick: () => setTaskViewScope("all"),
+              className: `px-3 py-1 text-xs font-medium rounded-md transition-all ${taskViewScope === "all" ? "bg-white text-indigo-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`,
+              children: "All Tasks"
+            }
+          ),
+          /* @__PURE__ */ jsx(
+            "button",
+            {
+              type: "button",
+              role: "tab",
+              "aria-selected": taskViewScope === "mine",
+              onClick: () => setTaskViewScope("mine"),
+              className: `px-3 py-1 text-xs font-medium rounded-md transition-all ${taskViewScope === "mine" ? "bg-white text-indigo-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`,
+              children: "My Tasks"
+            }
+          )
+        ]
+      }),
     highlightKey && userRole !== "Student" && onNavigateToTask && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-600 mb-2", children: "Focused task from your dashboard — you can also edit status in Task Manager." }),
     highlightKey && userRole !== "Student" && onNavigateToTask && /* @__PURE__ */ jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsx(
       Button,
@@ -331,7 +417,7 @@ const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onN
         children: "Open in Task Manager"
       }
     ) }),
-    studentTasks.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No tasks found for this student." }) : /* @__PURE__ */ jsx("div", { ref: scrollRef, className: "space-y-2 max-h-52 overflow-y-auto pr-1", children: studentTasks.slice(0, 12).map((task) => {
+    studentTasks.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: emptyTasksMessage }) : /* @__PURE__ */ jsx("div", { ref: scrollRef, className: "space-y-2 max-h-52 overflow-y-auto pr-1", children: studentTasks.slice(0, 12).map((task) => {
       const isHi = highlightKey && String(task.id ?? "") === highlightKey;
       return /* @__PURE__ */ jsxs(
         "div",
@@ -344,10 +430,7 @@ const StudentTasksPanel = ({ student, tasks = [], userRole, highlightTaskId, onN
               isHi && /* @__PURE__ */ jsx("span", { className: "text-[9px] font-bold uppercase tracking-wide text-indigo-700 bg-white/80 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0", children: "Here" })
             ] }),
             /* @__PURE__ */ jsxs("div", { className: "mt-1 flex items-center justify-between text-[10px] text-slate-500", children: [
-              /* @__PURE__ */ jsxs("span", { children: [
-                "Status: ",
-                task.status
-              ] }),
+              /* @__PURE__ */ jsx("span", { className: `inline-flex items-center font-semibold px-1.5 py-0.5 rounded-full ${statusBadgeClass(task.status)}`, children: task.status }),
               /* @__PURE__ */ jsxs("span", { children: [
                 "Due: ",
                 task.dueDate || "N/A"
@@ -776,7 +859,8 @@ const StudentProfile = ({
   onDismissAssignmentAlert,
   onStudentMovedToRequests,
   onSelectStudent,
-  onCompleteStudentIntakeTask
+  onCompleteStudentIntakeTask,
+  counselorIdentitySet = null
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
@@ -810,6 +894,7 @@ const StudentProfile = ({
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
   const [removingCounselorId, setRemovingCounselorId] = useState("");
+  const [addingSecondaryCounselorId, setAddingSecondaryCounselorId] = useState("");
   useEffect(() => {
     setLocalStudent((prev) => {
       if (!student) return student;
@@ -832,7 +917,7 @@ const StudentProfile = ({
   }, [student]);
   const [stageSlaClock, setStageSlaClock] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setStageSlaClock((n) => n + 1), 1000);
+    const id = window.setInterval(() => setStageSlaClock((n) => n + 1), SLA_CLOCK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, []);
   const stageSlaDisplay = useMemo(
@@ -999,6 +1084,15 @@ const StudentProfile = ({
   });
   const reassignableBranchCounselors = availableBranchCounselors.filter(
     (employee) => String(employee?.id || "").trim() !== String(currentCounselorId || "").trim()
+  );
+  const secondaryCounselorOptions = useMemo(
+    () => reassignableBranchCounselors.map((employee) => ({
+      id: String(employee.id || "").trim(),
+      name: employee.name || employee.username || employee.email || employee.id,
+      username: employee.username,
+      email: employee.email
+    })).filter((entry) => entry.id),
+    [reassignableBranchCounselors]
   );
   const assignedCounselorName = (() => {
     const match = employees.find((employee) => employee.id === localStudent.counselor);
@@ -1474,7 +1568,40 @@ const StudentProfile = ({
       setRemovingCounselorId("");
     }
   };
-  const handleConfirmAdvancePipeline = () => {
+  const handleAddSecondaryCounselorFromStudent = async (counselorId) => {
+    if (!canManageStudentCounselors) return;
+    const nextId = String(counselorId || "").trim();
+    if (!nextId) return;
+    const patch = buildAddSecondaryCounselorPatch(localStudent, nextId);
+    if (!patch) {
+      onNotify?.("Already linked", "That counselor is already linked on this student.", "warning");
+      return;
+    }
+    const counselor = employees.find((employee) => String(employee.id || "").trim() === nextId);
+    const counselorName = counselor?.name || counselor?.username || counselor?.email || "Counselor";
+    setAddingSecondaryCounselorId(nextId);
+    try {
+      const updated = { ...localStudent, ...patch };
+      const result = await handleUpdateStudentLocal(updated);
+      if (result?.ok === false) {
+        onNotify?.("Add failed", result.error || "Could not add secondary counselor.", "error");
+        return;
+      }
+      onAddActivity?.({
+        user: userRole,
+        role: userRole,
+        action: "added secondary counselor",
+        target: `${counselorName} (${localStudent.name})`,
+        type: "system",
+        studentName: localStudent.name,
+        studentId: localStudent.id
+      });
+      onNotify?.("Secondary counselor added", `${counselorName} was linked as a secondary counselor.`, "success");
+    } finally {
+      setAddingSecondaryCounselorId("");
+    }
+  };
+  const handleConfirmAdvancePipeline = async () => {
     if (nextStep) {
       if (nextStep === "Enrolled") {
         const blockReasons = getEnrolledAdvanceBlockReasons(localStudent, studentInvoices, countryDocConfig);
@@ -1491,6 +1618,21 @@ const StudentProfile = ({
       const selectedCounselor = availableBranchCounselors.find((employee) => employee.id === advanceDialog.counselorId);
       const shouldAssignAnother = advanceDialog.counselorMode === "another" && advanceDialog.counselorId;
       const nextCounselorId = shouldAssignAnother ? String(advanceDialog.counselorId || "").trim() : "";
+      const prevCounselorId =
+        String(localStudent.counselor || "").trim() || String(actingCounselorId || "").trim();
+      const isAssignedCounselorId = (id) => {
+        const normalized = String(id || "").trim().toLowerCase();
+        return normalized && normalized !== "unassigned" && normalized !== "none" && normalized !== "null";
+      };
+      const retainingCounselorId =
+        shouldAssignAnother && isAssignedCounselorId(prevCounselorId)
+          ? prevCounselorId
+          : currentCounselorId;
+      const stripNextCounselor = (assignees) => {
+        const list = Array.isArray(assignees) ? assignees : [];
+        if (!nextCounselorId) return list;
+        return list.filter((id) => String(id || "").trim() !== nextCounselorId);
+      };
       const buildDueDate = (daysFromNow = 3) => {
         const due = new Date();
         due.setDate(due.getDate() + daysFromNow);
@@ -1508,18 +1650,23 @@ const StudentProfile = ({
         });
       }
       const taskUpdates = remainingStudentTasks.map((task) => {
-        const actionType = advanceDialog.taskActions?.[task.id] || "assign-me";
+        const actionType = shouldAssignAnother
+          ? "assign-me"
+          : advanceDialog.taskActions?.[task.id] || "assign-me";
         if (actionType === "student-task") {
-          const recipients = [localStudent.id, currentCounselorId].filter(Boolean);
+          const recipients = stripNextCounselor([localStudent.id, retainingCounselorId].filter(Boolean));
           return {
             ...task,
             assigned_to: Array.from(new Set(recipients)),
             isPrivate: false
           };
         }
+        const retainedAssignees = retainingCounselorId
+          ? [retainingCounselorId]
+          : stripNextCounselor(task.assigned_to || []);
         return {
           ...task,
-          assigned_to: currentCounselorId ? [currentCounselorId] : task.assigned_to || [],
+          assigned_to: Array.from(new Set(retainedAssignees.filter(Boolean))),
           isPrivate: true
         };
       });
@@ -1530,22 +1677,22 @@ const StudentProfile = ({
         counselorName: shouldAssignAnother ? selectedCounselor?.name || selectedCounselor?.username || localStudent.counselorName : localStudent.counselorName
       };
       if (shouldAssignAnother && nextCounselorId) {
-        const prevCounselorId = String(localStudent.counselor || "").trim();
-        const history = Array.isArray(localStudent.counselorHistory)
-          ? localStudent.counselorHistory.map((id) => String(id || "").trim()).filter(Boolean)
-          : [];
-        const inquiryId = String(localStudent.inquiryCounselorId || "").trim();
-        const prevStillLinked =
-          prevCounselorId &&
-          prevCounselorId.toLowerCase() !== "unassigned" &&
-          (prevCounselorId === inquiryId || history.includes(prevCounselorId));
-        let nextHistory = history.filter((id) => id.toLowerCase() !== nextCounselorId.toLowerCase());
-        if (prevCounselorId && prevCounselorId !== nextCounselorId && !prevStillLinked) {
-          nextHistory.push(prevCounselorId);
+        updated.counselorHistory = buildCounselorTransferHistory(localStudent, nextCounselorId, prevCounselorId);
+        for (const extraId of [actingCounselorId, retainingCounselorId]) {
+          const extraPatch = buildAddSecondaryCounselorPatch(
+            { ...updated, counselor: nextCounselorId },
+            extraId
+          );
+          if (extraPatch?.counselorHistory) {
+            updated.counselorHistory = extraPatch.counselorHistory;
+          }
         }
-        updated.counselorHistory = Array.from(new Set(nextHistory));
       }
-      handleUpdateStudentLocal(updated);
+      const saveResult = await handleUpdateStudentLocal(updated);
+      if (saveResult?.ok === false) {
+        onNotify?.("Stage update failed", saveResult.error || "Could not save student changes.", "error");
+        return;
+      }
       onAddActivity?.({
         user: userRole,
         role: userRole,
@@ -1962,7 +2109,15 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-4 space-y-6", children: [
 
-            /* @__PURE__ */ jsx(StudentTasksPanel, { student: localStudent, tasks, userRole, highlightTaskId, onNavigateToTask }),
+            /* @__PURE__ */ jsx(StudentTasksPanel, {
+              student: localStudent,
+              tasks,
+              userRole,
+              highlightTaskId,
+              onNavigateToTask,
+              currentUser,
+              counselorIdentitySet
+            }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
@@ -1970,7 +2125,11 @@ const StudentProfile = ({
               employees,
               canRemoveCounselor: canManageStudentCounselors,
               onRemoveCounselor: handleRemoveCounselorFromStudent,
-              removingCounselorId
+              removingCounselorId,
+              canAddSecondaryCounselor: canManageStudentCounselors,
+              secondaryCounselorOptions,
+              onAddSecondaryCounselor: handleAddSecondaryCounselorFromStudent,
+              addingSecondaryCounselorId
             }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
             /* @__PURE__ */ jsx(MeetingNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole })
@@ -2112,10 +2271,11 @@ const StudentProfile = ({
             ] }),
             /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Remaining tasks" }),
+              advanceDialog.counselorMode === "another" && remainingStudentTasks.length > 0 && /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mb-2", children: "Open tasks stay with the current counselor. They keep student access as a secondary counselor after handoff." }),
               remainingStudentTasks.length > 0 ? /* @__PURE__ */ jsx("div", { className: "max-h-56 overflow-y-auto space-y-2 pr-1", children: remainingStudentTasks.map((task) => /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs space-y-2", children: [
                 /* @__PURE__ */ jsx("p", { className: "font-medium text-slate-800", children: task.task }),
                 /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: ["Status: ", task.status, task.dueDate ? ` | Due: ${task.dueDate}` : ""] }),
-                /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+                advanceDialog.counselorMode !== "another" && /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
                   /* @__PURE__ */ jsx("label", { className: "text-[11px] font-semibold text-slate-700", children: "Action for this task" }),
                   /* @__PURE__ */ jsx("select", { value: advanceDialog.taskActions?.[task.id] || "assign-me", onChange: (e) => setAdvanceDialog((prev) => ({
                     ...prev,

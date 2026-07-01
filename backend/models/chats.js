@@ -1,13 +1,12 @@
 const fs = require("fs/promises");
 const crypto = require("crypto");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
+const { readJsonCached } = require("../lib/jsonCache");
 const { CHATS_FILE } = require("../config");
 
 async function readChats() {
   try {
-    const raw = await fs.readFile(CHATS_FILE, "utf8");
-    const parsed = safeJsonParse(raw, CHATS_FILE);
-    return Array.isArray(parsed) ? parsed : [];
+    return await readJsonCached(CHATS_FILE, (parsed) => (Array.isArray(parsed) ? parsed : []));
   } catch (error) {
     if (error && error.code === "ENOENT") return [];
     throw error;

@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const http = require("http");
 const crypto = require("crypto");
-const { PORT, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS } = require("./config");
+const { PORT, HOST, WHATSAPP_LAZY_START, WARM_JSON_CACHE_ON_START, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS, IS_PRODUCTION } = require("./config");
 const { corsHeaders, sendJson } = require("./lib/httpUtils");
 const { logEvent } = require("./lib/logger");
 const { initializeWhatsappSessionsOnStartup, reconnectActiveWhatsappSessions } = require("./services/whatsapp");
@@ -27,8 +27,12 @@ const frontendRoutes = require("./routes/frontend");
 const fs = require("fs/promises");
 const { DATA_DIR, INVOICES_FILE, STUDEMTS_FILE, TASKS_FILE, BRANCHES_FILE } = require("./config");
 const { readInvoices } = require("./models/invoices");
+const { readStudemts } = require("./models/students");
+const { readUsers } = require("./models/users");
+const { readTasks } = require("./models/tasks");
 
 const server = http.createServer(async (req, res) => {
+  res.req = req;
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
@@ -47,6 +51,11 @@ const server = http.createServer(async (req, res) => {
     res.statusCode = 204;
     Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
     res.end();
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/health") {
+    sendJson(res, 200, { ok: true, status: "healthy", env: IS_PRODUCTION ? "production" : "development" });
     return;
   }
 
@@ -107,10 +116,29 @@ async function logDataStoreStatus() {
   }
 }
 
-server.listen(PORT, async () => {
-  console.log(`Backend listening at http://localhost:${PORT}`);
+async function warmJsonCache() {
+  const t0 = Date.now();
+  await Promise.all([readStudemts(), readUsers(), readTasks(), readInvoices()]);
+  console.log(`JSON cache warmed in ${Date.now() - t0}ms`);
+}
+
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+
+server.listen(PORT, HOST, async () => {
+  const mode = IS_PRODUCTION ? "production" : "development";
+  console.log(`Backend listening at http://${HOST}:${PORT} (${mode})`);
   await logDataStoreStatus();
-  await initializeWhatsappSessionsOnStartup();
+  if (WARM_JSON_CACHE_ON_START) {
+    await warmJsonCache().catch((error) => {
+      console.warn("JSON cache warm-up failed:", error.message);
+    });
+  }
+  if (WHATSAPP_LAZY_START) {
+    console.log("WhatsApp: lazy start enabled — sessions start when a user connects (saves RAM at boot).");
+  } else {
+    await initializeWhatsappSessionsOnStartup();
+  }
   setInterval(() => {
     reconnectActiveWhatsappSessions().catch((error) => {
       console.error("Periodic WhatsApp reconnect failed:", error);
@@ -125,3 +153,12 @@ server.listen(PORT, async () => {
     });
   }, MEETING_REMINDER_POLL_MS);
 });
+
+function shutdown(signal) {
+  console.log(`${signal} received — shutting down gracefully`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

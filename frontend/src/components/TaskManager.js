@@ -3,11 +3,12 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { AlertCircle, Plus, Upload, CheckCircle, Hourglass, Filter, X } from "lucide-react";
 import { Button } from "./Button";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { filterTasksForMonitoredStudents, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
+import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { findTaskDocumentForSlot } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
+import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 
 function getCalendarDueSlaParts(task) {
@@ -150,17 +151,17 @@ const TaskManager = ({
   const studentTaskFileRefs = useRef({});
   useEffect(() => {
     if (typeof window === "undefined") return void 0;
-    const id = window.setInterval(() => setSlaClock(Date.now()), 3e4);
+    const id = window.setInterval(() => setSlaClock(Date.now()), SLA_CLOCK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, []);
-  const studentLookup = (monitoredStudents || []).reduce((acc, studentItem) => {
+  const studentLookup = useMemo(() => (monitoredStudents || []).reduce((acc, studentItem) => {
     acc[String(studentItem?.id || "").trim()] = studentItem;
     return acc;
-  }, {});
-  const employeeLookup = (employees || []).reduce((acc, employee) => {
+  }, {}), [monitoredStudents]);
+  const employeeLookup = useMemo(() => (employees || []).reduce((acc, employee) => {
     acc[String(employee?.id || "").trim()] = employee;
     return acc;
-  }, {});
+  }, {}), [employees]);
   const getAssigneeLabel = (assigneeId) => {
     const key = String(assigneeId || "").trim();
     if (!key) return "Unknown";
@@ -221,7 +222,7 @@ const TaskManager = ({
       return tasks.filter((task) => task.priority === "High" || task.status === "Overdue" || task.status === "In Review");
     }
     if (isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") {
-      return filterTasksForMonitoredStudents(tasks, monitoredStudents);
+      return filterTasksForCounselor(tasks, currentUser, monitoredStudents, counselorIdentitySet);
     }
     if (userRole === "Student") {
       return tasks.filter((task) => task.student_id === student?.id && !task.isPrivate);
