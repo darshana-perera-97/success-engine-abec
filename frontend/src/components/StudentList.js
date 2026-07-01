@@ -4,7 +4,7 @@ import { getAccounts, searchStudents } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
-import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole } from "../roles";
+import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole } from "../roles";
 import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, getAssignedCounselorIds, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
@@ -142,7 +142,7 @@ const StudentList = ({
     if (employees.length > 0) {
       const options = employees.filter((row) => {
         const role = String(row.role || "").toLowerCase();
-        return isCounselorEquivalentAccountRole(role);
+        return isStudentContactStaffAccountRole(role);
       }).map((row) => ({
         id: row.id,
         name: row.username || row.email,
@@ -159,7 +159,7 @@ const StudentList = ({
         if (!result.ok) return;
         const options = result.data.filter((row) => {
           const role = String(row.role || "").toLowerCase();
-          return isCounselorEquivalentAccountRole(role);
+          return isStudentContactStaffAccountRole(role);
         }).map((row) => ({
           id: row.id,
           name: row.username || row.email,
@@ -178,7 +178,7 @@ const StudentList = ({
     if (String(userRole || "") === "Manager" && scopeBranch) {
       base = base.filter((item) => branchesMatch(item.branch, scopeBranch));
     }
-    if (!isCounselorEquivalentPortalRole(userRole) || !currentUser) {
+    if (!(isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") || !currentUser) {
       return base;
     }
     const exists = base.some(
@@ -263,7 +263,7 @@ const StudentList = ({
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized === "" || normalized === "unassigned" || normalized === "none" || normalized === "null";
   };
-  const canManageCounselors = userRole === "Admin" || userRole === "Manager";
+  const canManageCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Country Coordinator";
   const handleAddStudent = async (newStudent) => {
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);

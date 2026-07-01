@@ -12,10 +12,10 @@ import {
   sanitizeInquiryExamResults,
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
-import { isCounselorEquivalentPortalRole } from "../roles";
+import { isCounselorEquivalentPortalRole, isStudentMessagingStaffRole } from "../roles";
 
 function resolveCounselorId(userRole, currentUser, counselorOptions) {
-  if (!isCounselorEquivalentPortalRole(userRole)) return "";
+  if (!isStudentMessagingStaffRole(userRole)) return "";
   const currentUserId = currentUser?.id || "";
   const byId = counselorOptions.find((item) => item.id === currentUserId);
   const byEmail = counselorOptions.find(

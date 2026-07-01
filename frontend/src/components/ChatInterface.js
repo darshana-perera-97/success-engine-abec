@@ -4,7 +4,7 @@ import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } 
 import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
-import { isCounselorEquivalentPortalRole, isStaffOmniChannelMessenger } from "../roles";
+import { isCounselorEquivalentPortalRole, isStaffOmniChannelMessenger, isStudentMessagingStaffRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false }) => {
@@ -41,7 +41,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   useEffect(() => {
     let cancelled = false;
     const loadChats = async () => {
-      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator";
+      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
       const result = await getChats(shouldLoadAll ? "" : currentUser?.id);
       if (cancelled) return;
       setIsChatsLoading(false);
@@ -69,8 +69,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         name: c.badgeLabel ? `${c.name} (${c.badgeLabel})` : c.name,
         avatar: c.avatar || ""
       }));
-    } else if (isCounselorEquivalentPortalRole(currentRole)) {
-      // App already passes counselor-scoped students; avoid re-filtering here.
+    } else if (isStudentMessagingStaffRole(currentRole)) {
+      // App already passes role-scoped students; avoid re-filtering here.
       return students;
     } else {
       return students || [];
@@ -96,7 +96,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   useEffect(() => {
     if (selectedConversationId) return;
     if (!conversationList.length || !liveMessages.length) return;
-    if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin" && currentRole !== "Country Coordinator") return;
+    if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin") return;
     const studentIdsWithMessages = /* @__PURE__ */ new Set(
       liveMessages.flatMap((m) => [String(m.senderId || ""), String(m.receiverId || "")])
     );
@@ -110,14 +110,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (!activeConversationId) return [];
     const otherUserId = activeConversationId;
     const myId = currentUser.id;
-    if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin" || currentRole === "Country Coordinator") {
+    if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin") {
       const selectedStudent = students.find((s) => s.id === otherUserId);
       if (!selectedStudent) return [];
       return liveMessages.filter(
         (m) => m.senderId === selectedStudent.id || m.receiverId === selectedStudent.id
       ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    } else if (isCounselorEquivalentPortalRole(currentRole)) {
-      // Counselors should see the full student thread (including previous counselors) in one window.
+    } else if (isStudentMessagingStaffRole(currentRole)) {
+      // Counselors and country coordinators see the full student thread in one window.
       return liveMessages.filter(
         (m) => m.senderId === otherUserId || m.receiverId === otherUserId
       ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -141,7 +141,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (canSendAsStaffMessenger) {
       return String(currentUser?.id || "").trim();
     }
-    if (isCounselorEquivalentPortalRole(currentRole)) {
+    if (isStudentMessagingStaffRole(currentRole)) {
       return String(currentUser?.id || "").trim();
     }
     if (currentRole === "Student") {
@@ -265,8 +265,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
   };
   const isGhostMode =
-    currentRole === "Country Coordinator" ||
-    ((currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && !canSendAsStaffMessenger);
+    (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && !canSendAsStaffMessenger;
   if (!isChatsLoading && conversationList.length === 0) {
     return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [
       /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mx-auto mb-4 text-slate-300" }),

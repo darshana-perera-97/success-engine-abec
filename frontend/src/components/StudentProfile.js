@@ -76,6 +76,7 @@ import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch,
 import {
   isCounselorEquivalentAccountRole,
   isCounselorEquivalentPortalRole,
+  isStudentContactStaffAccountRole,
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "../roles";
@@ -107,7 +108,7 @@ function resolveTaskStudentKey(task) {
   return "";
 }
 function isCounselorRole(roleValue) {
-  return isCounselorEquivalentAccountRole(roleValue);
+  return isStudentContactStaffAccountRole(roleValue);
 }
 function isMeaningfulGpaDisplay(value) {
   const s = String(value ?? "").trim().toLowerCase();
@@ -1237,7 +1238,7 @@ const StudentProfile = ({
   const showCounselorsRosterSection =
     ["Admin", "Manager", "Team Lead", "Country Coordinator"].includes(userRole) ||
     isCounselorEquivalentPortalRole(userRole);
-  const canManageStudentCounselors = userRole === "Admin" || userRole === "Manager";
+  const canManageStudentCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Country Coordinator";
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {

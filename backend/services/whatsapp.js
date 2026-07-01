@@ -8,7 +8,6 @@ const {
   whatsappSessionRecoveryChains,
   WHATSAPP_CONNECTIONS_DIR,
   WHATSAPP_RECONNECT_INTERVAL_MS,
-  WHATSAPP_WEB_VERSION,
   WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
 } = require("../config");
 const { readUsers } = require("../models/users");
@@ -22,6 +21,7 @@ const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
 const { appendWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
+const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
@@ -175,12 +175,13 @@ async function startWhatsappSession(userId) {
     }
   }
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
+  const webVersion = await resolveWhatsappWebVersion();
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: sanitizeUserIdForPath(cleanUserId),
       dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
     }),
-    webVersion: WHATSAPP_WEB_VERSION,
+    webVersion,
     webVersionCache: {
       type: "remote",
       remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
@@ -189,9 +190,10 @@ async function startWhatsappSession(userId) {
     authTimeoutMs: 120000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 10000,
+    bypassCSP: true,
     puppeteer: {
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     },
   });
   state.client = client;
@@ -259,6 +261,22 @@ async function startWhatsappSession(userId) {
     state.status = "auth_failed";
     state.error = String(message || "WhatsApp authentication failed.");
     state.lastUpdatedAt = new Date().toISOString();
+  });
+
+  client.on("change_state", (nextState) => {
+    if (String(nextState || "") !== "DEPRECATED_VERSION") return;
+    clearWhatsappAuthenticatedTimeout(state);
+    state.status = "error";
+    state.error =
+      "WhatsApp web version is outdated. Disconnect, then connect again to generate a fresh QR code.";
+    state.qrCodeDataUrl = "";
+    state.lastUpdatedAt = new Date().toISOString();
+    if (state.client && typeof state.client.destroy === "function") {
+      state.client.destroy().catch(() => {
+        // Ignore cleanup failure; user can reconnect manually.
+      });
+      state.client = null;
+    }
   });
 
   client.on("disconnected", () => {

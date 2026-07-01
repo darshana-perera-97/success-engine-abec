@@ -51,6 +51,16 @@ export function isWhatsappIntegrationRole(role) {
   return isCounselorEquivalentPortalRole(role) || String(role || "").trim() === "Country Coordinator";
 }
 
+/** Staff who may be linked to students as primary or secondary counselors (includes country coordinators). */
+export function isStudentContactStaffAccountRole(role) {
+  return isCounselorEquivalentAccountRole(role) || String(role || "").trim().toLowerCase() === "country coordinator";
+}
+
+/** Portal role with counselor-style student messaging (send + receive, not ghost mode). */
+export function isStudentMessagingStaffRole(role) {
+  return isCounselorEquivalentPortalRole(role) || String(role || "").trim() === "Country Coordinator";
+}
+
 /** Admin messaging setting unlocks Omni-Channel send + Integrations for these roles. */
 export function isStaffOmniChannelMessenger(role, adminChatEnabled = false) {
   if (adminChatEnabled !== true) return false;
