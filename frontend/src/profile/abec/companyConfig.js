@@ -15,7 +15,8 @@ export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
 export const RESUME_BUILDER_TITLE = "Premier AI Resume Builder";
 
-export const API_BASE = resolveApiBase("https://abec-success-engine.nexgenai.lk");
+export const API_BASE = resolveApiBase("https://abec-live.nexgenai.lk");
+// export const API_BASE = resolveApiBase("https://abec-success-engine.nexgenai.lk");
 export const DEFAULT_USER_AVATAR = companyIcon;
 export const COMPANY_FULL_LOGO = companyFullLogo;
 
