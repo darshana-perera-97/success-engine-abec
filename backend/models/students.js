@@ -47,18 +47,53 @@ function requestPublicOrigin(req) {
   return `${proto}://${host}`;
 }
 
+const BACKEND_RELATIVE_PREFIXES = [
+  "/student-docs/",
+  "/payments/",
+  "/chat-files/",
+  "/assets/",
+];
+
+function extractBackendRelativePath(filePath) {
+  const value = String(filePath || "").trim();
+  if (!value) return null;
+
+  for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+    if (value.startsWith(prefix)) return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const pathname = `${parsed.pathname || ""}${parsed.search || ""}${parsed.hash || ""}`;
+    for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+      if (pathname.startsWith(prefix)) return pathname;
+    }
+  } catch {
+    // Fall through to embedded-path search below.
+  }
+
+  for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+    const idx = value.indexOf(prefix);
+    if (idx !== -1) return value.slice(idx);
+  }
+
+  return null;
+}
+
 function publicAssetUrl(req, avatar) {
   if (!avatar) return avatar;
-  if (avatar.startsWith("/assets/")) {
-    return `${requestPublicOrigin(req)}${avatar}`;
+  const relativePath = extractBackendRelativePath(avatar);
+  if (relativePath?.startsWith("/assets/")) {
+    return `${requestPublicOrigin(req)}${relativePath}`;
   }
   return avatar;
 }
 
 function publicChatFileUrl(req, filePath) {
   if (!filePath) return filePath;
-  if (filePath.startsWith("/chat-files/")) {
-    return `${requestPublicOrigin(req)}${filePath}`;
+  const relativePath = extractBackendRelativePath(filePath);
+  if (relativePath?.startsWith("/chat-files/")) {
+    return `${requestPublicOrigin(req)}${relativePath}`;
   }
   return filePath;
 }
@@ -82,8 +117,9 @@ function resolveStudentDocDiskPath(filePath) {
 
 function publicStudentDocUrl(req, filePath) {
   if (!filePath) return filePath;
-  if (filePath.startsWith("/student-docs/")) {
-    return `${requestPublicOrigin(req)}${filePath}`;
+  const relativePath = extractBackendRelativePath(filePath);
+  if (relativePath?.startsWith("/student-docs/") || relativePath?.startsWith("/payments/")) {
+    return `${requestPublicOrigin(req)}${relativePath}`;
   }
   return filePath;
 }

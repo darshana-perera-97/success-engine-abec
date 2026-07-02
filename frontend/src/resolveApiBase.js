@@ -44,13 +44,43 @@ export const BACKEND_RELATIVE_PREFIXES = [
   "/assets/",
 ];
 
+/** Extract a known backend-relative path from a stored URL (relative or absolute). */
+export function extractBackendRelativePath(path) {
+  const value = String(path || "").trim();
+  if (!value) return null;
+
+  for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+    if (value.startsWith(prefix)) return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const pathname = `${parsed.pathname || ""}${parsed.search || ""}${parsed.hash || ""}`;
+    for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+      if (pathname.startsWith(prefix)) return pathname;
+    }
+  } catch {
+    // Fall through to embedded-path search below.
+  }
+
+  for (const prefix of BACKEND_RELATIVE_PREFIXES) {
+    const idx = value.indexOf(prefix);
+    if (idx !== -1) return value.slice(idx);
+  }
+
+  return null;
+}
+
 /** Prefix relative backend file paths with the active profile API_BASE. */
 export function toAbsoluteBackendUrl(path, apiBase) {
   if (!path) return path;
   const value = String(path).trim();
   if (!value) return value;
-  if (BACKEND_RELATIVE_PREFIXES.some((prefix) => value.startsWith(prefix))) {
-    return `${String(apiBase || "").replace(/\/+$/, "")}${value}`;
+
+  const relativePath = extractBackendRelativePath(value);
+  if (relativePath) {
+    return `${String(apiBase || "").replace(/\/+$/, "")}${relativePath}`;
   }
+
   return path;
 }
