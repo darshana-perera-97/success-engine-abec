@@ -2,7 +2,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle, AlertCircle, Unlock, Upload, FileText, Download, X, FileUp, Trash2, Hourglass, Check } from "lucide-react";
 import { Button } from "./Button";
-import { DocumentViewButton, useDocumentPreview } from "./DocumentPreviewModal";
+import { DocumentViewButton, documentDownloadProps, useDocumentPreview } from "./DocumentPreviewModal";
 import {
   isVisaPilotUnlockedForConfig,
   normalizeVisaWorkflowItem,
@@ -293,7 +293,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           ),
                           doc.url && /* @__PURE__ */ jsxs(Fragment, { children: [
                             /* @__PURE__ */ jsx(DocumentViewButton, { url: doc.url, name: doc.name, title: "Preview", onOpen: openDocumentPreview, className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900" }),
-                            /* @__PURE__ */ jsx("a", { href: studentDocumentUrl(doc.url), download: doc.name || "document", title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
+                            /* @__PURE__ */ jsx("a", { ...documentDownloadProps(doc.url, doc.name), title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
                           ] }),
                           isStaff && onUpdateDocument && (docStatus === "Pending" || docStatus === "Reviewing") && /* @__PURE__ */ jsxs(Fragment, { children: [
                             /* @__PURE__ */ jsx("div", { className: "w-px h-5 bg-gray-200" }),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Clock, Users, CheckCircle, ArrowRight, CheckSquare, AlertTriangle } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { BarChart, Bar, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 import { LeaderboardWidget } from "./LeaderboardWidget";
 import { getChats } from "../authApi";
@@ -60,7 +61,9 @@ const CounselorDashboard = ({
   onDismissAssignmentAlert,
   onUpdateStudent,
   onStudentMovedToRequests,
-  onCompleteStudentIntakeTask
+  onCompleteStudentIntakeTask,
+  onAddActivity,
+  userRole = "Counselor"
 }) => {
   const [chatMessages, setChatMessages] = useState([]);
   const [clockTick, setClockTick] = useState(0);
@@ -579,13 +582,13 @@ const CounselorDashboard = ({
               ")"
             ] })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
-            /* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { className: "text-left text-xs text-slate-400 uppercase border-b border-gray-100", children: [
-              /* @__PURE__ */ jsx("th", { className: "pb-2 font-medium", children: "Name" }),
-              /* @__PURE__ */ jsx("th", { className: "pb-2 font-medium", children: "Stage" }),
-              /* @__PURE__ */ jsx("th", { className: "pb-2 font-medium text-right", children: "Action" })
+          /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+            /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+              /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Name" }),
+              /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Stage" }),
+              /* @__PURE__ */ jsx("th", { className: dt.thCompactRight, children: "Action" })
             ] }) }),
-            /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-50", children: myStudents.slice(0, 5).map((student) => /* @__PURE__ */ jsxs("tr", { className: "group", children: [
+            /* @__PURE__ */ jsx("tbody", { className: dt.body, children: myStudents.slice(0, 5).map((student) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
               /* @__PURE__ */ jsx("td", { className: "py-3 font-medium text-slate-700", children: student.name }),
               /* @__PURE__ */ jsx("td", { className: "py-3", children: /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200", children: student.status }) }),
               /* @__PURE__ */ jsx("td", { className: "py-3 text-right", children: /* @__PURE__ */ jsxs(
@@ -649,7 +652,9 @@ const CounselorDashboard = ({
       onDismissAssignmentAlert,
       onStudentMovedToRequests,
       onSelectStudent,
-      onCompleteStudentIntakeTask
+      onCompleteStudentIntakeTask,
+      onAddActivity,
+      userRole
     })
   ] });
 };

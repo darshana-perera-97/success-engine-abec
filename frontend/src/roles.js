@@ -51,9 +51,24 @@ export function isWhatsappIntegrationRole(role) {
   return isCounselorEquivalentPortalRole(role) || String(role || "").trim() === "Country Coordinator";
 }
 
-/** Staff who may be linked to students as primary or secondary counselors (includes country coordinators). */
+const PRIMARY_COUNSELOR_LEADERSHIP_PORTAL_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
+
+/** Staff who may be linked to students as primary or secondary counselors. */
 export function isStudentContactStaffAccountRole(role) {
-  return isCounselorEquivalentAccountRole(role) || String(role || "").trim().toLowerCase() === "country coordinator";
+  const normalized = String(role || "").trim().toLowerCase();
+  return (
+    isCounselorEquivalentAccountRole(role) ||
+    normalized === "country coordinator" ||
+    normalized === "admin" ||
+    normalized === "manager" ||
+    normalized === "team lead"
+  );
+}
+
+/** Portal roles that may be assigned as a student's primary counselor (including self-assign on intake). */
+export function canActAsPrimaryCounselorPortalRole(role) {
+  const r = String(role || "").trim();
+  return isStudentMessagingStaffRole(r) || PRIMARY_COUNSELOR_LEADERSHIP_PORTAL_ROLES.has(r);
 }
 
 /** Portal role with counselor-style student messaging (send + receive, not ghost mode). */

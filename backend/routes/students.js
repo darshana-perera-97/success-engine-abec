@@ -35,6 +35,7 @@ const { notifyInquiryCallScheduled } = require("../services/notifications");
 const {
   deliverCounselorMessageToStudentWhatsapp,
   normalizeSriLankaStudentPhone,
+  normalizeWhatsappNumber,
 } = require("../services/whatsapp");
 const {
   buildCounselorAssignmentWhatsappMessage,
@@ -84,6 +85,7 @@ const {
   isDocumentWhatsappNotifyEnabled,
 } = require("../lib/docMappingResolve");
 const { normalizeAccountDetailsStageId } = require("../models/docMapping");
+const { validateIntakeFields } = require("../lib/intakeUtils");
 
 async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent) {
   const prevStage = normalizePipelineStatus(previousStudent?.status);
@@ -306,6 +308,10 @@ async function handle(req, res, url) {
       const email = normalizeEmail(body.email);
       const phoneInput = String(body.phone || "").trim();
       const phone = normalizeSriLankaStudentPhone(phoneInput);
+      const whatsappInput = String(body.whatsappNumber || "").trim();
+      const whatsappNumber = whatsappInput
+        ? normalizeWhatsappNumber(whatsappInput)
+        : normalizeWhatsappNumber(phone);
       const password = String(body.password || "").trim();
       const ielts = String(body.ielts || "").trim() || "Pending";
       const gpa = String(body.gpa || "").trim();
@@ -323,7 +329,13 @@ async function handle(req, res, url) {
       const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
+      const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
+      if (!intakeValidation.ok) {
+        sendJson(res, 400, intakeValidation);
+        return true;
+      }
       const message = String(body.message || "").trim();
+      const inquirySource = String(body.inquirySource || "").trim() || null;
       const counselorHistoryRaw = Array.isArray(body.counselorHistory) ? body.counselorHistory : [];
       const counselorHistory = Array.from(
         new Set(
@@ -340,6 +352,13 @@ async function handle(req, res, url) {
       }
       if (!phone) {
         sendJson(res, 400, { ok: false, error: "Enter a valid Sri Lankan mobile number in +947XXXXXXXX format." });
+        return true;
+      }
+      if (!whatsappNumber) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid WhatsApp number with country code (e.g. +94771234567 or +14155552671).",
+        });
         return true;
       }
       const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -383,6 +402,7 @@ async function handle(req, res, url) {
         branch,
         email,
         phone,
+        whatsappNumber,
         password,
         forcePasswordChange: true,
         ielts,
@@ -401,7 +421,10 @@ async function handle(req, res, url) {
         visaRejectionAnyCountry: visaRejectionAnyCountry || null,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
+        intakeMonth: intakeValidation.intakeMonth,
+        intakeYear: intakeValidation.intakeYear,
         message: message || null,
+        inquirySource,
         createdAt: nowIso,
         stageEnteredAt: nowIso
       };
@@ -466,6 +489,20 @@ async function handle(req, res, url) {
           return true;
         }
         merged.phone = normalizedPhone;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, "whatsappNumber")) {
+        const whatsappInput = String(body.whatsappNumber || "").trim();
+        const normalizedWhatsapp = whatsappInput
+          ? normalizeWhatsappNumber(whatsappInput)
+          : normalizeWhatsappNumber(merged.phone);
+        if (!normalizedWhatsapp) {
+          sendJson(res, 400, {
+            ok: false,
+            error: "Enter a valid WhatsApp number with country code (e.g. +94771234567 or +14155552671).",
+          });
+          return true;
+        }
+        merged.whatsappNumber = normalizedWhatsapp;
       }
       Object.assign(merged, promoteRemainingCounselorToPrimary(merged));
       const counselorAssignmentError = validateStudentCounselorAssignment(merged, body);
@@ -731,6 +768,48 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname.startsWith("/api/students/") && url.pathname.endsWith("/send-login-details")) {
+    try {
+      const studentId = decodeURIComponent(
+        url.pathname.replace("/api/students/", "").replace("/send-login-details", "").trim()
+      ).replace(/\/+$/, "");
+      if (!studentId) {
+        sendJson(res, 400, { ok: false, error: "Student ID is required." });
+        return true;
+      }
+      const studemts = await readStudemts();
+      const student = studemts.find((s) => String(s.id || "") === studentId);
+      if (!student) {
+        sendJson(res, 404, { ok: false, error: "Student not found." });
+        return true;
+      }
+      const emailAddress = normalizeEmail(student.email);
+      const password = String(student.password || "").trim();
+      if (!emailAddress) {
+        sendJson(res, 400, { ok: false, error: "Student has no email address on file." });
+        return true;
+      }
+      if (!password) {
+        sendJson(res, 400, { ok: false, error: "Student has no portal password on file." });
+        return true;
+      }
+      const delivery = await sendStudentPortalAccountDetails({ req, student, studentId });
+      logEvent("student", "manual send portal login details", {
+        studentId,
+        email: emailAddress,
+        counselorId: String(student.inquiryCounselorId || student.counselor || ""),
+        delivery,
+      });
+      sendJson(res, 200, { ok: true, data: { delivery }, delivery });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: String(error?.message || "Failed to send login details."),
+      });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname.startsWith("/api/students/") && url.pathname.endsWith("/move-to-requests")) {
     try {
       const studentId = decodeURIComponent(
@@ -743,7 +822,7 @@ async function handle(req, res, url) {
       const body = await parseBody(req);
       const nearestOfficeRaw = String(body.nearestOffice || body.branch || "").trim();
       if (!nearestOfficeRaw) {
-        sendJson(res, 400, { ok: false, error: "Branch (nearest office) is required." });
+        sendJson(res, 400, { ok: false, error: "Preferred branch is required." });
         return true;
       }
 
@@ -755,7 +834,7 @@ async function handle(req, res, url) {
         (loc) => loc.toLowerCase() === nearestOfficeRaw.toLowerCase()
       );
       if (!matchedOffice) {
-        sendJson(res, 400, { ok: false, error: "Please choose a valid nearest office from the list." });
+        sendJson(res, 400, { ok: false, error: "Please choose a valid preferred branch from the list." });
         return true;
       }
 
@@ -773,13 +852,16 @@ async function handle(req, res, url) {
         name: String(student.name || "").trim(),
         email: normalizeEmail(student.email),
         phone: String(student.phone || "").trim(),
+        whatsappNumber: String(student.whatsappNumber || student.phone || "").trim(),
         countryToVisit: String(student.countryToVisit || student.country || "").trim(),
         city: String(student.city || "").trim() || null,
         nearestOffice: matchedOffice,
         currentEducationLevel: String(student.currentEducationLevel || "").trim(),
         intendedProgram: String(student.intendedProgram || "").trim(),
+        intakeMonth: String(student.intakeMonth || "").trim() || null,
+        intakeYear: String(student.intakeYear || "").trim() || null,
         message: String(student.message || "").trim() || null,
-        source: "counselor-reassignment",
+        source: String(student.inquirySource || "import").trim() || "import",
       };
 
       if (!entry.name || !entry.email || !entry.phone || !entry.countryToVisit) {

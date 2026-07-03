@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { REQ_STUDENTS_FILE } = require("../config");
+const { normalizeIntakeMonth, normalizeIntakeYear } = require("../lib/intakeUtils");
 
 async function readReqStudents() {
   try {
@@ -76,6 +77,7 @@ async function appendReqStudentsBulk(entries) {
         name,
         email: String(raw.email || "").trim().toLowerCase(),
         phone,
+        whatsappNumber: String(raw.whatsappNumber || raw.phone || "").trim(),
         countryToVisit: String(raw.countryToVisit || "").trim() || "UAE",
         city: raw.city || null,
         nearestOffice: raw.nearestOffice || null,
@@ -83,8 +85,10 @@ async function appendReqStudentsBulk(entries) {
         visaRejectionAnyCountry: raw.visaRejectionAnyCountry || "No",
         currentEducationLevel: raw.currentEducationLevel || null,
         intendedProgram: raw.intendedProgram || null,
+        intakeMonth: normalizeIntakeMonth(raw.intakeMonth) || null,
+        intakeYear: normalizeIntakeYear(raw.intakeYear) || null,
         message: raw.message || null,
-        source: raw.source || "meta-leads-import",
+        source: raw.source || "marketing-team",
         metaLeadId: metaLeadId || null,
         platform: raw.platform || null,
         campaignName: raw.campaignName || null,

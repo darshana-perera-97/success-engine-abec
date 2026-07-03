@@ -1,4 +1,4 @@
-import { jsx, jsxs } from "react/jsx-runtime";
+import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect } from "react";
 import { Button } from "./Button";
 import { formatRawLKR, EXCHANGE_RATES, RATE_UPDATED_AT } from "../utils";
@@ -45,7 +45,7 @@ function computeShowMoneyTotals({ tuitionFee, scholarship, paidTuition, costs, e
   const totalRequiredTarget = rate > 0 ? totalRequiredLKR / rate : 0;
   return { totalCostsLKR, totalTuitionDue, totalRequiredLKR, totalRequiredTarget };
 }
-const FinancialCalculator = ({ student, onUpdateStudent }) => {
+const FinancialCalculator = ({ student, onUpdateStudent, goldLoansAcceptable = true }) => {
   const targetCurrency = CURRENCY_CODES[student.country] || "USD";
   const canEdit = typeof onUpdateStudent === "function";
   const [tuitionFee, setTuitionFee] = useState(() => defaultTuitionFee(student));
@@ -125,7 +125,7 @@ const FinancialCalculator = ({ student, onUpdateStudent }) => {
     if (!Number.isFinite(amount) || amount <= 0) return;
     const age = parseInt(assetDialog.age, 10) || 0;
     const type = String(assetDialog.type || "Savings");
-    const isLiquid = type === "Savings" || type === "Fixed Deposit";
+    const isLiquid = type === "Savings" || type === "Fixed Deposit" || (goldLoansAcceptable && type === "Gold Loan");
     const newAsset = {
       id: `asset-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
       type,
@@ -364,7 +364,13 @@ const FinancialCalculator = ({ student, onUpdateStudent }) => {
               /* @__PURE__ */ jsx("strong", { children: "not accepted" }),
               " as liquid cash for student visas unless sold."
             ] }),
-            /* @__PURE__ */ jsx("li", { children: "Gold loans are acceptable if the loan is disbursed into the savings account." })
+            /* @__PURE__ */ jsx("li", { children: goldLoansAcceptable
+              ? "Gold loans are acceptable if the loan is disbursed into the savings account."
+              : /* @__PURE__ */ jsxs(Fragment, { children: [
+                  "Gold loans are ",
+                  /* @__PURE__ */ jsx("strong", { children: "not accepted" }),
+                  " as a funding source for student visas."
+                ] }) }),
           ] })
         ] })
       ] })
@@ -433,6 +439,7 @@ const FinancialCalculator = ({ student, onUpdateStudent }) => {
               children: [
                 /* @__PURE__ */ jsx("option", { value: "Savings", children: "Savings" }),
                 /* @__PURE__ */ jsx("option", { value: "Fixed Deposit", children: "Fixed Deposit" }),
+                goldLoansAcceptable && /* @__PURE__ */ jsx("option", { value: "Gold Loan", children: "Gold Loan" }),
                 /* @__PURE__ */ jsx("option", { value: "Property", children: "Property (Illiquid)" }),
                 /* @__PURE__ */ jsx("option", { value: "Business Income", children: "Business Income" })
               ]

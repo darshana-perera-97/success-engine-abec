@@ -8,6 +8,17 @@ export function resolveDocumentUrl(url) {
   return resolved || url;
 }
 
+export function documentDownloadProps(url, name) {
+  const href = resolveDocumentUrl(url);
+  if (!href) return null;
+  return {
+    href,
+    download: String(name || "").trim() || "document",
+    target: "_blank",
+    rel: "noopener noreferrer"
+  };
+}
+
 export function isPreviewableImage(url, name) {
   const hint = `${String(name || "")} ${String(url || "")}`.toLowerCase();
   if (hint.includes("data:image/")) return true;
@@ -117,8 +128,7 @@ export function useDocumentPreview() {
                   className: "flex items-center gap-2 shrink-0",
                   children: [
                     jsx("a", {
-                      href: preview.url,
-                      download: preview.name,
+                      ...documentDownloadProps(preview.url, preview.name),
                       className:
                         "inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition-colors",
                       title: "Download",

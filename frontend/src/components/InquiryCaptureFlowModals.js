@@ -1,17 +1,26 @@
-import React, { Fragment, useEffect, useMemo, useState } from "react";
+import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 import { getBranches, getCountries, moveStudentToRequests } from "../authApi";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
-import { getInquiryIntakeSlaRemainingParts, INQUIRY_SCHEDULE_CALL_MAX_MS, normalizePipelineStatus } from "../pipeline";
+import {
+  formatInquiryScheduledCallLabel,
+  getInquiryIntakeSlaRemainingParts,
+  INQUIRY_SCHEDULE_CALL_MAX_MS,
+  normalizePipelineStatus
+} from "../pipeline";
 import {
   examResultsRowsFromStudent,
   InquiryIntakeForm,
   inquiryFormToStudentFields,
+  mergeInquiryFormForScheduleLater,
   newInquiryExamResultRow,
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
+import { intakeFieldsFromStudent } from "../utils/intakeFields";
+import { whatsappFieldsFromStudent } from "../utils/phoneWhatsapp";
+import { normalizeInquirySource } from "../utils/inquirySource";
 
 export function InquirySlaBadge({ startedAt, scheduledCallAt, nowMs }) {
   const meta = getInquiryIntakeSlaRemainingParts(startedAt, nowMs, scheduledCallAt);
@@ -45,6 +54,35 @@ function getScheduleCallBounds() {
   return { min: toDatetimeLocalValue(now), max: toDatetimeLocalValue(max) };
 }
 
+function buildScheduledCallReasonEntry({ reason, scheduledAtIso, author, authorId, source }) {
+  const trimmedReason = String(reason || "").trim();
+  return {
+    id: `scr-${Date.now()}-${Math.floor(Math.random() * 1e4)}`,
+    reason: trimmedReason,
+    scheduledAt: String(scheduledAtIso || "").trim(),
+    createdAt: new Date().toISOString(),
+    author: String(author || "Staff").trim() || "Staff",
+    authorId: String(authorId || ""),
+    source: String(source || "schedule-call-later").trim() || "schedule-call-later"
+  };
+}
+
+function appendScheduledCallReason(student, entry) {
+  const existing = Array.isArray(student?.scheduledCallReasons) ? student.scheduledCallReasons : [];
+  return {
+    ...student,
+    scheduledCallReasons: [entry, ...existing]
+  };
+}
+
+function validateScheduleReason(raw) {
+  const reason = String(raw || "").trim();
+  if (!reason) {
+    return { ok: false, error: "Please add a reason for scheduling the call later." };
+  }
+  return { ok: true, reason };
+}
+
 const InquiryCaptureFlowModals = ({
   target,
   onClear,
@@ -55,7 +93,9 @@ const InquiryCaptureFlowModals = ({
   onDismissAssignmentAlert,
   onStudentMovedToRequests,
   onSelectStudent,
-  onCompleteStudentIntakeTask
+  onCompleteStudentIntakeTask,
+  onAddActivity,
+  userRole = "Counselor"
 }) => {
   const [branchRecords, setBranchRecords] = useState([]);
   const [globalCountries, setGlobalCountries] = useState([]);
@@ -65,6 +105,8 @@ const InquiryCaptureFlowModals = ({
     name: "",
     email: "",
     phone: "",
+    whatsappSameAsPhone: true,
+    whatsappNumber: "",
     countryToVisit: "",
     nearestOffice: "",
     city: "",
@@ -74,8 +116,11 @@ const InquiryCaptureFlowModals = ({
     visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
+    intakeMonth: "",
+    intakeYear: "",
     message: "",
     priority: "Medium",
+    inquirySource: "",
     examResults: [newInquiryExamResultRow()]
   });
   const [inquiryError, setInquiryError] = useState("");
@@ -93,8 +138,12 @@ const InquiryCaptureFlowModals = ({
   const [scheduleLaterOpen, setScheduleLaterOpen] = useState(false);
   const [scheduleLaterStudent, setScheduleLaterStudent] = useState(null);
   const [scheduleLaterAt, setScheduleLaterAt] = useState("");
+  const [scheduleLaterReason, setScheduleLaterReason] = useState("");
   const [scheduleLaterError, setScheduleLaterError] = useState("");
   const [isSavingScheduleLater, setIsSavingScheduleLater] = useState(false);
+  const [summaryScheduleReason, setSummaryScheduleReason] = useState("");
+  const lastFormTargetKeyRef = useRef(null);
+  const modalFlowRef = useRef("inquiry");
 
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +181,8 @@ const InquiryCaptureFlowModals = ({
 
   useEffect(() => {
     if (!target?.student) {
+      lastFormTargetKeyRef.current = null;
+      modalFlowRef.current = "inquiry";
       setInquiryOpen(false);
       setSummaryOpen(false);
       setSummaryStudent(null);
@@ -140,17 +191,36 @@ const InquiryCaptureFlowModals = ({
       setDismissAlertId(null);
       return;
     }
+    modalFlowRef.current = "inquiry";
+    setDismissAlertId(target.assignmentAlert?.id != null ? String(target.assignmentAlert.id) : null);
+    setInquiryError("");
+    setSummaryError("");
+    setInquiryOpen(true);
+    setSummaryOpen(false);
+    setSummaryStudent(null);
+    setScheduleLaterOpen(false);
+    setScheduleLaterStudent(null);
+  }, [target?._key]);
+
+  useEffect(() => {
+    if (!target?.student) {
+      lastFormTargetKeyRef.current = null;
+      return;
+    }
     const student = target.student;
+    const targetKey = target?._key;
     const nearestOffice = String(student.nearestOffice || student.branch || offices[0] || "");
     const officeCountries = resolveCountriesForOffice(branchRecords, nearestOffice, globalCountries, { branchCountriesEnabled });
     const preferredCountry = String(student.countryToVisit || student.country || "").trim();
     const countryToVisit = officeCountries.includes(preferredCountry) ? preferredCountry : officeCountries[0] || "";
-    setInquiryError("");
-    setSummaryError("");
-    setInquiryForm({
+    const waFields = whatsappFieldsFromStudent(student);
+    const intakeFields = intakeFieldsFromStudent(student);
+    const nextForm = {
       name: String(student.name || ""),
       email: String(student.email || ""),
       phone: String(student.phone || ""),
+      whatsappSameAsPhone: waFields.whatsappSameAsPhone,
+      whatsappNumber: waFields.whatsappNumber,
       countryToVisit,
       nearestOffice,
       city: String(student.city || ""),
@@ -160,17 +230,34 @@ const InquiryCaptureFlowModals = ({
       visaRejectionAnyCountry: String(student.visaRejectionAnyCountry || "No"),
       currentEducationLevel: String(student.currentEducationLevel || ""),
       intendedProgram: String(student.intendedProgram || ""),
+      intakeMonth: intakeFields.intakeMonth,
+      intakeYear: intakeFields.intakeYear,
       message: String(student.message || ""),
       priority: String(student.priority || "Medium") || "Medium",
+      inquirySource: normalizeInquirySource(student.inquirySource) || "",
       examResults: examResultsRowsFromStudent(student)
+    };
+    if (lastFormTargetKeyRef.current !== targetKey) {
+      lastFormTargetKeyRef.current = targetKey;
+      setInquiryForm(nextForm);
+      return;
+    }
+    if (modalFlowRef.current === "schedule-later" || modalFlowRef.current === "summary") return;
+    setInquiryForm((prev) => {
+      const officeCountriesForPrev = resolveCountriesForOffice(
+        branchRecords,
+        prev.nearestOffice || nearestOffice,
+        globalCountries,
+        { branchCountriesEnabled }
+      );
+      const nextCountry = officeCountriesForPrev.includes(prev.countryToVisit)
+        ? prev.countryToVisit
+        : officeCountriesForPrev[0] || prev.countryToVisit;
+      const nextOffice = (offices || []).includes(prev.nearestOffice) ? prev.nearestOffice : nearestOffice;
+      if (nextCountry === prev.countryToVisit && nextOffice === prev.nearestOffice) return prev;
+      return { ...prev, countryToVisit: nextCountry, nearestOffice: nextOffice };
     });
-    setDismissAlertId(target.assignmentAlert?.id != null ? String(target.assignmentAlert.id) : null);
-    setInquiryOpen(true);
-    setSummaryOpen(false);
-    setSummaryStudent(null);
-    setScheduleLaterOpen(false);
-    setScheduleLaterStudent(null);
-  }, [target?._key, branchRecords, globalCountries, branchCountriesEnabled, offices]);
+  }, [target?._key, target?.student?.id, branchRecords, globalCountries, branchCountriesEnabled, offices]);
 
   const resolveStudentById = (studentId) => {
     const sid = String(studentId || "").trim();
@@ -185,6 +272,7 @@ const InquiryCaptureFlowModals = ({
 
   const closeInquiryPopup = () => {
     if (isSavingInquiry) return;
+    modalFlowRef.current = "inquiry";
     setInquiryOpen(false);
     setInquiryError("");
     onClear?.();
@@ -197,7 +285,7 @@ const InquiryCaptureFlowModals = ({
     if (!existingStudent) {
       return { ok: false, error: "Student not found." };
     }
-    const validation = validateInquiryFormRequired(inquiryForm, { requireBudget: false });
+    const validation = validateInquiryFormRequired(inquiryForm, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       return { ok: false, error: validation.error };
     }
@@ -207,7 +295,10 @@ const InquiryCaptureFlowModals = ({
       notes: existingStudent.notes
     });
     try {
-      await onUpdateStudent?.(updatedStudent);
+      const saveResult = await onUpdateStudent?.(updatedStudent);
+      if (saveResult && saveResult.ok === false) {
+        return { ok: false, error: saveResult.error || "Failed to save student details." };
+      }
       return { ok: true, student: updatedStudent };
     } catch {
       return { ok: false, error: "Failed to save student details." };
@@ -243,36 +334,60 @@ const InquiryCaptureFlowModals = ({
       setIsSavingInquiry(false);
       return;
     }
+    modalFlowRef.current = "summary";
     setSummaryStudent(result.student);
     setSummaryAction("meeting-note");
     setSummaryNote("");
     setSummaryBranch(result.student.nearestOffice || result.student.branch || offices[0] || "");
     setSummaryScheduledAt(getDefaultScheduleCallValue());
+    setSummaryScheduleReason("");
     setSummaryError("");
     setInquiryOpen(false);
     setSummaryOpen(true);
     setIsSavingInquiry(false);
   };
 
-  const handleScheduleLaterFromInquiry = async () => {
-    setIsSavingInquiry(true);
-    setInquiryError("");
-    const result = await saveInquiryForm();
-    if (!result.ok) {
-      setInquiryError(result.error || "Failed to save student details.");
-      setIsSavingInquiry(false);
+  const handleScheduleLaterFromInquiry = () => {
+    const studentId = String(target?.student?.id || "").trim();
+    if (!studentId) {
+      setInquiryError("Student not found.");
       return;
     }
-    setScheduleLaterStudent(result.student);
+    const existingStudent = resolveStudentById(studentId) || target?.student;
+    if (!existingStudent) {
+      setInquiryError("Student not found.");
+      return;
+    }
+    const merged = mergeInquiryFormForScheduleLater(inquiryForm, {
+      ...existingStudent,
+      status: existingStudent.status,
+      notes: existingStudent.notes
+    });
+    if (!merged.ok) {
+      setInquiryError(merged.error || "Please fix the highlighted fields before scheduling.");
+      return;
+    }
+    const sourceValidation = validateInquiryFormRequired(inquiryForm, {
+      requireBudget: false,
+      requireSource: true
+    });
+    if (!sourceValidation.ok) {
+      setInquiryError(sourceValidation.error);
+      return;
+    }
+    setInquiryError("");
+    modalFlowRef.current = "schedule-later";
+    setScheduleLaterStudent(merged.student);
     setScheduleLaterAt(getDefaultScheduleCallValue());
+    setScheduleLaterReason("");
     setScheduleLaterError("");
     setInquiryOpen(false);
     setScheduleLaterOpen(true);
-    setIsSavingInquiry(false);
   };
 
   const closeSummaryPopup = () => {
     if (isSavingSummary) return;
+    modalFlowRef.current = "inquiry";
     setSummaryOpen(false);
     setSummaryStudent(null);
     setSummaryError("");
@@ -281,14 +396,37 @@ const InquiryCaptureFlowModals = ({
 
   const closeScheduleLaterPopup = () => {
     if (isSavingScheduleLater) return;
+    modalFlowRef.current = "inquiry";
     setScheduleLaterOpen(false);
     setScheduleLaterStudent(null);
+    setScheduleLaterReason("");
     setScheduleLaterError("");
     onClear?.();
   };
 
   const completeIntakeTaskForStudent = (studentId) => {
     onCompleteStudentIntakeTask?.(studentId);
+  };
+
+  const authorLabel = String(currentUser?.name || currentUser?.username || currentUser?.email || "Staff").trim() || "Staff";
+
+  const logScheduledCallActivity = (student, scheduledAtIso, reason) => {
+    const studentName = String(student?.name || "").trim();
+    const studentId = String(student?.id || "").trim();
+    const scheduledLabel = formatInquiryScheduledCallLabel(scheduledAtIso);
+    const trimmedReason = String(reason || "").trim();
+    const targetParts = [studentName || studentId || "Student"];
+    if (scheduledLabel) targetParts.push(`call at ${scheduledLabel}`);
+    if (trimmedReason) targetParts.push(`reason: ${trimmedReason}`);
+    onAddActivity?.({
+      user: authorLabel,
+      role: userRole,
+      action: "scheduled inquiry call",
+      target: targetParts.join(" — "),
+      type: "inquiry",
+      studentName,
+      studentId
+    });
   };
 
   const handleSaveScheduleLater = async (e) => {
@@ -304,12 +442,35 @@ const InquiryCaptureFlowModals = ({
         setScheduleLaterError(validation.error);
         return;
       }
-      const merged = {
-        ...scheduleLaterStudent,
-        inquiryScheduledCallAt: new Date(validation.scheduledMs).toISOString()
-      };
-      await onUpdateStudent?.(merged);
+      const reasonValidation = validateScheduleReason(scheduleLaterReason);
+      if (!reasonValidation.ok) {
+        setScheduleLaterError(reasonValidation.error);
+        return;
+      }
+      const scheduledAtIso = new Date(validation.scheduledMs).toISOString();
+      const reasonEntry = buildScheduledCallReasonEntry({
+        reason: reasonValidation.reason,
+        scheduledAtIso,
+        author: authorLabel,
+        authorId: currentUser?.id,
+        source: "schedule-call-later"
+      });
+      const merged = appendScheduledCallReason(
+        {
+          ...scheduleLaterStudent,
+          inquiryScheduledCallAt: scheduledAtIso
+        },
+        reasonEntry
+      );
+      const saveResult = await onUpdateStudent?.(merged);
+      if (saveResult && saveResult.ok === false) {
+        setScheduleLaterError(saveResult.error || "Failed to save scheduled call.");
+        return;
+      }
+      logScheduledCallActivity(scheduleLaterStudent, scheduledAtIso, scheduleLaterReason);
+      completeIntakeTaskForStudent(studentId);
       if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
+      modalFlowRef.current = "inquiry";
       setScheduleLaterOpen(false);
       setScheduleLaterStudent(null);
       onClear?.();
@@ -380,11 +541,29 @@ const InquiryCaptureFlowModals = ({
           setIsSavingSummary(false);
           return;
         }
-        const merged = {
-          ...summaryStudent,
-          inquiryScheduledCallAt: new Date(validation.scheduledMs).toISOString()
-        };
+        const reasonValidation = validateScheduleReason(summaryScheduleReason);
+        if (!reasonValidation.ok) {
+          setSummaryError(reasonValidation.error);
+          setIsSavingSummary(false);
+          return;
+        }
+        const scheduledAtIso = new Date(validation.scheduledMs).toISOString();
+        const reasonEntry = buildScheduledCallReasonEntry({
+          reason: reasonValidation.reason,
+          scheduledAtIso,
+          author: authorLabel,
+          authorId: currentUser?.id,
+          source: "inquiry-call-summary"
+        });
+        const merged = appendScheduledCallReason(
+          {
+            ...summaryStudent,
+            inquiryScheduledCallAt: scheduledAtIso
+          },
+          reasonEntry
+        );
         await onUpdateStudent?.(merged);
+        logScheduledCallActivity(summaryStudent, scheduledAtIso, summaryScheduleReason);
         completeIntakeTaskForStudent(studentId);
         if (dismissAlertId) onDismissAssignmentAlert?.(dismissAlertId);
         setSummaryOpen(false);
@@ -472,7 +651,9 @@ const InquiryCaptureFlowModals = ({
                 onScheduleLater: handleScheduleLaterFromInquiry,
                 submitLabel: "Save",
                 cancelLabel: "Cancel",
-                showBudgetField: false
+                showBudgetField: false,
+                showSourceField: true,
+                intakeCountry: inquiryForm.countryToVisit
               })
             ]
           })
@@ -626,6 +807,23 @@ const InquiryCaptureFlowModals = ({
                         /* @__PURE__ */ jsx("p", {
                           className: "text-xs text-slate-500 mt-1",
                           children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold. The student receives a WhatsApp when the call is scheduled or rescheduled, and a reminder 15 minutes before."
+                        }),
+                        /* @__PURE__ */ jsxs("div", {
+                          className: "mt-3",
+                          children: [
+                            /* @__PURE__ */ jsx("label", {
+                              className: "text-xs font-semibold text-slate-700 mb-1 block",
+                              children: "Reason"
+                            }),
+                            /* @__PURE__ */ jsx("textarea", {
+                              rows: 3,
+                              required: true,
+                              className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+                              value: summaryScheduleReason,
+                              onChange: (e) => setSummaryScheduleReason(e.target.value),
+                              placeholder: "e.g. Student asked to call back after work hours..."
+                            })
+                          ]
                         })
                       ]
                     }),
@@ -705,6 +903,22 @@ const InquiryCaptureFlowModals = ({
                       /* @__PURE__ */ jsx("p", {
                         className: "text-xs text-slate-500 mt-1",
                         children: "Inquiry is held until this time (up to 7 days). It will reappear in Priority Action Items when the call is due — no SLA countdown while on hold. The student receives a WhatsApp when the call is scheduled or rescheduled, and a reminder 15 minutes before."
+                      })
+                    ]
+                  }),
+                  /* @__PURE__ */ jsxs("div", {
+                    children: [
+                      /* @__PURE__ */ jsx("label", {
+                        className: "text-xs font-semibold text-slate-700 mb-1 block",
+                        children: "Reason"
+                      }),
+                      /* @__PURE__ */ jsx("textarea", {
+                        rows: 3,
+                        required: true,
+                        className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+                        value: scheduleLaterReason,
+                        onChange: (e) => setScheduleLaterReason(e.target.value),
+                        placeholder: "e.g. Student asked to call back after work hours..."
                       })
                     ]
                   }),

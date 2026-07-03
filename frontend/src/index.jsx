@@ -8,6 +8,8 @@ import "./styles.css";
 const ROUTE_VIEWS = [
   { path: "/dashboard", view: "dashboard" },
   { path: "/students", view: "students" },
+  { path: "/team-requests", view: "team-requests" },
+  { path: "/my-requests", view: "my-requests" },
   { path: "/accounts", view: "accounts" },
   { path: "/student-detail", view: "student-detail" },
   { path: "/tasks", view: "tasks" },

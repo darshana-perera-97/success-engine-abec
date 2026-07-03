@@ -8,6 +8,7 @@ function normalizeSystemData(input) {
     counselorCanAcceptPayments: src.counselorCanAcceptPayments === true,
     adminChatEnabled: src.adminChatEnabled === true,
     branchCountriesEnabled: src.branchCountriesEnabled === true,
+    goldLoansAcceptable: src.goldLoansAcceptable !== false,
   };
 }
 

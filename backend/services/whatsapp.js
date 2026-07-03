@@ -494,6 +494,16 @@ function normalizeSriLankaStudentPhone(phone) {
   return `+94${localMobileDigits}`;
 }
 
+function normalizeWhatsappNumber(phone) {
+  const raw = String(phone || "").trim();
+  if (!raw) return "";
+  const sriLanka = normalizeSriLankaStudentPhone(raw);
+  if (sriLanka) return sriLanka;
+  const digitsOnly = normalizePhoneDigits(raw);
+  if (digitsOnly.length < 8 || digitsOnly.length > 15) return "";
+  return `+${digitsOnly}`;
+}
+
 async function resolveWhatsappThreadIdFromMessage(message) {
   try {
     if (!message || typeof message.getContact !== "function") return "";
@@ -505,19 +515,30 @@ async function resolveWhatsappThreadIdFromMessage(message) {
   }
 }
 
+function resolveStudentWhatsappPhone(student) {
+  const whatsappNumber = String(student?.whatsappNumber || "").trim();
+  if (whatsappNumber) return whatsappNumber;
+  return String(student?.phone || "").trim();
+}
+
+function studentPhoneDigitsMatch(incomingDigits, student) {
+  const phoneDigits = normalizePhoneDigits(student?.phone || "");
+  const whatsappDigits = normalizePhoneDigits(student?.whatsappNumber || "");
+  const targets = [phoneDigits, whatsappDigits].filter(Boolean);
+  if (!targets.length || !incomingDigits) return false;
+  return targets.some(
+    (studentDigits) =>
+      incomingDigits.endsWith(studentDigits) || studentDigits.endsWith(incomingDigits)
+  );
+}
+
 async function findStudentByWhatsappFrom(chatId) {
   const rawFrom = String(chatId || "");
   const numberPart = rawFrom.split("@")[0] || "";
   const incomingDigits = normalizePhoneDigits(numberPart);
   if (!incomingDigits) return null;
   const students = await readStudemts();
-  return (
-    students.find((student) => {
-      const studentDigits = normalizePhoneDigits(student.phone || "");
-      if (!studentDigits) return false;
-      return incomingDigits.endsWith(studentDigits) || studentDigits.endsWith(incomingDigits);
-    }) || null
-  );
+  return students.find((student) => studentPhoneDigitsMatch(incomingDigits, student)) || null;
 }
 
 async function persistIncomingWhatsappMessage({ counselorId, message }) {
@@ -619,10 +640,10 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
   if (!student) {
     return { attempted: false, status: "skipped", reason: "Student record not found." };
   }
-  const phone = String(student.phone || "").trim();
+  const phone = resolveStudentWhatsappPhone(student);
   const chatId = toWhatsAppChatId(phone);
   if (!chatId) {
-    return { attempted: false, status: "skipped", reason: "Student phone number is missing." };
+    return { attempted: false, status: "skipped", reason: "Student WhatsApp number is missing." };
   }
   const messageText = String(content || "").trim();
   const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
@@ -735,6 +756,8 @@ module.exports = {
   toWhatsAppChatId,
   normalizePhoneDigits,
   normalizeSriLankaStudentPhone,
+  normalizeWhatsappNumber,
+  resolveStudentWhatsappPhone,
   resolveWhatsappThreadIdFromMessage,
   findStudentByWhatsappFrom,
   persistIncomingWhatsappMessage,

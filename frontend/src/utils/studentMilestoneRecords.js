@@ -1,6 +1,7 @@
 import { documentTypeMatchesRequirement } from "../docMappingConfig";
 import { isVisaGrantedStatus } from "../pipeline";
 import { normalizeOfferStatus } from "./universityOfferLetters";
+import { formatIntakeLabel, normalizeIntakeMonth, normalizeIntakeYear } from "./intakeFields";
 
 export const MILESTONE_TYPES = ["Offer Letter", "Granted Visa", "COE", "CAS"];
 
@@ -57,6 +58,9 @@ function pushDocumentMilestone(rows, student, meta, doc, milestoneType) {
     branch: meta.branch,
     country: meta.country,
     counselorLabel: meta.counselorLabel,
+    intakeMonth: meta.intakeMonth,
+    intakeYear: meta.intakeYear,
+    intakeLabel: meta.intakeLabel,
     milestoneType,
     status,
     eventDate: uploadedAt,
@@ -73,7 +77,10 @@ export function buildStudentMilestoneRecords(students, employees) {
     const branch = String(student?.branch || "").trim() || "—";
     const country = String(student?.country || "").trim() || "—";
     const counselorLabel = resolveStudentCounselorDisplayName(student, employees);
-    const meta = { sid, studentName, branch, country, counselorLabel };
+    const intakeMonth = normalizeIntakeMonth(student?.intakeMonth) || "—";
+    const intakeYear = normalizeIntakeYear(student?.intakeYear) || "—";
+    const intakeLabel = formatIntakeLabel(student?.intakeMonth, student?.intakeYear) || "—";
+    const meta = { sid, studentName, branch, country, counselorLabel, intakeMonth, intakeYear, intakeLabel };
 
     for (const entry of student?.universityOfferLetters || []) {
       if (!entry || typeof entry !== "object" || !String(entry.url || "").trim()) continue;
@@ -86,6 +93,9 @@ export function buildStudentMilestoneRecords(students, employees) {
         branch,
         country,
         counselorLabel,
+        intakeMonth,
+        intakeYear,
+        intakeLabel,
         milestoneType: "Offer Letter",
         status: normalizeOfferStatus(entry.offerStatus),
         eventDate: uploadedAt,
@@ -117,6 +127,9 @@ export function buildStudentMilestoneRecords(students, employees) {
         branch,
         country,
         counselorLabel,
+        intakeMonth,
+        intakeYear,
+        intakeLabel,
         milestoneType: "Granted Visa",
         status: String(student.status || "").trim() || "Visa",
         eventDate,
@@ -137,6 +150,8 @@ export function filterMilestoneRecords(rows, filters = {}) {
   const country = String(filters.country || "All");
   const counselor = String(filters.counselor || "All");
   const status = String(filters.status || "All");
+  const intakeMonth = String(filters.intakeMonth || "All");
+  const intakeYear = String(filters.intakeYear || "All");
   const dateFrom = String(filters.dateFrom || "").trim();
   const dateTo = String(filters.dateTo || "").trim();
 
@@ -153,6 +168,8 @@ export function filterMilestoneRecords(rows, filters = {}) {
     if (country !== "All" && row.country !== country) return false;
     if (counselor !== "All" && row.counselorLabel !== counselor) return false;
     if (status !== "All" && row.status !== status) return false;
+    if (intakeMonth !== "All" && row.intakeMonth !== intakeMonth) return false;
+    if (intakeYear !== "All" && row.intakeYear !== intakeYear) return false;
     if (fromMs != null && Number.isFinite(fromMs)) {
       if (!row.eventDateMs || row.eventDateMs < fromMs) return false;
     }
@@ -168,17 +185,30 @@ export function collectMilestoneFilterOptions(rows) {
   const countries = new Set();
   const counselors = new Set();
   const statuses = new Set();
+  const intakeMonths = new Set();
+  const intakeYears = new Set();
   for (const row of rows || []) {
     if (row.branch && row.branch !== "—") branches.add(row.branch);
     if (row.country && row.country !== "—") countries.add(row.country);
     if (row.counselorLabel && row.counselorLabel !== "—") counselors.add(row.counselorLabel);
     if (row.status) statuses.add(row.status);
+    if (row.intakeMonth && row.intakeMonth !== "—") intakeMonths.add(row.intakeMonth);
+    if (row.intakeYear && row.intakeYear !== "—") intakeYears.add(row.intakeYear);
   }
   const sortAlpha = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
+  const sortMonths = (a, b) => {
+    const months = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ];
+    return months.indexOf(a) - months.indexOf(b);
+  };
   return {
     branches: Array.from(branches).sort(sortAlpha),
     countries: Array.from(countries).sort(sortAlpha),
     counselors: Array.from(counselors).sort(sortAlpha),
     statuses: Array.from(statuses).sort(sortAlpha),
+    intakeMonths: Array.from(intakeMonths).sort(sortMonths),
+    intakeYears: Array.from(intakeYears).sort((a, b) => Number(a) - Number(b)),
   };
 }

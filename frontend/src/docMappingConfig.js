@@ -1,6 +1,7 @@
 import { COUNTRY_CHECKLISTS } from "./constants";
 import { PIPELINE_STEPS, STAGE_CONFIG, normalizePipelineStatus, getVisibleCountryChecklistStages } from "./pipeline";
 import { VISA_WORKFLOWS } from "./visaWorkflows";
+import { defaultIntakeOptions, normalizeIntakeOptions } from "./utils/intakeFields";
 
 const DEFAULT_STAGE_ROWS = [
   { id: "inquiry", label: "Inquiry", locked: true },
@@ -26,6 +27,7 @@ export function buildCountryDocConfig(apiData) {
   const stageDeadlines = normalizeStageDeadlinesMap(apiData?.stageDeadlines, stages);
   const accountDetailsStageId = normalizeAccountDetailsStageId(apiData?.accountDetailsStageId, stages);
   const documentNotifyDocs = normalizeDocumentNotifyDocs(apiData?.documentNotifyDocs);
+  const intakeOptions = normalizeIntakeOptions(apiData?.intakeOptions);
   return {
     stages,
     pipelineSteps: stages.map((s) => s.label),
@@ -37,6 +39,7 @@ export function buildCountryDocConfig(apiData) {
     stageDeadlines,
     accountDetailsStageId,
     documentNotifyDocs,
+    intakeOptions,
   };
 }
 
@@ -313,6 +316,7 @@ export function buildFallbackCountryDocConfig(country) {
     stageDeadlines: buildDefaultStageDeadlines(DEFAULT_STAGE_ROWS),
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
     documentNotifyDocs: normalizeDocumentNotifyDocs(undefined),
+    intakeOptions: defaultIntakeOptions(),
   };
 }
 

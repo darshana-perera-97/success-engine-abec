@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
@@ -25,6 +25,8 @@ import { CounselorManagement } from "./components/CounselorManagement";
 import { AccountsManagement } from "./components/AccountsManagement";
 import { AdminSettings } from "./components/AdminSettings";
 import { RequestedStudents } from "./components/RequestedStudents";
+import { TeamRequests } from "./components/TeamRequests";
+import { MyRequests } from "./components/MyRequests";
 import { AIResumeBuilder } from "./components/AIResumeBuilder";
 import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
@@ -43,6 +45,7 @@ import {
   resolveCounselorIdentitySet,
 } from "./counselorTaskScope";
 import {
+  canActAsPrimaryCounselorPortalRole,
   isCounselorEquivalentPortalRole,
   isRecognizedPortalRole,
   isStaffOmniChannelMessenger,
@@ -63,6 +66,7 @@ import {
   studentMatchesCounselorIdentitySet,
   branchesMatch
 } from "./pipeline";
+import { normalizeInquirySource } from "./utils/inquirySource";
 import { buildCounselorReassignPatch, buildAddSecondaryCounselorPatch } from "./studentContactHelpers";
 import {
   loadDismissedNotificationKeys,
@@ -115,6 +119,8 @@ const VIEW_TO_PATH = {
   settings: "/settings",
   "student-detail": "/student-detail",
   "requested-students": "/requested-students",
+  "team-requests": "/team-requests",
+  "my-requests": "/my-requests",
   "stage-escalations": "/stage-escalations",
   maps: "/maps",
   "web-forms": "/web-forms"
@@ -138,7 +144,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
-  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false });
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, goldLoansAcceptable: true });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -171,6 +177,7 @@ function App({ initialView = "dashboard" }) {
   const [studentCalendarFocusCounselorId, setStudentCalendarFocusCounselorId] = useState(null);
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
+  const [teamRequestsCount, setTeamRequestsCount] = useState(0);
   const [assignmentAlerts, setAssignmentAlerts] = useState([]);
   const whatsappStatusFailuresRef = useRef(0);
   const whatsappPollUserIdRef = useRef("");
@@ -412,8 +419,9 @@ function App({ initialView = "dashboard" }) {
     currentUser?.name,
     employees
   ]);
+  const primaryCounselorIdentitySet = canActAsPrimaryCounselorPortalRole(currentRole) ? counselorIdentitySet : null;
   useEffect(() => {
-    if (!isCounselorEquivalentPortalRole(currentRole)) {
+    if (!canActAsPrimaryCounselorPortalRole(currentRole)) {
       setAssignmentAlerts([]);
       previousStudentCounselorMapRef.current = new Map();
       assignmentNotifySeededRef.current = false;
@@ -1204,6 +1212,38 @@ function App({ initialView = "dashboard" }) {
   }, [currentRole, addNotification, staffBranchLabel]);
   useEffect(() => {
     let cancelled = false;
+    const canTrackTeamRequests = currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead";
+    if (!canTrackTeamRequests) {
+      setTeamRequestsCount(0);
+      return;
+    }
+    const loadTeamRequests = async () => {
+      const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult] = await Promise.all([
+        getCountryChangeRequests({ pendingOnly: true }),
+        getStudentDetailChangeRequests({ pendingOnly: true }),
+        getInvoiceWaveOffRequests({ pendingOnly: true }),
+        getStudentRemovalRequests({ pendingOnly: true }),
+        getIntakeChangeRequests({ pendingOnly: true }),
+        getRefundRequests({ pendingOnly: true }),
+      ]);
+      if (cancelled) return;
+      const countryCount = countryResult.ok && Array.isArray(countryResult.data) ? countryResult.data.length : 0;
+      const detailCount = detailResult.ok && Array.isArray(detailResult.data) ? detailResult.data.length : 0;
+      const waveOffCount = waveOffResult.ok && Array.isArray(waveOffResult.data) ? waveOffResult.data.length : 0;
+      const removalCount = removalResult.ok && Array.isArray(removalResult.data) ? removalResult.data.length : 0;
+      const intakeCount = intakeResult.ok && Array.isArray(intakeResult.data) ? intakeResult.data.length : 0;
+      const refundCount = refundResult.ok && Array.isArray(refundResult.data) ? refundResult.data.length : 0;
+      setTeamRequestsCount(countryCount + detailCount + waveOffCount + removalCount + intakeCount + refundCount);
+    };
+    loadTeamRequests();
+    const intervalId = setInterval(loadTeamRequests, POLL_MS.requestedStudents);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole]);
+  useEffect(() => {
+    let cancelled = false;
     const canPollWhatsapp = isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
     const userId = String(currentUser?.id || "").trim();
     if (!canPollWhatsapp || !userId) {
@@ -1315,6 +1355,7 @@ function App({ initialView = "dashboard" }) {
     }
     if (options?.openCreateInvoice) {
       qs.set("createInvoice", "1");
+      qs.set("tab", "ledger");
     }
     navigate({ pathname: path, search: `?${qs.toString()}` });
     if (Array.isArray(latestStudent.documents)) return;
@@ -1408,8 +1449,10 @@ function App({ initialView = "dashboard" }) {
     if (!targetId) return;
     setStudents((prev) => prev.filter((s) => String(s.id || "").trim() !== targetId));
     setTasks((prev) => prev.filter((t) => String(t.student_id || t.studentId || "").trim() !== targetId));
+    setInvoices((prev) => prev.filter((inv) => String(inv.studentId || "").trim() !== targetId));
     if (String(selectedStudent?.id || "").trim() === targetId) {
       setSelectedStudent(null);
+      handleNavigate("students");
     }
   };
   const handleAddActivity = (act) => {
@@ -1848,6 +1891,7 @@ function App({ initialView = "dashboard" }) {
       branch,
       email: String(requestRow.email || "").trim().toLowerCase(),
       phone: String(requestRow.phone || "").trim(),
+      whatsappNumber: String(requestRow.whatsappNumber || requestRow.phone || "").trim(),
       password,
       ielts: "Pending",
       gpa: "0.0",
@@ -1862,7 +1906,10 @@ function App({ initialView = "dashboard" }) {
       visaRejectionAnyCountry: String(requestRow.visaRejectionAnyCountry || "No").trim(),
       currentEducationLevel: String(requestRow.currentEducationLevel || "").trim(),
       intendedProgram: String(requestRow.intendedProgram || "").trim(),
+      intakeMonth: String(requestRow.intakeMonth || "").trim() || null,
+      intakeYear: String(requestRow.intakeYear || "").trim() || null,
       message: String(requestRow.message || "").trim(),
+      inquirySource: normalizeInquirySource(requestRow.source) || null,
       lastEducationDate: new Date().toISOString().split("T")[0],
       documents: []
     };
@@ -2097,7 +2144,8 @@ function App({ initialView = "dashboard" }) {
     const payload = {
       ...newInv,
       createdByName: creatorName,
-      createdById: String(currentUser?.id || authenticatedUser?.id || "").trim()
+      createdById: String(currentUser?.id || authenticatedUser?.id || "").trim(),
+      createdByRole: currentRole,
     };
     const saved = await createInvoice(payload);
     if (!saved.ok) {
@@ -2105,8 +2153,22 @@ function App({ initialView = "dashboard" }) {
       return { ok: false, error: saved.error || "Failed to create invoice." };
     }
     setInvoices((prev) => [saved.data, ...prev]);
-    handleAddActivity({ user: currentRole, role: currentRole, action: "generated invoice", target: `${saved.data.currency} ${saved.data.amount} for ${saved.data.studentId}`, type: "finance", studentId: saved.data.studentId });
+    const activityTarget = saved.data.isWaveOff
+      ? `wave-off request for ${saved.data.description || saved.data.studentId}`
+      : `${saved.data.currency} ${saved.data.amount} for ${saved.data.studentId}`;
+    handleAddActivity({
+      user: currentRole,
+      role: currentRole,
+      action: saved.data.isWaveOff ? "submitted invoice wave-off" : "generated invoice",
+      target: activityTarget,
+      type: "finance",
+      studentId: saved.data.studentId,
+    });
     return { ok: true, data: saved.data };
+  };
+  const handleMergeInvoice = (invoice) => {
+    if (!invoice?.id) return;
+    setInvoices((prev) => prev.map((inv) => (inv.id === invoice.id ? invoice : inv)));
   };
   const handleUpdateInvoice = async (updatedInv) => {
     const payload = {
@@ -2469,6 +2531,7 @@ function App({ initialView = "dashboard" }) {
       onOpenCreateTaskModal: handleOpenCreateTaskModal,
       paymentAccounts,
       counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
+      goldLoansAcceptable: systemData.goldLoansAcceptable !== false,
       onCreateInvoice: handleCreateInvoice,
       onUpdateInvoice: handleUpdateInvoice,
       tasks,
@@ -2494,11 +2557,12 @@ function App({ initialView = "dashboard" }) {
       onStudentMovedToRequests: handleStudentMovedToRequests,
       onSelectStudent: handleSelectStudent,
       onCompleteStudentIntakeTask: completePendingStudentIntakeTasks,
-      counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole)
-        ? counselorIdentitySet
-        : currentRole === "Country Coordinator"
-          ? resolveCounselorIdentitySet(currentUser, counselorIdentitySet)
-          : null
+      counselorIdentitySet:
+        isCounselorEquivalentPortalRole(currentRole) || canActAsPrimaryCounselorPortalRole(currentRole)
+          ? counselorIdentitySet
+          : currentRole === "Country Coordinator"
+            ? resolveCounselorIdentitySet(currentUser, counselorIdentitySet)
+            : null
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;
@@ -2552,7 +2616,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: coordBranch || null
         });
       }
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onCompleteStudentIntakeTask: completePendingStudentIntakeTasks });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onCompleteStudentIntakeTask: completePendingStudentIntakeTasks, onAddActivity: handleAddActivity, userRole: currentRole });
       if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
       if (currentView === "student-detail") {
@@ -2570,7 +2634,14 @@ function App({ initialView = "dashboard" }) {
           onOpenStudentLedger: (stu) => handleSelectStudent(stu, { profileTab: "ledger" })
         });
       }
-      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests });
+      if (currentView === "my-requests") {
+        return /* @__PURE__ */ jsx(MyRequests, {
+          currentUser,
+          onSelectStudent: handleSelectStudent,
+          onNotify: addNotification
+        });
+      }
+      return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onAddActivity: handleAddActivity, userRole: currentRole });
     }
     if (currentRole === "Accountant") {
       const acctStudents = managerDataScope.active ? managerScopedStudents : students;
@@ -2602,7 +2673,10 @@ function App({ initialView = "dashboard" }) {
           invoicesLoading,
           students: acctStudents,
           paymentAccounts,
+          currentUser,
+          userRole: currentRole,
           onUpdateInvoice: handleUpdateInvoice,
+          onSyncInvoice: (inv) => setInvoices((prev) => prev.map((item) => item.id === inv.id ? inv : item)),
           onNotify: addNotification
         });
       }
@@ -2652,7 +2726,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null
         });
       }
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, counselorIdentitySet: primaryCounselorIdentitySet });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
         return /* @__PURE__ */ jsxs(Fragment, {
@@ -2667,6 +2741,7 @@ function App({ initialView = "dashboard" }) {
               userRole: "Manager",
               tasks: mgrTasks,
               currentUser,
+              counselorIdentitySet: primaryCounselorIdentitySet,
               selectedTaskId,
               onUpdateTasks: handleUpdateTasks,
               onAddTask: handleAddTask,
@@ -2679,13 +2754,25 @@ function App({ initialView = "dashboard" }) {
           ]
         });
       }
-      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null });
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: currentRole === "Team Lead" ? "Team Lead" : "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, counselorIdentitySet: primaryCounselorIdentitySet });
       if (currentView === "requested-students") {
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
           scopeBranch: staffBranchLabel || null,
           branchCountriesLimited: systemData.branchCountriesEnabled === true,
           onAddFromRequest: handleAddFromRequest
+        });
+      }
+      if (currentView === "team-requests") {
+        return /* @__PURE__ */ jsx(TeamRequests, {
+          userRole: currentRole,
+          currentUser,
+          onSelectStudent: handleSelectStudent,
+          onUpdateStudent: handleUpdateStudent,
+          onUpdateInvoice: handleMergeInvoice,
+          onAddActivity: handleAddActivity,
+          onNotify: addNotification,
+          onStudentMovedToRequests: handleStudentMovedToRequests
         });
       }
       if (currentView === "finance") {
@@ -2769,7 +2856,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null
         });
       case "students":
-        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: primaryCounselorIdentitySet });
       case "requested-students":
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
@@ -2777,8 +2864,19 @@ function App({ initialView = "dashboard" }) {
           branchCountriesLimited: systemData.branchCountriesEnabled === true,
           onAddFromRequest: handleAddFromRequest
         });
+      case "team-requests":
+        return /* @__PURE__ */ jsx(TeamRequests, {
+          userRole: currentRole,
+          currentUser,
+          onSelectStudent: handleSelectStudent,
+          onUpdateStudent: handleUpdateStudent,
+          onUpdateInvoice: handleMergeInvoice,
+          onAddActivity: handleAddActivity,
+          onNotify: addNotification,
+          onStudentMovedToRequests: handleStudentMovedToRequests
+        });
       case "student-detail":
-        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser });
+        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: primaryCounselorIdentitySet });
       case "finance":
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,
@@ -2795,11 +2893,11 @@ function App({ initialView = "dashboard" }) {
               variant: "admin",
               onOpenStudent: openEscalationStudent
             }),
-            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate, wrapClassName: "mt-8" })
+            /* @__PURE__ */ jsx(TaskManager, { userRole: "Admin", tasks: adminViewTasks, currentUser, counselorIdentitySet: primaryCounselorIdentitySet, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: adminViewStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate, wrapClassName: "mt-8" })
           ]
         });
       case "maps":
-        return /* @__PURE__ */ jsx(DocMapping, {});
+        return /* @__PURE__ */ jsx(DocMapping, { userRole: currentRole });
       case "integration":
         return adminChatEnabled ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable admin messaging in Settings to use Integrations." });
       case "web-forms":
@@ -2862,6 +2960,10 @@ function App({ initialView = "dashboard" }) {
         onUpdateProfileContact: handleUpdateProfileContact,
         navMyTasksCount,
         requestedStudentsBadge: (currentRole === "Admin" || currentRole === "Manager") && requestedStudentsCount > 0 ? String(requestedStudentsCount) : "",
+        teamRequestsBadge:
+          (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && teamRequestsCount > 0
+            ? String(teamRequestsCount)
+            : "",
         pipelineEscalationBadge: pipelineEscalationNavBadge,
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
@@ -2950,7 +3052,7 @@ function App({ initialView = "dashboard" }) {
             /* @__PURE__ */ jsx("div", { className: `w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${n.type === "success" ? "bg-emerald-100 text-emerald-600" : n.type === "warning" ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"}`, children: /* @__PURE__ */ jsx(Bell, { size: 20 }) }),
             /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
               /* @__PURE__ */ jsx("p", { className: "text-sm font-bold text-slate-900 truncate", children: n.title }),
-              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5 leading-relaxed", children: n.message })
+              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5 leading-relaxed whitespace-pre-line", children: n.message })
             ] }),
             /* @__PURE__ */ jsx("button", {
               type: "button",

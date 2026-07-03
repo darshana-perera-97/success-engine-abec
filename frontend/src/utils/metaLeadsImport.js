@@ -145,7 +145,7 @@ export function mapMetaLeadRow(rawRow, { branchLocations = [] } = {}) {
     currentEducationLevel: currentEducationLevel || null,
     intendedProgram: intendedProgram || null,
     message: messageParts.length ? messageParts.join(" · ") : null,
-    source: "meta-leads-import",
+    source: "marketing-team",
     platform: platform || null,
     campaignName: campaignName || null,
     formName: formName || null

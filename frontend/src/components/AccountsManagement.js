@@ -1,6 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, Shield, X } from "lucide-react";
 import {
   createAccount,
@@ -346,15 +347,15 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
         children: loadError
       }) : null,
       /* @__PURE__ */ jsxs("div", {
-        className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
+        className: dt.card,
         children: [
           /* @__PURE__ */ jsx("div", {
-            className: "overflow-x-auto",
+            className: dt.scroll,
             children: /* @__PURE__ */ jsxs("table", {
-              className: "w-full text-sm text-left",
+              className: dt.table,
               children: [
                 /* @__PURE__ */ jsx("thead", {
-                  className: "bg-gray-50/80 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500 font-semibold",
+                  className: dt.head,
                   children: /* @__PURE__ */ jsxs("tr", {
                     children: [
                       /* @__PURE__ */ jsx("th", {
@@ -372,7 +373,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                   })
                 }),
                 /* @__PURE__ */ jsx("tbody", {
-                  className: "divide-y divide-gray-100",
+                  className: dt.body,
                   children: filtered.map((row) =>
                     /* @__PURE__ */ jsxs(
                       "tr",

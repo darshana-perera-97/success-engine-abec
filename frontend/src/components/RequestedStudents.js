@@ -2,12 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardList, Eye, FileUp, Info, RefreshCw, Trash2, UserPlus, X } from "lucide-react";
 import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getCountries, getReqStudents } from "../authApi";
 import { Button } from "./Button";
+import {
+  DataTable,
+  DataTableBody,
+  DataTableHead,
+  DataTableRow,
+  DataTableScroll,
+  DataTableTable,
+  DataTableTd,
+  DataTableTh,
+  dt,
+} from "./DataTable";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { MultiSelect } from "./MultiSelect";
-import { isCounselorEquivalentAccountRole } from "../roles";
+import { isStudentContactStaffAccountRole } from "../roles";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { mapMetaLeadRow, parseMetaLeadsFile } from "../utils/metaLeadsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
+import { formatIntakeLabel } from "../utils/intakeFields";
 
 function formatSubmittedAt(iso) {
   if (!iso) return "—";
@@ -42,11 +54,15 @@ function findBranchByOfficeLoose(branchRecords, office) {
 }
 
 function isCounselorAccount(row) {
-  return isCounselorEquivalentAccountRole(row?.role);
+  return isStudentContactStaffAccountRole(row?.role);
 }
 
 function isManagerOrTeamLeadRole(role) {
   return role === "Manager" || role === "Team Lead";
+}
+
+function canImportMetaLeads(role) {
+  return role === "Admin" || role === "Manager";
 }
 
 const PIPELINE_PRIORITIES = [
@@ -61,13 +77,16 @@ const DETAIL_FIELD_ORDER = [
   ["name", "Name"],
   ["email", "Email"],
   ["phone", "Phone"],
-  ["nearestOffice", "Nearest office"],
+  ["whatsappNumber", "WhatsApp"],
+  ["nearestOffice", "Preferred branch"],
   ["countryToVisit", "Country to visit"],
   ["city", "City"],
   ["livingStatus", "Living status"],
   ["visaRejectionAnyCountry", "Visa rejection (any country)"],
   ["currentEducationLevel", "Current education"],
   ["intendedProgram", "Intended program"],
+  ["intakeMonth", "Intake month"],
+  ["intakeYear", "Intake year"],
   ["message", "Message"],
   ["source", "Source"]
 ];
@@ -417,6 +436,8 @@ export function RequestedStudents({
       visaRejectionAnyCountry: row.visaRejectionAnyCountry,
       currentEducationLevel: row.currentEducationLevel,
       intendedProgram: row.intendedProgram,
+      intakeMonth: row.intakeMonth || null,
+      intakeYear: row.intakeYear || null,
       message: row.message,
       source: row.source,
       platform: row.platform,
@@ -510,7 +531,7 @@ export function RequestedStudents({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 self-start">
-          {userRole === "Admin" ? (
+          {canImportMetaLeads(userRole) ? (
             <>
               <input
                 ref={importInputRef}
@@ -600,11 +621,11 @@ export function RequestedStudents({
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <DataTable>
         {loading ? (
           <InlineLoading label="Loading requests…" className="py-16" />
         ) : displayRows.length === 0 ? (
-          <div className="px-6 py-16 text-center text-sm text-slate-500">
+          <div className={`${dt.emptyWrap} text-sm text-slate-500`}>
             No form submissions yet
             {applyManagerBranchFilter
               ? branchCountriesLimited
@@ -613,36 +634,36 @@ export function RequestedStudents({
               : "."}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-100 bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <DataTableScroll>
+            <DataTableTable>
+              <DataTableHead>
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-3">Name</th>
-                  <th className="whitespace-nowrap px-4 py-3">Country</th>
-                  <th className="whitespace-nowrap px-4 py-3">Phone</th>
-                  <th className="whitespace-nowrap px-4 py-3">Office</th>
-                  <th className="whitespace-nowrap px-4 py-3">Source</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right">Actions</th>
+                  <DataTableTh>Name</DataTableTh>
+                  <DataTableTh>Country</DataTableTh>
+                  <DataTableTh>Phone</DataTableTh>
+                  <DataTableTh>Office</DataTableTh>
+                  <DataTableTh>Source</DataTableTh>
+                  <DataTableTh align="right">Actions</DataTableTh>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-800">
+              </DataTableHead>
+              <DataTableBody>
                 {displayRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/60">
-                    <td className="max-w-[160px] truncate px-4 py-3 font-medium text-slate-900" title={row.name || ""}>
+                  <DataTableRow key={row.id}>
+                    <DataTableTd variant="primary" className="max-w-[160px] truncate" title={row.name || ""}>
                       {row.name || "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600" title={row.countryToVisit || ""}>
+                    </DataTableTd>
+                    <DataTableTd className="whitespace-nowrap" title={row.countryToVisit || ""}>
                       {row.countryToVisit || "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.phone || "—"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{row.nearestOffice || "—"}</td>
-                    <td
-                      className="max-w-[180px] truncate px-4 py-3 text-slate-600"
+                    </DataTableTd>
+                    <DataTableTd className="whitespace-nowrap">{row.phone || "—"}</DataTableTd>
+                    <DataTableTd className="whitespace-nowrap">{row.nearestOffice || "—"}</DataTableTd>
+                    <DataTableTd
+                      className="max-w-[180px] truncate"
                       title={formatRequestedStudentSource(row)}
                     >
                       {formatRequestedStudentSource(row)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                    </DataTableTd>
+                    <DataTableTd variant="actions">
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <Button
                           type="button"
@@ -681,14 +702,14 @@ export function RequestedStudents({
                           </Button>
                         ) : null}
                       </div>
-                    </td>
-                  </tr>
+                    </DataTableTd>
+                  </DataTableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </DataTableBody>
+            </DataTableTable>
+          </DataTableScroll>
         )}
-      </div>
+      </DataTable>
 
       {detailRow ? (
         <div
@@ -716,18 +737,18 @@ export function RequestedStudents({
               </button>
             </div>
             <div className="max-h-[min(70vh,560px)] overflow-auto px-5 py-4">
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 border-b border-slate-100 bg-white text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <table className={dt.table}>
+                <thead className={dt.headSticky}>
                   <tr>
-                    <th className="w-[40%] py-2 pr-4">Field</th>
-                    <th className="py-2">Value</th>
+                    <th className={`${dt.thCompact} w-[40%]`}>Field</th>
+                    <th className={dt.thCompact}>Value</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-800">
+                <tbody className={dt.body}>
                   {buildFullDetailRows(detailRow).map((cell, idx) => (
                     <tr key={`${cell.label}-${idx}`} className="align-top">
-                      <td className="py-2.5 pr-4 text-xs font-medium text-slate-500">{cell.label}</td>
-                      <td className="py-2.5 text-slate-900 break-words whitespace-pre-wrap">{cell.value}</td>
+                      <td className={`${dt.tdCompact} text-xs font-medium text-slate-500`}>{cell.label}</td>
+                      <td className={`${dt.tdCompact} text-slate-900 break-words whitespace-pre-wrap`}>{cell.value}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -787,28 +808,28 @@ export function RequestedStudents({
               {importRows.length === 0 ? (
                 <p className="py-8 text-center text-sm text-slate-500">No leads left in this import.</p>
               ) : (
-                <table className="min-w-full text-left text-sm">
-                  <thead className="sticky top-0 border-b border-slate-100 bg-white text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <table className={dt.tableCompact}>
+                  <thead className={dt.headSticky}>
                     <tr>
-                      <th className="whitespace-nowrap px-3 py-2">Name</th>
-                      <th className="whitespace-nowrap px-3 py-2">Phone</th>
-                      <th className="whitespace-nowrap px-3 py-2">Office</th>
-                      <th className="whitespace-nowrap px-3 py-2">Country</th>
-                      <th className="whitespace-nowrap px-3 py-2">Education</th>
-                      <th className="whitespace-nowrap px-3 py-2">Intake</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">Actions</th>
+                      <th className={dt.thCompact}>Name</th>
+                      <th className={dt.thCompact}>Phone</th>
+                      <th className={dt.thCompact}>Office</th>
+                      <th className={dt.thCompact}>Country</th>
+                      <th className={dt.thCompact}>Education</th>
+                      <th className={dt.thCompact}>Intake</th>
+                      <th className={dt.thCompactRight}>Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-800">
+                  <tbody className={dt.body}>
                     {importRows.map((row) => (
-                      <tr key={row.importKey} className="align-top hover:bg-slate-50/60">
-                        <td className="px-3 py-2.5 font-medium text-slate-900">{row.name || "—"}</td>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-600">{row.phone || "—"}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.nearestOffice || "—"}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.countryToVisit || "—"}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.currentEducationLevel || "—"}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.intendedProgram || "—"}</td>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                      <tr key={row.importKey} className={`align-top ${dt.row}`}>
+                        <td className={`${dt.tdCompact} font-medium text-slate-900`}>{row.name || "—"}</td>
+                        <td className={`${dt.tdCompact} whitespace-nowrap`}>{row.phone || "—"}</td>
+                        <td className={dt.tdCompact}>{row.nearestOffice || "—"}</td>
+                        <td className={dt.tdCompact}>{row.countryToVisit || "—"}</td>
+                        <td className={dt.tdCompact}>{row.currentEducationLevel || "—"}</td>
+                        <td className={dt.tdCompact}>{formatIntakeLabel(row.intakeMonth, row.intakeYear) || "—"}</td>
+                        <td className={dt.tdActions}>
                           <Button
                             type="button"
                             variant="ghost"

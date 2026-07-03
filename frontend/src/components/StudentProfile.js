@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   ChevronRight,
   MapPin,
+  Globe,
   DollarSign,
   Mail,
   Phone,
@@ -28,7 +29,8 @@ import {
   GraduationCap,
   Search,
   Loader2,
-  Plus
+  Plus,
+  KeyRound
 } from "lucide-react";
 import { DocumentManager } from "./DocumentManager";
 import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
@@ -71,9 +73,15 @@ import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
-import { getInvoicesByStudentId, getUniversityPrograms } from "../authApi";
+import { getInvoicesByStudentId, getUniversityPrograms, getCountries, createCountryChangeRequest, getCountryChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, sendStudentLoginDetails } from "../authApi";
+import { IntakeFields } from "./IntakeFields";
+import { formatStudentIntake, intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
+import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
+import { EditStudentDetailsRequestModal } from "./EditStudentDetailsRequestModal";
+import { RemoveStudentRequestModal } from "./RemoveStudentRequestModal";
 import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch, buildCounselorTransferHistory, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import {
+  canActAsPrimaryCounselorPortalRole,
   isCounselorEquivalentAccountRole,
   isCounselorEquivalentPortalRole,
   isStudentContactStaffAccountRole,
@@ -230,6 +238,12 @@ const KeyDetails = ({
   onEditContact,
   canSetBudget = false,
   onSetBudget,
+  canRequestCountryChange = false,
+  onRequestCountryChange,
+  countryChangePending = false,
+  canRequestIntakeChange = false,
+  onRequestIntakeChange,
+  intakeChangePending = false,
   canManageCourses = false,
   onAddCourses,
   onRemoveCourse
@@ -237,6 +251,18 @@ const KeyDetails = ({
   const budgetUnset = !hasStudentAnnualBudget(student);
   const details = [
     { icon: MapPin, label: "Branch", value: student.branch || "—" },
+    {
+      icon: Globe,
+      label: "Country",
+      value: student.country || "—",
+      isCountry: true
+    },
+    {
+      icon: Calendar,
+      label: "Intake",
+      value: formatStudentIntake(student),
+      isIntake: true
+    },
     { icon: Mail, label: "Email", value: student.email || "—" },
     { icon: Phone, label: "Contact", value: student.phone || "—" },
     {
@@ -256,6 +282,8 @@ const KeyDetails = ({
     ] }),
     /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => {
       const isAnnualBudget = item.label === "Annual budget";
+      const isCountry = item.isCountry === true;
+      const isIntake = item.isIntake === true;
       return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
         /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
         /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
@@ -265,6 +293,20 @@ const KeyDetails = ({
             canSetBudget && budgetUnset && onSetBudget && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onSetBudget, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Set Annual budget"
+            ] })
+          ] }) : isCountry ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+            countryChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
+            canRequestCountryChange && onRequestCountryChange && !countryChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestCountryChange, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              "Change country"
+            ] })
+          ] }) : isIntake ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+            intakeChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
+            canRequestIntakeChange && onRequestIntakeChange && !intakeChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestIntakeChange, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              "Change intake"
             ] })
           ] }) : /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value })
         ] })
@@ -303,7 +345,7 @@ const StudentTasksPanel = ({
   const highlightKey = highlightTaskId != null ? String(highlightTaskId).trim() : "";
   const profileKey = resolveProfileStudentKey(student);
   const showTaskScopeToggle =
-    isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator";
+    canActAsPrimaryCounselorPortalRole(userRole) || userRole === "Country Coordinator";
   const studentTasksForStudent = useMemo(() => {
     return (tasks || []).filter((task) => {
       const tid = resolveTaskStudentKey(task);
@@ -773,6 +815,63 @@ const MeetingNotes = ({ student, onUpdateStudent, currentUser, authenticatedUser
     ] }) })
   ] });
 };
+const ScheduledCallReasons = ({ student }) => {
+  const entries = Array.isArray(student?.scheduledCallReasons) ? student.scheduledCallReasons : [];
+  const [dialog, setDialog] = useState(null);
+  const formatWhen = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+  };
+  const preview = (text) => {
+    const t = String(text || "").trim();
+    if (!t) return "No reason provided";
+    if (t.length <= 90) return t;
+    return `${t.slice(0, 87)}...`;
+  };
+  return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
+    /* @__PURE__ */ jsxs("h3", { className: "text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2", children: [
+      /* @__PURE__ */ jsx(Phone, { size: 16, className: "text-indigo-600" }),
+      " Scheduled Call Reasons"
+    ] }),
+    /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 mb-3", children: "Reasons recorded when scheduling deferred inquiry calls. Also shown in Student History." }),
+    /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1", children: [
+      entries.length === 0 && /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 italic", children: "No scheduled call reasons yet." }),
+      entries.map((entry) => /* @__PURE__ */ jsxs("button", {
+        type: "button",
+        className: "w-full text-left bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs transition hover:bg-white hover:border-slate-200",
+        onClick: () => setDialog({ entry }),
+        children: [
+          /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+            entry.scheduledAt && /* @__PURE__ */ jsx("p", { className: "text-[10px] font-semibold text-indigo-600 mb-0.5", children: formatInquiryScheduledCallLabel(entry.scheduledAt) }),
+            /* @__PURE__ */ jsx("p", { className: "text-slate-700 line-clamp-3", children: preview(entry.reason) }),
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-x-2 mt-1 text-[10px] text-slate-400", children: [
+              /* @__PURE__ */ jsx("span", { children: entry.author || "Staff" }),
+              /* @__PURE__ */ jsx("span", { children: formatWhen(entry.createdAt) })
+            ] })
+          ] })
+        ]
+      }, entry.id))
+    ] }),
+    dialog && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[140] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setDialog(null), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col", onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+        /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Scheduled call reason" }),
+        /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: () => setDialog(null), children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "p-4 overflow-y-auto flex-1", children: [
+        dialog.entry.scheduledAt && /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-indigo-600 mb-2", children: ["Call scheduled: ", formatInquiryScheduledCallLabel(dialog.entry.scheduledAt)] }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-800 whitespace-pre-wrap break-words", children: String(dialog.entry.reason || "").trim() || "No reason provided." }),
+        /* @__PURE__ */ jsxs("div", { className: "mt-4 text-[11px] text-slate-500 space-y-1", children: [
+          /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Author: " }), dialog.entry.author || "—"] }),
+          /* @__PURE__ */ jsxs("p", { children: [/* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-600", children: "Recorded: " }), formatWhen(dialog.entry.createdAt)] })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+        /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => setDialog(null), children: "Close" })
+      ] })
+    ] }) })
+  ] });
+};
 const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => {
   const genericLabels = new Set([
     "Counselor",
@@ -804,7 +903,7 @@ const StudentHistory = ({ activities, student, assignedCounselorName = "" }) => 
       /* @__PURE__ */ jsx("div", { className: "mt-0.5 w-5 h-5 rounded-full border-2 border-indigo-200 flex items-center justify-center bg-indigo-50", children: /* @__PURE__ */ jsx("div", { className: "w-2.5 h-2.5 rounded-full bg-indigo-400" }) }),
       /* @__PURE__ */ jsxs("div", { className: "flex-1 min-w-0", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start", children: [
-          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 truncate capitalize", children: activity.action === "rejected document" ? "Remove doc" : activity.action === "verified document" ? "Verify doc" : activity.action === "removed rejected document" ? "Delete rejected doc" : activity.action === "removed approved document" ? "Delete approved doc" : activity.action === "added specialized note" ? "Notes" : activity.action }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700 truncate capitalize", children: activity.action === "rejected document" ? "Remove doc" : activity.action === "verified document" ? "Verify doc" : activity.action === "removed rejected document" ? "Delete rejected doc" : activity.action === "removed approved document" ? "Delete approved doc" : activity.action === "added specialized note" ? "Notes" : activity.action === "scheduled inquiry call" ? "Scheduled call" : activity.action }),
           /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 whitespace-nowrap ml-2", children: activity.timestamp })
         ] }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1 truncate", children: activity.target }),
@@ -843,6 +942,7 @@ const StudentProfile = ({
   activities = [],
   paymentAccounts = [],
   counselorCanAcceptPayments = false,
+  goldLoansAcceptable = true,
   onUpdateInvoice,
   onCreateInvoice,
   onUploadStudentDocument,
@@ -882,6 +982,38 @@ const StudentProfile = ({
     budget: "",
     budgetCurrency: "LKR"
   });
+  const [countryDialog, setCountryDialog] = useState({
+    open: false,
+    country: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [countryOptions, setCountryOptions] = useState([]);
+  const [countryChangePending, setCountryChangePending] = useState(false);
+  const [intakeDialog, setIntakeDialog] = useState({
+    open: false,
+    intakeMonth: "",
+    intakeYear: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [intakeChangePending, setIntakeChangePending] = useState(false);
+  const [detailChangeDialog, setDetailChangeDialog] = useState({
+    open: false,
+    saving: false,
+    error: ""
+  });
+  const [detailChangePending, setDetailChangePending] = useState(false);
+  const [removalDialog, setRemovalDialog] = useState({
+    open: false,
+    stage: 1,
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [removalPending, setRemovalPending] = useState(false);
   const [coursesDialog, setCoursesDialog] = useState({
     open: false,
     search: "",
@@ -894,6 +1026,7 @@ const StudentProfile = ({
     manualError: ""
   });
   const [slaResolveBusy, setSlaResolveBusy] = useState(false);
+  const [sendingLoginDetails, setSendingLoginDetails] = useState(false);
   const [removingCounselorId, setRemovingCounselorId] = useState("");
   const [addingSecondaryCounselorId, setAddingSecondaryCounselorId] = useState("");
   useEffect(() => {
@@ -1004,7 +1137,9 @@ const StudentProfile = ({
       setActiveTab("pipeline");
     }
   }, [visaPilotUnlocked, activeTab]);
+  const [openInvoiceCreatePending, setOpenInvoiceCreatePending] = useState(false);
   useEffect(() => {
+    setOpenInvoiceCreatePending(false);
     const raw = String(searchParams.get("tab") || "").trim().toLowerCase();
     const allowed = new Set(["pipeline", "resume", "show-money", "ledger"]);
     if (raw === "visa-pilot" && visaPilotUnlocked) {
@@ -1016,16 +1151,40 @@ const StudentProfile = ({
       return;
     }
     setActiveTab(visaPilotUnlocked ? "visa-pilot" : "pipeline");
-  }, [searchParams, student?.id, visaPilotUnlocked]);
-  const [openInvoiceCreatePending, setOpenInvoiceCreatePending] = useState(false);
-  useEffect(() => {
-    setOpenInvoiceCreatePending(false);
   }, [student?.id]);
+  useEffect(() => {
+    const raw = String(searchParams.get("tab") || "").trim().toLowerCase();
+    const allowed = new Set(["pipeline", "resume", "show-money", "ledger"]);
+    if (raw === "visa-pilot" && visaPilotUnlocked) {
+      setActiveTab("visa-pilot");
+      return;
+    }
+    if (allowed.has(raw)) {
+      setActiveTab(raw);
+      return;
+    }
+    if (raw === "visa-pilot" && !visaPilotUnlocked) {
+      setActiveTab("pipeline");
+    }
+  }, [searchParams, visaPilotUnlocked]);
+  const handleProfileTabChange = useCallback((tabName) => {
+    setActiveTab(tabName);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("tab", tabName);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+  const handleOpenCreateInvoiceConsumed = useCallback(() => {
+    setOpenInvoiceCreatePending(false);
+  }, []);
   useEffect(() => {
     if (searchParams.get("createInvoice") !== "1") return;
     setOpenInvoiceCreatePending(true);
+    setActiveTab("ledger");
     const next = new URLSearchParams(searchParams);
     next.delete("createInvoice");
+    next.set("tab", "ledger");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
   const [studentInvoices, setStudentInvoices] = useState([]);
@@ -1230,6 +1389,12 @@ const StudentProfile = ({
   };
   const canManagerEditContact = userRole === "Manager";
   const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
+  const canRequestCountryChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestIntakeChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestStudentDetailChange = userRole !== "Student" && userRole !== "Accountant";
+  const profileIntakeOptions = useIntakeOptionsForCountry(localStudent?.country);
+  const canRequestStudentRemoval = userRole !== "Student" && userRole !== "Accountant";
+  const canSendLoginDetails = userRole !== "Student" && userRole !== "Accountant";
   const canManagePreferredCourses = userRole !== "Student" && userRole !== "Accountant";
   const preferredCourses = useMemo(
     () => normalizePreferredCourses(localStudent?.preferredCourses),
@@ -1238,7 +1403,7 @@ const StudentProfile = ({
   const showCounselorsRosterSection =
     ["Admin", "Manager", "Team Lead", "Country Coordinator"].includes(userRole) ||
     isCounselorEquivalentPortalRole(userRole);
-  const canManageStudentCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Country Coordinator";
+  const canManageStudentCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Country Coordinator";
   const handleUpdateStudentLocal = (updated) => {
     if (updated.country !== localStudent.country) {
       const archivedVisa = {
@@ -1314,6 +1479,370 @@ const StudentProfile = ({
   };
   const closeBudgetDialog = () => {
     setBudgetDialog((prev) => ({ ...prev, open: false }));
+  };
+  const refreshCountryChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setCountryChangePending(false);
+      return;
+    }
+    const result = await getCountryChangeRequests({ studentId, pendingOnly: true });
+    setCountryChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
+  const refreshDetailChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setDetailChangePending(false);
+      return;
+    }
+    const result = await getStudentDetailChangeRequests({ studentId, pendingOnly: true });
+    setDetailChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
+  const refreshRemovalPending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setRemovalPending(false);
+      return;
+    }
+    const result = await getStudentRemovalRequests({ studentId, pendingOnly: true });
+    setRemovalPending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
+  const refreshIntakeChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setIntakeChangePending(false);
+      return;
+    }
+    const result = await getIntakeChangeRequests({ studentId, pendingOnly: true });
+    setIntakeChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
+  useEffect(() => {
+    refreshCountryChangePending();
+    refreshIntakeChangePending();
+    refreshDetailChangePending();
+    refreshRemovalPending();
+  }, [refreshCountryChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending]);
+  const openCountryDialog = async () => {
+    if (!canRequestCountryChange || countryChangePending) return;
+    const branch = String(localStudent.branch || currentUser?.branch || "").trim();
+    const countriesRes = await getCountries(branch || undefined);
+    const options = countriesRes.ok && Array.isArray(countriesRes.data) ? countriesRes.data : [];
+    const currentCountry = String(localStudent.country || "").trim().toLowerCase();
+    const filtered = options.filter((c) => String(c || "").trim().toLowerCase() !== currentCountry);
+    setCountryOptions(filtered);
+    setCountryDialog({
+      open: true,
+      country: filtered[0] || "",
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeCountryDialog = () => {
+    setCountryDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitCountryChange = async () => {
+    if (!canRequestCountryChange || countryChangePending) return;
+    const requestedCountry = String(countryDialog.country || "").trim();
+    const reason = String(countryDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!requestedCountry) {
+      setCountryDialog((prev) => ({ ...prev, error: "Select a country." }));
+      return;
+    }
+    if (!reason) {
+      setCountryDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setCountryDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setCountryDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createCountryChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedCountry,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setCountryDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested country change",
+      target: `${localStudent.name} (${localStudent.country || "—"} → ${requestedCountry})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      `Country change to ${requestedCountry} is pending approval.`,
+      "success"
+    );
+    setCountryChangePending(true);
+    closeCountryDialog();
+  };
+  const openIntakeDialog = () => {
+    if (!canRequestIntakeChange || intakeChangePending) return;
+    const currentIntake = intakeFieldsFromStudent(localStudent);
+    setIntakeDialog({
+      open: true,
+      intakeMonth: currentIntake.intakeMonth,
+      intakeYear: currentIntake.intakeYear,
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeIntakeDialog = () => {
+    setIntakeDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitIntakeChange = async () => {
+    if (!canRequestIntakeChange || intakeChangePending) return;
+    const reason = String(intakeDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    const intakeValidation = validateIntakeFields(intakeDialog.intakeMonth, intakeDialog.intakeYear, { required: true });
+    if (!intakeValidation.ok) {
+      setIntakeDialog((prev) => ({ ...prev, error: intakeValidation.error }));
+      return;
+    }
+    if (!reason) {
+      setIntakeDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setIntakeDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setIntakeDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createIntakeChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedIntakeMonth: intakeValidation.intakeMonth,
+      requestedIntakeYear: intakeValidation.intakeYear,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setIntakeDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    const requestedLabel = `${intakeValidation.intakeMonth} ${intakeValidation.intakeYear}`;
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested intake change",
+      target: `${localStudent.name} (${formatStudentIntake(localStudent)} → ${requestedLabel})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      `Intake change to ${requestedLabel} is pending approval.`,
+      "success"
+    );
+    setIntakeChangePending(true);
+    closeIntakeDialog();
+  };
+  const openDetailChangeDialog = () => {
+    if (!canRequestStudentDetailChange || detailChangePending) return;
+    setDetailChangeDialog({ open: true, saving: false, error: "" });
+  };
+  const closeDetailChangeDialog = () => {
+    setDetailChangeDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitDetailChange = async (payload) => {
+    if (!canRequestStudentDetailChange || detailChangePending) return;
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!requesterId) {
+      setDetailChangeDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setDetailChangeDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createStudentDetailChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      ...payload,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setDetailChangeDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested student detail change",
+      target: localStudent.name,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      "Student detail changes are pending approval.",
+      "success"
+    );
+    setDetailChangePending(true);
+    closeDetailChangeDialog();
+  };
+  const openRemovalDialog = () => {
+    if (!canRequestStudentRemoval || removalPending) return;
+    setRemovalDialog({
+      open: true,
+      stage: 1,
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeRemovalDialog = () => {
+    setRemovalDialog({
+      open: false,
+      stage: 1,
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const handleSendLoginDetails = async () => {
+    if (!canSendLoginDetails || sendingLoginDetails || !localStudent?.id) return;
+    setSendingLoginDetails(true);
+    try {
+      const result = await sendStudentLoginDetails(localStudent.id, { actorRole: userRole });
+      if (!result.ok) {
+        onNotify?.("Send failed", result.error || "Could not send login details.", "error");
+        return;
+      }
+      const delivery = result.delivery || result.data?.delivery || {};
+      const email = delivery.email || {};
+      const whatsapp = delivery.whatsapp || {};
+      const emailSent = email.status === "sent";
+      const whatsappSent = whatsapp.status === "sent";
+      const formatChannelLine = (label, channel) => {
+        if (channel.status === "sent") return `${label}: sent`;
+        const reason = String(channel.reason || "").trim();
+        if (channel.status === "skipped") {
+          return reason ? `${label}: skipped — ${reason}` : `${label}: skipped`;
+        }
+        return reason ? `${label}: failed — ${reason}` : `${label}: failed`;
+      };
+      const detailLines = [formatChannelLine("Email", email), formatChannelLine("WhatsApp", whatsapp)];
+      if (emailSent && whatsappSent) {
+        onNotify?.(
+          "Login details sent",
+          "Portal login URL, email, and password were sent to the student via email and WhatsApp.",
+          "success"
+        );
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "sent portal login details",
+          target: localStudent.name,
+          type: "system",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
+      } else if (emailSent || whatsappSent) {
+        onNotify?.("Login details partially sent", detailLines.join("\n"), "warning");
+        onAddActivity?.({
+          user: userRole,
+          role: userRole,
+          action: "sent portal login details",
+          target: localStudent.name,
+          type: "system",
+          studentName: localStudent.name,
+          studentId: localStudent.id
+        });
+      } else {
+        onNotify?.("Login details not sent", detailLines.join("\n"), "error");
+      }
+    } finally {
+      setSendingLoginDetails(false);
+    }
+  };
+  const handleSubmitRemovalRequest = async () => {
+    if (!canRequestStudentRemoval || removalPending) return;
+    const reason = String(removalDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!reason) {
+      setRemovalDialog((prev) => ({ ...prev, error: "Enter a reason for removal." }));
+      return;
+    }
+    if (!requesterId) {
+      setRemovalDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setRemovalDialog((prev) => ({ ...prev, saving: true, error: "" }));
+
+    try {
+      const exportResult = await exportStudentDocumentsZip(localStudent, countryDocConfig);
+      if (!exportResult.ok) {
+        onNotify?.("Export failed", exportResult.error || "Could not export documents before removal request.", "warning");
+      } else {
+        const skipped = exportResult.skippedCount ? ` (${exportResult.skippedCount} skipped)` : "";
+        onNotify?.(
+          exportResult.partial ? "Export partial" : "Export ready",
+          `Downloaded student files before submitting removal request${skipped}.`,
+          exportResult.partial ? "warning" : "success"
+        );
+      }
+    } catch {
+      onNotify?.("Export failed", "Could not export documents before removal request.", "warning");
+    }
+
+    const result = await createStudentRemovalRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setRemovalDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit removal request." }));
+      return;
+    }
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested student removal",
+      target: localStudent.name,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Removal requested",
+      "Student removal is pending approval from Admin, Manager, or Team Lead.",
+      "success"
+    );
+    setRemovalPending(true);
+    closeRemovalDialog();
   };
   const handleSaveAnnualBudget = () => {
     if (!canSetAnnualBudget || hasStudentAnnualBudget(localStudent)) return;
@@ -1844,7 +2373,7 @@ const StudentProfile = ({
           /* @__PURE__ */ jsx(DocumentManager, { student: localStudent, userRole, countryDocConfig, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument, tasks, onUpdateTasks, onUploadDocument: onUploadStudentDocument, onUploadProfileOtherDocument: onUploadStudentProfileOtherDocument, onUploadUniversityOfferLetters: onUploadStudentUniversityOfferLetters })
         ] });
       case "show-money":
-        return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal });
+        return /* @__PURE__ */ jsx(FinancialCalculator, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, goldLoansAcceptable });
       case "visa-pilot":
         return /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsx(VisaPilot, { student: localStudent, userRole, countryDocConfig, onUpdateStudent: handleUpdateStudentLocal, onUploadDocument: onUploadStudentDocument, onUpdateDocument: handlePipelineDocumentUpdate, onDeleteDocument: handleDeleteStudentDocument }),
@@ -1856,10 +2385,13 @@ const StudentProfile = ({
           paymentAccounts,
           counselorCanAcceptPayments,
           userRole,
+          currentUser,
+          authenticatedUser,
           onUpdateInvoice,
           onCreateInvoice,
           onNotify,
-          openCreateInvoice: openInvoiceCreatePending
+          openCreateInvoice: openInvoiceCreatePending,
+          onOpenCreateInvoiceConsumed: handleOpenCreateInvoiceConsumed
         });
       case "resume":
         return /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-slate-100 bg-slate-50/50 -mx-1 px-1 py-3 sm:mx-0 sm:px-0", children: /* @__PURE__ */ jsx(AIResumeBuilder, {
@@ -1906,25 +2438,63 @@ const StudentProfile = ({
                 : null
             ] })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 self-end md:self-auto", children: [
-            /* @__PURE__ */ jsxs(Button, {
-              variant: "outline",
-              onClick: handleExportDocuments,
-              size: "sm",
-              disabled: exportingDocuments,
-              title: "Download all student files (pipeline & visa docs by stage/group, profile other, offer letters, CV) plus CSV and JSON",
-              children: [
-                /* @__PURE__ */ jsx(Archive, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
-                exportingDocuments ? " Exporting…" : " Export"
-              ]
-            }),
-            /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages"), size: "sm", children: [
-              /* @__PURE__ */ jsx(MessageSquare, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
-              " Message"
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-2 self-end md:self-auto items-end", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 flex-wrap justify-end", children: [
+              canRequestStudentDetailChange && /* @__PURE__ */ jsxs(Button, {
+                variant: "outline",
+                onClick: openDetailChangeDialog,
+                size: "sm",
+                disabled: detailChangePending,
+                title: detailChangePending ? "A student detail change is pending approval" : "Request changes to name, contact details, or education level",
+                children: [
+                  /* @__PURE__ */ jsx(Pencil, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                  detailChangePending ? " Edit pending" : " Edit details"
+                ]
+              }),
+              /* @__PURE__ */ jsxs(Button, {
+                variant: "outline",
+                onClick: handleExportDocuments,
+                size: "sm",
+                disabled: exportingDocuments,
+                title: "Download all student files (pipeline & visa docs by stage/group, profile other, offer letters, CV) plus CSV and JSON",
+                children: [
+                  /* @__PURE__ */ jsx(Archive, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                  exportingDocuments ? " Exporting…" : " Export"
+                ]
+              }),
+              canSendLoginDetails && /* @__PURE__ */ jsxs(Button, {
+                variant: "outline",
+                onClick: handleSendLoginDetails,
+                size: "sm",
+                disabled: sendingLoginDetails,
+                title: "Send portal login URL, email, and current password via email and WhatsApp",
+                children: [
+                  /* @__PURE__ */ jsx(KeyRound, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                  sendingLoginDetails ? " Sending…" : " Send Login Details"
+                ]
+              })
             ] }),
-            /* @__PURE__ */ jsxs(Button, { onClick: () => onOpenCreateTaskModal(localStudent), size: "sm", children: [
-              /* @__PURE__ */ jsx(PlusCircle, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
-              " Task"
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 flex-wrap justify-end", children: [
+              canRequestStudentRemoval && /* @__PURE__ */ jsxs(Button, {
+                variant: "outline",
+                onClick: openRemovalDialog,
+                size: "sm",
+                disabled: removalPending || removalDialog.saving,
+                className: "text-rose-700 border-rose-200 hover:bg-rose-50",
+                title: removalPending ? "A student removal request is pending approval" : "Request removal of this student (exports files and sends for approval)",
+                children: [
+                  /* @__PURE__ */ jsx(Trash2, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                  removalPending ? " Remove pending" : " Remove"
+                ]
+              }),
+              /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages"), size: "sm", children: [
+                /* @__PURE__ */ jsx(MessageSquare, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                " Message"
+              ] }),
+              /* @__PURE__ */ jsxs(Button, { onClick: () => onOpenCreateTaskModal(localStudent), size: "sm", children: [
+                /* @__PURE__ */ jsx(PlusCircle, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
+                " Task"
+              ] })
             ] })
           ] })
         ] }),
@@ -2100,11 +2670,11 @@ const StudentProfile = ({
         /* @__PURE__ */ jsxs("div", { className: "flex-1 grid grid-cols-12 gap-6 min-h-0 min-w-0", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-12 lg:col-span-8 flex flex-col min-w-0", children: [
             /* @__PURE__ */ jsx("div", { className: "border-b border-gray-200 bg-white/50 rounded-t-xl overflow-hidden", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap", children: [
-              /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Pipeline", activeTab, tabName: "pipeline", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: setActiveTab }),
-              visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: setActiveTab }),
-              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger & Payments", activeTab, tabName: "ledger", onClick: setActiveTab })
+              /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Pipeline", activeTab, tabName: "pipeline", onClick: handleProfileTabChange }),
+              /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: handleProfileTabChange }),
+              /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: handleProfileTabChange }),
+              visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: handleProfileTabChange }),
+              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger & Payments", activeTab, tabName: "ledger", onClick: handleProfileTabChange })
             ] }) }),
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 min-w-0 overflow-y-auto overflow-x-hidden", children: renderContent() })
           ] }),
@@ -2119,7 +2689,7 @@ const StudentProfile = ({
               currentUser,
               counselorIdentitySet
             }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
               student: localStudent,
@@ -2133,7 +2703,8 @@ const StudentProfile = ({
               addingSecondaryCounselorId
             }),
             /* @__PURE__ */ jsx(StudentHistory, { activities, student: localStudent, assignedCounselorName }),
-            /* @__PURE__ */ jsx(MeetingNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole })
+            /* @__PURE__ */ jsx(MeetingNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
+            /* @__PURE__ */ jsx(ScheduledCallReasons, { student: localStudent })
           ] })
         ] }),
         contactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
@@ -2250,6 +2821,88 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveAnnualBudget, disabled: !String(budgetDialog.budget || "").trim() || !(Number(String(budgetDialog.budget || "").replace(/[^\d.]/g, "")) > 0), children: "Save budget" })
           ] })
         ] }) }),
+        countryDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCountryDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request country change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeCountryDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current country: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: localStudent.country || "—" })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "New country" }),
+              /* @__PURE__ */ jsxs("select", { value: countryDialog.country, onChange: (e) => setCountryDialog((prev) => ({ ...prev, country: e.target.value, error: "" })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", disabled: countryOptions.length === 0, children: [
+                countryOptions.length === 0 ? /* @__PURE__ */ jsx("option", { value: "", children: "No countries configured" }) : null,
+                countryOptions.map((country) => /* @__PURE__ */ jsx("option", { value: country, children: country }, country))
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: countryDialog.reason, onChange: (e) => setCountryDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's destination country should change…" })
+            ] }),
+            countryDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: countryDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The country updates after a Manager, Team Lead, or Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeCountryDialog, disabled: countryDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitCountryChange, disabled: countryDialog.saving || !String(countryDialog.country || "").trim() || !String(countryDialog.reason || "").trim(), children: countryDialog.saving ? "Submitting…" : "Submit request" })
+          ] })
+        ] }) }),
+        intakeDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeIntakeDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request intake change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeIntakeDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current intake: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatStudentIntake(localStudent) })
+            ] }),
+            /* @__PURE__ */ jsx(IntakeFields, {
+              intakeMonth: intakeDialog.intakeMonth,
+              intakeYear: intakeDialog.intakeYear,
+              onIntakeMonthChange: (value) => setIntakeDialog((prev) => ({ ...prev, intakeMonth: value, error: "" })),
+              onIntakeYearChange: (value) => setIntakeDialog((prev) => ({ ...prev, intakeYear: value, error: "" })),
+              required: true,
+              fieldClassName: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white",
+              monthOptions: profileIntakeOptions.months,
+              yearOptions: profileIntakeOptions.years
+            }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: intakeDialog.reason, onChange: (e) => setIntakeDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's intake should change…" })
+            ] }),
+            intakeDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: intakeDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The intake updates after a Manager, Team Lead, or Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeIntakeDialog, disabled: intakeDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitIntakeChange, disabled: intakeDialog.saving || !String(intakeDialog.reason || "").trim(), children: intakeDialog.saving ? "Submitting…" : "Submit request" })
+          ] })
+        ] }) }),
+        /* @__PURE__ */ jsx(EditStudentDetailsRequestModal, {
+          student: localStudent,
+          open: detailChangeDialog.open,
+          onClose: closeDetailChangeDialog,
+          onSubmit: handleSubmitDetailChange,
+          saving: detailChangeDialog.saving,
+          error: detailChangeDialog.error
+        }),
+        /* @__PURE__ */ jsx(RemoveStudentRequestModal, {
+          student: localStudent,
+          open: removalDialog.open,
+          stage: removalDialog.stage,
+          reason: removalDialog.reason,
+          saving: removalDialog.saving,
+          error: removalDialog.error,
+          onClose: closeRemovalDialog,
+          onContinue: () => setRemovalDialog((prev) => ({ ...prev, stage: 2, error: "" })),
+          onBack: () => setRemovalDialog((prev) => ({ ...prev, stage: 1, error: "" })),
+          onReasonChange: (value) => setRemovalDialog((prev) => ({ ...prev, reason: value, error: "" })),
+          onSubmit: handleSubmitRemovalRequest
+        }),
         advanceDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[160] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm", onClick: () => setAdvanceDialog((prev) => ({ ...prev, open: false })), children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col my-auto", onClick: (e) => e.stopPropagation(), children: [
           /* @__PURE__ */ jsxs("div", { className: "px-5 py-4 border-b border-gray-100 bg-slate-50/80 flex items-center justify-between shrink-0", children: [
             /* @__PURE__ */ jsx("h3", { className: "text-sm font-bold text-slate-900", children: "Move to next stage" }),
@@ -2321,7 +2974,9 @@ const StudentProfile = ({
           onDismissAssignmentAlert,
           onStudentMovedToRequests,
           onSelectStudent,
-          onCompleteStudentIntakeTask
+          onCompleteStudentIntakeTask,
+          onAddActivity,
+          userRole
         })
       ]
     }

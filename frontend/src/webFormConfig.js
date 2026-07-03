@@ -35,7 +35,7 @@ export const WEB_FORM_FIELD_CATALOG = [
   },
   {
     key: "nearestOffice",
-    defaultLabel: "Nearest office",
+    defaultLabel: "Preferred branch",
     defaultPlaceholder: "",
     type: "office",
     defaultRequired: true,
@@ -78,6 +78,14 @@ export const WEB_FORM_FIELD_CATALOG = [
     defaultLabel: "Intended program of study",
     defaultPlaceholder: "e.g. BSc Computer Science, MBA, A-levels",
     type: "text",
+    defaultRequired: false,
+    defaultWidth: "full",
+  },
+  {
+    key: "intake",
+    defaultLabel: "Target intake",
+    defaultPlaceholder: "",
+    type: "intake",
     defaultRequired: false,
     defaultWidth: "full",
   },

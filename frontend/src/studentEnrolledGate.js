@@ -172,7 +172,12 @@ export function getMissingVisaPilotUploadLabels(student, countryConfig) {
 export function getUnpaidInvoicesForStudent(studentId, invoices) {
   const sid = String(studentId || "").trim();
   if (!sid) return [];
-  return (invoices || []).filter((inv) => String(inv.studentId || "") === sid && String(inv.status || "") !== "Paid");
+  const settledStatuses = new Set(["Paid", "Waived", "Wave-off Rejected"]);
+  return (invoices || []).filter((inv) => {
+    if (String(inv.studentId || "") !== sid) return false;
+    const status = String(inv.status || "").trim();
+    return !settledStatuses.has(status);
+  });
 }
 
 /**

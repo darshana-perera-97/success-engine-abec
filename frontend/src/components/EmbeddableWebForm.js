@@ -3,6 +3,9 @@ import { API_BASE } from "../apiConfig";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { EDUCATION_LEVELS, LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
+import { IntakeFields } from "./IntakeFields";
+import { validateIntakeFields } from "../utils/intakeFields";
+import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { Button } from "./Button";
 import { normalizeWebFormAppearance, normalizeWebFormFields } from "../webFormConfig";
 
@@ -29,6 +32,8 @@ function emptyFormValues() {
     visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
+    intakeMonth: "",
+    intakeYear: "",
     message: "",
   };
 }
@@ -66,6 +71,8 @@ export function EmbeddableWebForm({
   }, [formConfig]);
 
   const { appearance, fields } = normalized;
+  const [form, setForm] = useState(emptyFormValues);
+  const intakeOptions = useIntakeOptionsForCountry(form.countryToVisit);
   const [branchRecords, setBranchRecords] = useState([]);
   const [globalCountries, setGlobalCountries] = useState([]);
   const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
@@ -76,7 +83,6 @@ export function EmbeddableWebForm({
   const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [form, setForm] = useState(emptyFormValues);
 
   useEffect(() => {
     if (isPreview) return undefined;
@@ -147,6 +153,11 @@ export function EmbeddableWebForm({
     e.preventDefault();
     if (isPreview) return;
     setFormError("");
+    const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: false });
+    if (!intakeValidation.ok) {
+      setFormError(intakeValidation.error);
+      return;
+    }
     setIsSaving(true);
     const payload = {
       name: form.name.trim(),
@@ -159,6 +170,8 @@ export function EmbeddableWebForm({
       visaRejectionAnyCountry: form.visaRejectionAnyCountry.trim(),
       currentEducationLevel: form.currentEducationLevel,
       intendedProgram: form.intendedProgram.trim(),
+      intakeMonth: intakeValidation.intakeMonth,
+      intakeYear: intakeValidation.intakeYear,
       message: form.message.trim(),
     };
     if (formId) payload.webFormId = formId;
@@ -311,6 +324,28 @@ export function EmbeddableWebForm({
               </option>
             ))}
           </select>
+        </div>
+      );
+    }
+
+    if (field.type === "intake" || field.key === "intake") {
+      return (
+        <div key={field.key} className={fieldWidthClass(field.width)}>
+          <p className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={labelStyle}>
+            {field.label}
+            {required ? <span className="text-rose-500"> *</span> : null}
+          </p>
+          <IntakeFields
+            intakeMonth={form.intakeMonth}
+            intakeYear={form.intakeYear}
+            onIntakeMonthChange={(value) => update("intakeMonth", value)}
+            onIntakeYearChange={(value) => update("intakeYear", value)}
+            required={required}
+            fieldClassName={`${commonClass} border`}
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+            monthOptions={intakeOptions.months}
+            yearOptions={intakeOptions.years}
+          />
         </div>
       );
     }

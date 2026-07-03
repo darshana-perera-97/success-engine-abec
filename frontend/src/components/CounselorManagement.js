@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
+import { dt } from "./DataTable";
 import { normalizePipelineStatus, PIPELINE_STEPS, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { buildPipelineHealthRows } from "../docMappingConfig";
@@ -669,17 +670,17 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         /* @__PURE__ */ jsx("div", { className: "absolute -right-4 -bottom-4 text-white opacity-10", children: /* @__PURE__ */ jsx(Users, { size: 100 }) })
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-      /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500 font-medium", children: /* @__PURE__ */ jsxs("tr", { children: [
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Counselor" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden md:table-cell", children: "Branch" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden lg:table-cell", children: "Capacity" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden lg:table-cell", children: "SLA" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden sm:table-cell", children: "Visa" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 hidden md:table-cell text-right", children: "Critical tasks" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4" })
+    /* @__PURE__ */ jsx("div", { className: dt.card, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+      /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+        /* @__PURE__ */ jsx("th", { className: dt.th, children: "Counselor" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.th} hidden md:table-cell`, children: "Branch" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.th} hidden lg:table-cell`, children: "Capacity" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.th} hidden lg:table-cell`, children: "SLA" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.th} hidden sm:table-cell`, children: "Visa" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.thRight} hidden md:table-cell`, children: "Critical tasks" }),
+        /* @__PURE__ */ jsx("th", { className: dt.th })
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: filteredCounselors.map((c) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors group", children: [
+      /* @__PURE__ */ jsx("tbody", { className: dt.body, children: filteredCounselors.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
           /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200", children: c.avatar ? /* @__PURE__ */ jsx("img", { src: c.avatar, alt: c.name, className: "w-full h-full object-cover rounded-full", referrerPolicy: "no-referrer" }) : c.name.charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [

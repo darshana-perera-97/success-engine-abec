@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { AlertCircle, Plus, Upload, CheckCircle, Hourglass, Filter, X } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
@@ -653,10 +654,10 @@ const TaskManager = ({
           )
         ]
       }),
-    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden", children: [
-      /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-        /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Task" }),
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+          /* @__PURE__ */ jsx("th", { className: `${dt.th} whitespace-nowrap`, children: "Task" }),
           userRole !== "Student" && /* @__PURE__ */ jsx("th", {
             className: "px-6 py-3 whitespace-nowrap min-w-[8rem]",
             children: "Student"
@@ -675,7 +676,7 @@ const TaskManager = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden sm:table-cell", children: "Priority" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: "px-6 py-10 text-center text-slate-500", children: emptyTasksMessage }) }) : studentTasks.map((task) => {
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: dt.emptyRow, children: emptyTasksMessage }) }) : studentTasks.map((task) => {
           const studentContext = getStudentContextForTask(task);
           const studentLabel = getStudentLabelForTask(task, studentContext);
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";

@@ -1,5 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight } from "lucide-react";
+import { dt } from "./DataTable";
 
 function formatOverdue(ms) {
   const m = Math.max(0, ms);
@@ -66,14 +67,14 @@ const StageEscalations = ({
         ]
       }),
       /* @__PURE__ */ jsx("div", {
-        className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
+        className: dt.card,
         children: /* @__PURE__ */ jsx("div", {
-          className: "overflow-x-auto",
+          className: dt.scroll,
           children: /* @__PURE__ */ jsxs("table", {
-            className: "w-full text-sm text-left",
+            className: dt.table,
             children: [
               /* @__PURE__ */ jsx("thead", {
-                className: "bg-gray-50 border-b border-gray-200 text-slate-500",
+                className: dt.head,
                 children: /* @__PURE__ */ jsxs("tr", {
                   children: [
                     /* @__PURE__ */ jsx("th", { className: "px-4 py-3 whitespace-nowrap", children: "Student" }),
@@ -91,7 +92,7 @@ const StageEscalations = ({
                 })
               }),
               /* @__PURE__ */ jsx("tbody", {
-                className: "divide-y divide-gray-100",
+                className: dt.body,
                 children:
                   escalations.length === 0
                     ? /* @__PURE__ */ jsx("tr", {
@@ -111,7 +112,7 @@ const StageEscalations = ({
                         return /* @__PURE__ */ jsxs(
                           "tr",
                           {
-                            className: "hover:bg-slate-50/80",
+                            className: dt.rowInteractive,
                             children: [
                               /* @__PURE__ */ jsx("td", {
                                 className: "px-4 py-3",

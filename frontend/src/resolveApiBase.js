@@ -18,14 +18,34 @@ function normalizeApiBaseUrl(base) {
   return url;
 }
 
+function isLocalhostHostname(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+function isLocalhostApiBase(base) {
+  try {
+    return isLocalhostHostname(new URL(base).hostname);
+  } catch {
+    return /localhost|127\.0\.0\.1/.test(String(base || ""));
+  }
+}
+
 export function resolveApiBase(apiBaseFromProfile) {
   const explicit = String(process.env.REACT_APP_API_BASE || "").trim();
   if (explicit) return normalizeApiBaseUrl(explicit);
 
+  const profileBase = normalizeApiBaseUrl(apiBaseFromProfile);
+
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") {
-      return normalizeApiBaseUrl("http://localhost:3334");
+    if (isLocalhostHostname(host)) {
+      const useLocalBackend =
+        String(process.env.REACT_APP_USE_LOCAL_BACKEND || "").trim().toLowerCase() === "true";
+      if (useLocalBackend || isLocalhostApiBase(profileBase)) {
+        return normalizeApiBaseUrl("http://localhost:3334");
+      }
+      return profileBase;
     }
     const { protocol, host: fullHost } = window.location;
     if (fullHost && !fullHost.includes(":")) {
@@ -33,7 +53,7 @@ export function resolveApiBase(apiBaseFromProfile) {
     }
   }
 
-  return normalizeApiBaseUrl(apiBaseFromProfile);
+  return profileBase;
 }
 
 /** Backend paths stored relative to the API host (see exportStudentDocumentsZip). */

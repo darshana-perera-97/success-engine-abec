@@ -22,6 +22,11 @@ const universityRoutes = require("./routes/university");
 const aiRoutes = require("./routes/ai");
 const docMappingRoutes = require("./routes/docMapping");
 const webFormsRoutes = require("./routes/webForms");
+const countryChangeRequestRoutes = require("./routes/countryChangeRequests");
+const studentDetailChangeRequestRoutes = require("./routes/studentDetailChangeRequests");
+const studentRemovalRequestRoutes = require("./routes/studentRemovalRequests");
+const intakeChangeRequestRoutes = require("./routes/intakeChangeRequests");
+const refundRequestRoutes = require("./routes/refundRequests");
 const frontendRoutes = require("./routes/frontend");
 
 const fs = require("fs/promises");
@@ -73,6 +78,11 @@ const server = http.createServer(async (req, res) => {
   if (await branchRoutes.handle(req, res, url)) return;
   if (await docMappingRoutes.handle(req, res, url)) return;
   if (await webFormsRoutes.handle(req, res, url)) return;
+  if (await countryChangeRequestRoutes.handle(req, res, url)) return;
+  if (await studentDetailChangeRequestRoutes.handle(req, res, url)) return;
+  if (await studentRemovalRequestRoutes.handle(req, res, url)) return;
+  if (await intakeChangeRequestRoutes.handle(req, res, url)) return;
+  if (await refundRequestRoutes.handle(req, res, url)) return;
   if (await aiRoutes.handle(req, res, url)) return;
   if (await frontendRoutes.handle(req, res, url)) return;
 

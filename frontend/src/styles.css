@@ -42,3 +42,14 @@ body {
 .recharts-surface:focus:not(:focus-visible) {
   outline: none;
 }
+
+@layer components {
+  /* Consistent horizontal scroll hint on data tables */
+  .data-table-scroll {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .data-table-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+}

@@ -10,6 +10,18 @@ const {
 } = require("./whatsapp");
 const { buildStudentAccountDetailsWhatsappMessage } = require("./whatsappMessages");
 
+function friendlyEmailDeliveryReason(error) {
+  const msg = String(error?.message || error || "").trim();
+  if (!msg) return "Failed to send email.";
+  if (/535|incorrect authentication/i.test(msg)) {
+    return "Email server rejected SMTP login. Check SMTP_USER and SMTP_PASS in server settings.";
+  }
+  if (/econnrefused|enotfound|etimedout/i.test(msg)) {
+    return "Could not reach the email server. Check SMTP_HOST and SMTP_PORT.";
+  }
+  return msg;
+}
+
 /**
  * Send student portal login via email and WhatsApp (counselor's connected WhatsApp).
  * @returns {{ email: object, whatsapp: object }}
@@ -60,7 +72,7 @@ async function sendStudentPortalAccountDetails({ req, student, studentId }) {
     delivery.email = {
       attempted: true,
       status: "failed",
-      reason: String(error?.message || "Failed to send email."),
+      reason: friendlyEmailDeliveryReason(error),
     };
   }
 
@@ -89,13 +101,21 @@ async function sendStudentPortalAccountDetails({ req, student, studentId }) {
         delivery.whatsapp = {
           attempted: true,
           status: result.status || "failed",
-          reason: result.reason || "",
+          reason:
+            result.status === "sent"
+              ? ""
+              : result.reason === "WhatsApp is not connected."
+                ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
+                : result.reason || "",
         };
       } else {
         delivery.whatsapp = {
           attempted: false,
           status: "skipped",
-          reason: result?.reason || "Not attempted.",
+          reason:
+            result?.reason === "WhatsApp is not connected."
+              ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
+              : result?.reason || "Not attempted.",
         };
       }
     }

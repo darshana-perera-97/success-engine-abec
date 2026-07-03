@@ -2,13 +2,15 @@ import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, X, MapPin, GripVertical,
-  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil, Clock
+  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil, Clock, Calendar
 } from "lucide-react";
 import {
   getCountries, createCountry, getDocMapping, saveDocMappingStages,
   saveDocMappingPipelineDocs, saveDocMappingVisaDocs, saveDocMappingStageTasks,
-  saveDocMappingAccountDetailsStage, saveDocMappingDocumentNotify, saveDocMappingStageDeadlines
+  saveDocMappingAccountDetailsStage, saveDocMappingDocumentNotify, saveDocMappingStageDeadlines,
+  saveDocMappingIntakeOptions
 } from "../authApi";
+import { INTAKE_MONTHS, defaultIntakeOptions, normalizeIntakeOptions } from "../utils/intakeFields";
 import { invalidateCountryDocConfigCache } from "../countryDocConfigStore";
 import {
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
@@ -18,6 +20,7 @@ import {
   formatStageDeadlineLabel
 } from "../docMappingConfig";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 
 function genId(prefix = "dm") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -25,8 +28,8 @@ function genId(prefix = "dm") {
 
 const DEFAULT_STAGE_IDS = new Set(["inquiry", "registration", "application", "documentation", "visa", "enrolled"]);
 
-function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs) {
-  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs });
+function buildDocMappingSnapshot(stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs, intakeOptions) {
+  return JSON.stringify({ stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs, intakeOptions });
 }
 
 function collectAvailableDocOptions(pipelineDocs, visaDocs) {
@@ -939,21 +942,21 @@ function StageDeadlinesSection({ stages, stageDeadlines, onChange }) {
         })
       ]
     }),
-    jsx("div", { className: "p-4 overflow-x-auto", children:
+    jsx("div", { className: `p-4 ${dt.scroll}`, children:
       stages.length === 0
         ? jsx("p", { className: "text-sm text-slate-400 text-center py-6", children: "Add pipeline stages first." })
-        : jsx("table", { className: "w-full min-w-[520px] text-sm", children:
+        : jsx("table", { className: `${dt.tableCompact} min-w-[520px]`, children:
             jsxs(Fragment, { children: [
-              jsx("thead", { children:
-                jsx("tr", { className: "text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-b border-gray-100", children: [
-                  jsx("th", { className: "pb-2 pr-3 font-semibold", children: "Stage" }),
-                  jsx("th", { className: "pb-2 pr-3 font-semibold w-28", children: "Deadline" }),
-                  jsx("th", { className: "pb-2 pr-3 font-semibold w-28", children: "Unit" }),
-                  jsx("th", { className: "pb-2 font-semibold w-32", children: "Summary" }),
-                  jsx("th", { className: "pb-2 font-semibold w-28 text-right", children: "No deadline" })
+              jsx("thead", { className: dt.head, children:
+                jsx("tr", { children: [
+                  jsx("th", { className: dt.thCompact, children: "Stage" }),
+                  jsx("th", { className: `${dt.thCompact} w-28`, children: "Deadline" }),
+                  jsx("th", { className: `${dt.thCompact} w-28`, children: "Unit" }),
+                  jsx("th", { className: `${dt.thCompact} w-32`, children: "Summary" }),
+                  jsx("th", { className: dt.thCompactRight, children: "No deadline" })
                 ] })
               }),
-              jsx("tbody", { className: "divide-y divide-gray-50", children:
+              jsx("tbody", { className: dt.body, children:
                 rows.map(({ stage, deadline }) => {
                   const hasDeadline = Boolean(deadline && deadline.value);
                   const summary = hasDeadline ? formatStageDeadlineLabel(deadline) : "—";
@@ -1175,8 +1178,117 @@ function DocumentNotifySection({ pipelineDocs, visaDocs, documentNotifyDocs, onC
   ] });
 }
 
+function CountryIntakeOptionsSection({ intakeOptions, onChange, canEdit = true }) {
+  const [draftYear, setDraftYear] = useState("");
+  const normalized = normalizeIntakeOptions(intakeOptions);
+  const selectedMonths = new Set(normalized.months);
+
+  const toggleMonth = (month) => {
+    if (!canEdit) return;
+    const next = new Set(selectedMonths);
+    if (next.has(month)) next.delete(month);
+    else next.add(month);
+    onChange({
+      ...normalized,
+      months: INTAKE_MONTHS.filter((m) => next.has(m)),
+    });
+  };
+
+  const addYear = () => {
+    if (!canEdit) return;
+    const year = String(draftYear || "").trim();
+    if (!/^\d{4}$/.test(year)) return;
+    const nextYears = [...new Set([...normalized.years, year])].sort((a, b) => Number(a) - Number(b));
+    onChange({ ...normalized, years: nextYears });
+    setDraftYear("");
+  };
+
+  const removeYear = (year) => {
+    if (!canEdit) return;
+    onChange({
+      ...normalized,
+      years: normalized.years.filter((y) => y !== year),
+    });
+  };
+
+  return jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm", children: [
+    jsxs("div", { className: "flex items-center justify-between px-5 py-3.5 border-b border-gray-100", children: [
+      jsxs("div", { className: "flex items-center gap-2", children: [
+        jsx(Calendar, { size: 16, className: "text-indigo-600" }),
+        jsxs("div", { children: [
+          jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Country intakes" }),
+          jsx("p", { className: "text-[10px] text-slate-400 mt-0.5", children: canEdit
+            ? "Choose which intake months and years appear on inquiry and registration forms for this country."
+            : "View-only. Only Admin can edit country intake options." })
+        ] })
+      ] }),
+      jsx("span", { className: "text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100", children: `${normalized.months.length} mo · ${normalized.years.length} yr` })
+    ] }),
+    jsxs("div", { className: "p-4 space-y-5", children: [
+      jsxs("div", { children: [
+        jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Intake months" }),
+        jsx("div", { className: "flex flex-wrap gap-2", children:
+          INTAKE_MONTHS.map((month) => {
+            const active = selectedMonths.has(month);
+            return jsx("button", {
+              key: month,
+              type: "button",
+              disabled: !canEdit,
+              onClick: () => toggleMonth(month),
+              className: `px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                active
+                  ? "bg-indigo-600 text-white border-indigo-600"
+                  : "bg-white text-slate-600 border-gray-200 hover:border-indigo-200"
+              } ${!canEdit ? "opacity-70 cursor-not-allowed" : ""}`,
+              children: month.slice(0, 3)
+            });
+          })
+        })
+      ] }),
+      jsxs("div", { children: [
+        jsx("p", { className: "text-xs font-semibold text-slate-700 mb-2", children: "Intake years" }),
+        normalized.years.length === 0
+          ? jsx("p", { className: "text-sm text-slate-400", children: "No years selected." })
+          : jsx("div", { className: "flex flex-wrap gap-2 mb-3", children:
+              normalized.years.map((year) => jsxs("span", {
+                key: year,
+                className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200",
+                children: [
+                  year,
+                  canEdit && jsx("button", {
+                    type: "button",
+                    className: "text-slate-400 hover:text-rose-600",
+                    onClick: () => removeYear(year),
+                    "aria-label": `Remove ${year}`,
+                    children: jsx(X, { size: 12 })
+                  })
+                ]
+              }))
+            }),
+        canEdit && jsxs("div", { className: "flex flex-wrap items-end gap-2", children: [
+          jsxs("div", { className: "space-y-1", children: [
+            jsx("label", { className: "text-[10px] font-medium text-slate-500 uppercase tracking-wide", children: "Add year" }),
+            jsx("input", {
+              type: "text",
+              inputMode: "numeric",
+              pattern: "[0-9]*",
+              maxLength: 4,
+              placeholder: "e.g. 2027",
+              className: "w-28 px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white",
+              value: draftYear,
+              onChange: (e) => setDraftYear(e.target.value.replace(/\D/g, "").slice(0, 4)),
+              onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); addYear(); } }
+            })
+          ] }),
+          jsx(Button, { type: "button", size: "sm", onClick: addYear, disabled: draftYear.length !== 4, children: jsxs(Fragment, { children: [jsx(Plus, { size: 14, className: "mr-1" }), "Add year"] }) })
+        ] })
+      ] })
+    ] })
+  ] });
+}
+
 // ─── Main DocMapping Page ───────────────────────────────────────
-export function DocMapping() {
+export function DocMapping({ userRole = "Admin" }) {
   const [countries, setCountries] = useState([]);
   const [selectedCountry, setSelectedCountry] = useState("");
   const [countriesLoading, setCountriesLoading] = useState(true);
@@ -1192,6 +1304,7 @@ export function DocMapping() {
   const [stageDeadlines, setStageDeadlines] = useState({});
   const [accountDetailsStageId, setAccountDetailsStageId] = useState(DEFAULT_ACCOUNT_DETAILS_STAGE_ID);
   const [documentNotifyDocs, setDocumentNotifyDocs] = useState([]);
+  const [intakeOptions, setIntakeOptions] = useState(() => defaultIntakeOptions());
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1229,6 +1342,7 @@ export function DocMapping() {
         nextStages
       );
       const nextDocumentNotifyDocs = normalizeDocumentNotifyDocs(result.data.documentNotifyDocs);
+      const nextIntakeOptions = normalizeIntakeOptions(result.data.intakeOptions);
       setStages(nextStages);
       setPipelineDocs(nextPipelineDocs);
       setVisaDocs(nextVisaDocs);
@@ -1236,6 +1350,7 @@ export function DocMapping() {
       setStageDeadlines(nextStageDeadlines);
       setAccountDetailsStageId(nextAccountDetailsStageId);
       setDocumentNotifyDocs(nextDocumentNotifyDocs);
+      setIntakeOptions(nextIntakeOptions);
       setSavedSnapshot(buildDocMappingSnapshot(
         nextStages,
         nextPipelineDocs,
@@ -1243,7 +1358,8 @@ export function DocMapping() {
         nextStageTasks,
         nextStageDeadlines,
         nextAccountDetailsStageId,
-        nextDocumentNotifyDocs
+        nextDocumentNotifyDocs,
+        nextIntakeOptions
       ));
     } else {
       setConfigError(result.error);
@@ -1260,6 +1376,8 @@ export function DocMapping() {
     setStageDeadlines((prev) => normalizeStageDeadlinesMap(prev, stages));
   }, [stages]);
 
+  const canEditIntakeOptions = userRole === "Admin";
+
   const isDirty = useMemo(() => {
     if (!savedSnapshot || !selectedCountry || configLoading) return false;
     return buildDocMappingSnapshot(
@@ -1269,9 +1387,10 @@ export function DocMapping() {
       stageTasks,
       stageDeadlines,
       accountDetailsStageId,
-      documentNotifyDocs
+      documentNotifyDocs,
+      intakeOptions
     ) !== savedSnapshot;
-  }, [stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs, savedSnapshot, selectedCountry, configLoading]);
+  }, [stages, pipelineDocs, visaDocs, stageTasks, stageDeadlines, accountDetailsStageId, documentNotifyDocs, intakeOptions, savedSnapshot, selectedCountry, configLoading]);
 
   const handleSaveAll = async () => {
     if (!selectedCountry || !isDirty) return;
@@ -1320,9 +1439,17 @@ export function DocMapping() {
       selectedCountry,
       documentNotifyDocs
     );
-    setSaving(false);
     if (!documentNotifyResult.ok) {
       setConfigError(documentNotifyResult.error);
+      setSaving(false);
+      return;
+    }
+    const intakeResult = canEditIntakeOptions
+      ? await saveDocMappingIntakeOptions(selectedCountry, intakeOptions, userRole)
+      : { ok: true, data: { intakeOptions } };
+    setSaving(false);
+    if (!intakeResult.ok) {
+      setConfigError(intakeResult.error);
       return;
     }
     const nextStages = stagesResult.data.stages;
@@ -1337,6 +1464,9 @@ export function DocMapping() {
     const nextDocumentNotifyDocs = normalizeDocumentNotifyDocs(
       documentNotifyResult.data.documentNotifyDocs
     );
+    const nextIntakeOptions = normalizeIntakeOptions(
+      intakeResult.data?.intakeOptions ?? intakeOptions
+    );
     setStages(nextStages);
     setPipelineDocs(nextPipelineDocs);
     setVisaDocs(nextVisaDocs);
@@ -1344,6 +1474,7 @@ export function DocMapping() {
     setStageDeadlines(nextStageDeadlines);
     setAccountDetailsStageId(nextAccountDetailsStageId);
     setDocumentNotifyDocs(nextDocumentNotifyDocs);
+    setIntakeOptions(nextIntakeOptions);
     setSavedSnapshot(buildDocMappingSnapshot(
       nextStages,
       nextPipelineDocs,
@@ -1351,7 +1482,8 @@ export function DocMapping() {
       nextStageTasks,
       nextStageDeadlines,
       nextAccountDetailsStageId,
-      nextDocumentNotifyDocs
+      nextDocumentNotifyDocs,
+      nextIntakeOptions
     ));
     invalidateCountryDocConfigCache(selectedCountry);
     flash("All changes saved");
@@ -1421,6 +1553,11 @@ export function DocMapping() {
       : configLoading
         ? jsx("div", { className: "flex items-center justify-center py-24 text-sm text-slate-400", children: "Loading configuration…" })
         : jsxs("div", { className: "space-y-6", children: [
+            jsx(CountryIntakeOptionsSection, {
+              intakeOptions,
+              onChange: setIntakeOptions,
+              canEdit: canEditIntakeOptions
+            }),
             jsx(StageManager, { stages, onChange: setStages }),
             jsx(AccountDetailsStageSection, {
               stages,

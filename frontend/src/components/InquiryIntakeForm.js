@@ -1,6 +1,13 @@
 import React from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
+import { PhoneWhatsappFields } from "./PhoneWhatsappFields";
+import { IntakeFields } from "./IntakeFields";
+import { resolveFormWhatsappNumber, validateWhatsappFields } from "../utils/phoneWhatsapp";
+import { validateIntakeFields } from "../utils/intakeFields";
+import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
+import { INQUIRY_SOURCE_OPTIONS, isValidInquirySource, normalizeInquirySource } from "../utils/inquirySource";
 
 export const EDUCATION_LEVELS = [
   "High school",
@@ -47,6 +54,8 @@ export function emptyInquiryForm({ countries = [], offices = [] } = {}) {
     name: "",
     email: "",
     phone: "",
+    whatsappSameAsPhone: true,
+    whatsappNumber: "",
     countryToVisit: countries[0] || "",
     nearestOffice: offices[0] || "",
     city: "",
@@ -56,8 +65,11 @@ export function emptyInquiryForm({ countries = [], offices = [] } = {}) {
     visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
+    intakeMonth: "",
+    intakeYear: "",
     message: "",
     priority: "Medium",
+    inquirySource: "",
     examResults: [newInquiryExamResultRow()]
   };
 }
@@ -71,7 +83,10 @@ export function sanitizeInquiryExamResults(examResults) {
     .filter((row) => row.examName || row.result);
 }
 
-export function validateInquiryFormRequired(form, { requireBudget = true } = {}) {
+export function validateInquiryFormRequired(form, { requireBudget = true, requireSource = false } = {}) {
+  if (requireSource && !isValidInquirySource(form.inquirySource)) {
+    return { ok: false, error: "Please select how this student heard about us." };
+  }
   if (
     !String(form.name || "").trim() ||
     !String(form.email || "").trim() ||
@@ -87,11 +102,16 @@ export function validateInquiryFormRequired(form, { requireBudget = true } = {})
   ) {
     return { ok: false, error: "Please fill all required interest form fields." };
   }
+  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: true });
+  if (!intakeValidation.ok) return intakeValidation;
+  const whatsappValidation = validateWhatsappFields(form);
+  if (!whatsappValidation.ok) return whatsappValidation;
   return { ok: true };
 }
 
-export function inquiryFormToStudentFields(form, baseStudent = {}) {
+export function inquiryFormToStudentFields(form, baseStudent = {}, { requireIntake = true } = {}) {
   const sanitizedExamResults = sanitizeInquiryExamResults(form.examResults);
+  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: requireIntake });
   const formBudget = String(form.budget || "").trim();
   const budget = formBudget || String(baseStudent.budget || "").trim();
   const budgetCurrency = (
@@ -104,6 +124,7 @@ export function inquiryFormToStudentFields(form, baseStudent = {}) {
     name: String(form.name || "").trim(),
     email: String(form.email || "").trim(),
     phone: String(form.phone || "").trim(),
+    whatsappNumber: resolveFormWhatsappNumber(form),
     countryToVisit: String(form.countryToVisit || "").trim(),
     nearestOffice: String(form.nearestOffice || "").trim(),
     city: String(form.city || "").trim(),
@@ -113,16 +134,57 @@ export function inquiryFormToStudentFields(form, baseStudent = {}) {
     visaRejectionAnyCountry: String(form.visaRejectionAnyCountry || "").trim(),
     currentEducationLevel: String(form.currentEducationLevel || "").trim(),
     intendedProgram: String(form.intendedProgram || "").trim(),
+    intakeMonth: intakeValidation.ok ? intakeValidation.intakeMonth : String(form.intakeMonth || "").trim() || null,
+    intakeYear: intakeValidation.ok ? intakeValidation.intakeYear : String(form.intakeYear || "").trim() || null,
     message: String(form.message || "").trim(),
     examResults: sanitizedExamResults,
+    inquirySource: normalizeInquirySource(form.inquirySource) || baseStudent.inquirySource || null,
     country: String(form.countryToVisit || "").trim() || baseStudent.country,
     branch: String(form.nearestOffice || "").trim() || baseStudent.branch,
     priority: String(form.priority || "").trim() || baseStudent.priority || "Medium"
   };
 }
 
+/** Merge inquiry form into student without requiring every intake field (for Schedule Later). */
+export function mergeInquiryFormForScheduleLater(form, baseStudent = {}) {
+  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: false });
+  if (!intakeValidation.ok) return intakeValidation;
+  const phone = String(form.phone || "").trim();
+  if (phone) {
+    const whatsappValidation = validateWhatsappFields(form);
+    if (!whatsappValidation.ok) return whatsappValidation;
+  }
+  return {
+    ok: true,
+    student: inquiryFormToStudentFields(form, baseStudent, { requireIntake: false })
+  };
+}
+
 const fieldClass =
   "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500";
+
+export function InquirySourceField({ value, onChange, className = fieldClass }) {
+  return (
+    <div className="sm:col-span-2">
+      <label className="text-xs font-semibold text-slate-700 mb-1 block">Source</label>
+      <select
+        required
+        className={className}
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="" disabled>
+          Select...
+        </option>
+        {INQUIRY_SOURCE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export function InquiryIntakeForm({
   form,
@@ -137,8 +199,11 @@ export function InquiryIntakeForm({
   submitLabel = "Save",
   cancelLabel = "Cancel",
   scheduleLaterLabel = "Schedule Later",
-  showBudgetField = true
+  showBudgetField = true,
+  showSourceField = false,
+  intakeCountry = ""
 }) {
+  const intakeOptions = useIntakeOptionsForCountry(intakeCountry);
   const updateInquiryExamRow = (id, field, value) => {
     setForm((prev) => ({
       ...prev,
@@ -164,11 +229,17 @@ export function InquiryIntakeForm({
   };
 
   return (
-    <form onSubmit={onSubmit} className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
+    <form onSubmit={onSubmit} noValidate className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
       {error ? (
         <div className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">{error}</div>
       ) : null}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {showSourceField ? (
+          <InquirySourceField
+            value={form.inquirySource}
+            onChange={(nextValue) => setForm((prev) => ({ ...prev, inquirySource: nextValue }))}
+          />
+        ) : null}
         <div>
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Name</label>
           <input
@@ -189,16 +260,27 @@ export function InquiryIntakeForm({
             onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
           />
         </div>
-        <div>
-          <label className="text-xs font-semibold text-slate-700 mb-1 block">Phone</label>
-          <input
-            type="tel"
-            required
-            className={fieldClass}
-            value={form.phone}
-            onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
-          />
-        </div>
+        <PhoneWhatsappFields
+          phone={form.phone}
+          whatsappNumber={form.whatsappNumber}
+          whatsappSameAsPhone={form.whatsappSameAsPhone}
+          onPhoneChange={(value) =>
+            setForm((prev) => ({
+              ...prev,
+              phone: value,
+              whatsappNumber: prev.whatsappSameAsPhone !== false ? value : prev.whatsappNumber
+            }))
+          }
+          onWhatsappNumberChange={(value) => setForm((prev) => ({ ...prev, whatsappNumber: value }))}
+          onWhatsappSameAsPhoneChange={(checked) =>
+            setForm((prev) => ({
+              ...prev,
+              whatsappSameAsPhone: checked,
+              whatsappNumber: checked ? prev.phone : prev.whatsappNumber
+            }))
+          }
+          fieldClassName={fieldClass}
+        />
         <div>
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Country you wish to visit</label>
           <select
@@ -226,7 +308,7 @@ export function InquiryIntakeForm({
           </select>
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-700 mb-1 block">Nearest office</label>
+          <label className="text-xs font-semibold text-slate-700 mb-1 block">Preferred branch</label>
           <select
             required
             className={fieldClass}
@@ -367,6 +449,18 @@ export function InquiryIntakeForm({
           />
         </div>
         <div className="sm:col-span-2">
+          <IntakeFields
+            intakeMonth={form.intakeMonth}
+            intakeYear={form.intakeYear}
+            onIntakeMonthChange={(value) => setForm((prev) => ({ ...prev, intakeMonth: value }))}
+            onIntakeYearChange={(value) => setForm((prev) => ({ ...prev, intakeYear: value }))}
+            required
+            fieldClassName={fieldClass}
+            monthOptions={intakeOptions.months}
+            yearOptions={intakeOptions.years}
+          />
+        </div>
+        <div className="sm:col-span-2">
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Additional message</label>
           <textarea
             rows={3}
@@ -386,16 +480,16 @@ export function InquiryIntakeForm({
           <p className="text-[11px] text-slate-500 mb-2">
             Optional. Add as many rows as you need (exam or qualification name and score or grade).
           </p>
-          <div className="border border-gray-200 rounded-md overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-gray-200">
+          <div className={dt.embedded}>
+            <table className={dt.tableCompact}>
+              <thead className={dt.head}>
                 <tr>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600">Exam name</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600">Result</th>
+                  <th className={dt.thCompact}>Exam name</th>
+                  <th className={dt.thCompact}>Result</th>
                   <th className="w-11 px-1 py-2" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className={dt.body}>
                 {(form.examResults || []).map((row) => (
                   <tr key={row.id}>
                     <td className="px-2 py-1.5 align-middle">
@@ -438,7 +532,16 @@ export function InquiryIntakeForm({
           {cancelLabel}
         </Button>
         {onScheduleLater ? (
-          <Button type="button" variant="secondary" onClick={onScheduleLater} disabled={isSaving}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onScheduleLater();
+            }}
+            disabled={isSaving}
+          >
             {scheduleLaterLabel}
           </Button>
         ) : null}

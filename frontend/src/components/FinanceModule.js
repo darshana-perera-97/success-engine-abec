@@ -1,11 +1,14 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DollarSign, CheckCircle, Clock, FileText, Plus, Upload, X, MessageCircle, Link2 } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { formatLKR, formatRawLKR } from "../utils";
 import { isCounselorEquivalentAccountRole } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
-import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp } from "../authApi";
+import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp, getRefundRequests, createRefundRequest } from "../authApi";
+import { RefundRequestModal } from "./RefundRequestModal";
+import { requestStatusBadgeClass, requestStatusLabel } from "../utils/studentDetailChangeRequests";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { COMPANY_NAME } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
@@ -148,7 +151,8 @@ function collectInvoiceEvidenceItems(inv) {
     const claimed = Number(entry?.claimedAmount);
     const approved = Number(entry?.approvedAmount);
     const hasAmount = (Number.isFinite(claimed) && claimed > 0) || (Number.isFinite(approved) && approved > 0);
-    if (!url && !hasAmount) continue;
+    const isRefund = String(entry?.outcome || "").trim() === "refund";
+    if (!url && !hasAmount && !isRefund) continue;
     items.push({
       url,
       name: String(entry?.name || "Payment evidence").trim(),
@@ -218,7 +222,7 @@ function buildPaymentTableRows(invoices) {
     evidences.forEach((evidence, idx) => {
       const outcome = String(evidence?.outcome || "").trim();
       if (outcome === "superseded") return;
-      if (outcome !== "approved" && outcome !== "pending" && outcome !== "rejected") return;
+      if (outcome !== "approved" && outcome !== "pending" && outcome !== "rejected" && outcome !== "refund") return;
       rows.push({
         invoice: inv,
         evidence,
@@ -269,6 +273,7 @@ function getPaymentApprovalLabel(inv, evidence) {
 function getEvidenceApprovalLabel(evidence, inv) {
   if (!evidence) return getPaymentApprovalLabel(inv);
   const outcome = String(evidence.outcome || "").trim();
+  if (outcome === "refund") return "Refunded";
   if (outcome === "approved") return "Approved";
   if (outcome === "rejected") return "Rejected";
   if (outcome === "pending" || String(inv?.status || "").trim() === "Verifying") return "Not approved";
@@ -277,13 +282,57 @@ function getEvidenceApprovalLabel(evidence, inv) {
 
 function getPaymentApprovalClass(label) {
   if (label === "Approved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (label === "Refunded") return "bg-rose-50 text-rose-700 border-rose-200";
   if (label === "Partially paid") return "bg-violet-50 text-violet-700 border-violet-200";
   if (label === "Rejected") return "bg-rose-50 text-rose-700 border-rose-200";
   if (label === "Not approved") return "bg-blue-50 text-blue-700 border-blue-200";
   return "bg-amber-50 text-amber-700 border-amber-200";
 }
 
-const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoice, onUpdateInvoice, onNotify, openCreateInvoice, counselorCanAcceptPayments = false }) => {
+const LEDGER_TABLE_COLUMNS = [
+  { key: "invoice", label: "Invoice", className: "min-w-[180px]" },
+  { key: "status", label: "Status", className: "min-w-[110px]" },
+  { key: "balance", label: "Balance", className: "min-w-[100px] text-right" }
+];
+
+const PAYMENTS_TABLE_COLUMNS = [
+  { key: "date", label: "Date", className: "min-w-[100px] whitespace-nowrap" },
+  { key: "status", label: "Status", className: "min-w-[110px]" },
+  { key: "amount", label: "Amount", className: "min-w-[100px] text-right tabular-nums" }
+];
+
+const CLICKABLE_ROW_CLASS = dt.rowInteractive;
+
+function sortInvoicesForLedger(invoices) {
+  return [...(invoices || [])].sort((a, b) => {
+    const dateA = new Date(a?.issueDate || a?.dueDate || 0).getTime();
+    const dateB = new Date(b?.issueDate || b?.dueDate || 0).getTime();
+    if (dateA !== dateB) return dateA - dateB;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+}
+
+function paymentMethodLabel(evidence, inv) {
+  const evidenceName = String(evidence?.name || "").trim();
+  if (evidenceName === "Cash payment") return "Cash";
+  const method = String(inv?.paymentMethod || "").trim();
+  if (method) return method;
+  return evidenceProofUrl(evidence) ? "Bank transfer" : "—";
+}
+
+const FinanceModule = ({
+  student,
+  userRole,
+  paymentAccounts = [],
+  onCreateInvoice,
+  onUpdateInvoice,
+  onNotify,
+  openCreateInvoice,
+  onOpenCreateInvoiceConsumed,
+  counselorCanAcceptPayments = false,
+  currentUser = null,
+  authenticatedUser = null,
+}) => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAmount, setNewAmount] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -292,6 +341,8 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
   const [newAttachmentLink, setNewAttachmentLink] = useState("");
   const [newAttachmentFile, setNewAttachmentFile] = useState(null);
   const [newPaymentAccountId, setNewPaymentAccountId] = useState("");
+  const [newIsWaveOff, setNewIsWaveOff] = useState(false);
+  const [newWaveOffReason, setNewWaveOffReason] = useState("");
   const [resolvedPaymentAccounts, setResolvedPaymentAccounts] = useState(
     Array.isArray(paymentAccounts) ? paymentAccounts : []
   );
@@ -301,6 +352,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
 
   const [studentInvoices, setStudentInvoices] = useState([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [refundRows, setRefundRows] = useState([]);
+  const [refundsLoading, setRefundsLoading] = useState(true);
+  const [refundDialog, setRefundDialog] = useState({
+    open: false,
+    amount: "",
+    currency: "LKR",
+    invoiceId: "",
+    reason: "",
+    saving: false,
+    error: "",
+  });
 
   const loadStudentInvoices = useCallback(async () => {
     const sid = String(student?.id || "").trim();
@@ -313,34 +375,99 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
 
   useEffect(() => { loadStudentInvoices(); }, [loadStudentInvoices]);
 
+  const loadRefundRows = useCallback(async () => {
+    const sid = String(student?.id || "").trim();
+    if (!sid) {
+      setRefundRows([]);
+      setRefundsLoading(false);
+      return;
+    }
+    setRefundsLoading(true);
+    const result = await getRefundRequests({ studentId: sid });
+    if (result.ok) setRefundRows(result.data);
+    setRefundsLoading(false);
+  }, [student?.id]);
+
+  useEffect(() => { loadRefundRows(); }, [loadRefundRows]);
+
+  const paidInvoicesForRefund = studentInvoices.filter((inv) => invoiceApprovedPaid(inv) > 0.009);
+
+  const handleSubmitRefundRequest = async () => {
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    const amount = Number(refundDialog.amount);
+    if (!requesterId) {
+      setRefundDialog((prev) => ({ ...prev, error: "Your user id is required to submit a request." }));
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setRefundDialog((prev) => ({ ...prev, error: "Enter a valid refund amount." }));
+      return;
+    }
+    if (!String(refundDialog.reason || "").trim()) {
+      setRefundDialog((prev) => ({ ...prev, error: "Reason is required." }));
+      return;
+    }
+    setRefundDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createRefundRequest({
+      studentId: student.id,
+      studentName: student.name,
+      amount,
+      currency: refundDialog.currency,
+      invoiceId: refundDialog.invoiceId,
+      reason: String(refundDialog.reason || "").trim(),
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole,
+    });
+    if (!result.ok) {
+      setRefundDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit refund request." }));
+      return;
+    }
+    setRefundDialog({ open: false, amount: "", currency: "LKR", invoiceId: "", reason: "", saving: false, error: "" });
+    onNotify?.(
+      "Refund request submitted",
+      "Your refund request was sent for manager approval. Track it under My Requests.",
+      "info"
+    );
+    loadRefundRows();
+  };
+
   useEffect(() => {
     setResolvedPaymentAccounts(Array.isArray(paymentAccounts) ? paymentAccounts : []);
   }, [paymentAccounts]);
 
-  const refreshPaymentAccounts = () => {
+  const refreshPaymentAccounts = useCallback(() => {
     return getPaymentAccounts().then((result) => {
       if (result.ok && Array.isArray(result.data)) {
         setResolvedPaymentAccounts(result.data);
       }
       return result;
     });
-  };
+  }, []);
+
+  const paymentAccountsLoadedForOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!onCreateInvoice) return;
-    let cancelled = false;
-    refreshPaymentAccounts().then(() => {
-      if (cancelled) return;
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [onCreateInvoice]);
-
-  useEffect(() => {
-    if (!isCreateOpen || !onCreateInvoice) return;
+    if (!isCreateOpen) {
+      paymentAccountsLoadedForOpenRef.current = false;
+      return;
+    }
+    if (paymentAccountsLoadedForOpenRef.current) return;
+    paymentAccountsLoadedForOpenRef.current = true;
     refreshPaymentAccounts();
-  }, [isCreateOpen, onCreateInvoice]);
+  }, [isCreateOpen, refreshPaymentAccounts]);
+
+  const closeCreateModal = useCallback(() => {
+    setIsCreateOpen(false);
+    onOpenCreateInvoiceConsumed?.();
+  }, [onOpenCreateInvoiceConsumed]);
+  const totalInvoiced = studentInvoices.reduce(
+    (acc, inv) => acc + invoiceLedgerAmount(inv) * (exchangeRates[inv.currency] || 1),
+    0
+  );
   const totalPaid = studentInvoices.reduce(
     (acc, inv) => acc + invoiceApprovedPaid(inv) * (exchangeRates[inv.currency] || 1),
     0
@@ -356,6 +483,8 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     setNewAttachmentLink("");
     setNewAttachmentFile(null);
     setNewPaymentAccountId("");
+    setNewIsWaveOff(false);
+    setNewWaveOffReason("");
     setCreateError("");
   };
 
@@ -363,6 +492,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     e.preventDefault();
     if (!onCreateInvoice) return;
     setCreateError("");
+    if (newIsWaveOff) {
+      const reasonTrimmed = String(newWaveOffReason || "").trim();
+      if (!reasonTrimmed) {
+        setCreateError("Wave-off reason is required.");
+        return;
+      }
+    } else if (!newAmount || Number(newAmount) <= 0) {
+      setCreateError("Enter a valid invoice amount.");
+      return;
+    }
     const linkTrimmed = String(newAttachmentLink || "").trim();
     if (linkTrimmed && !/^https?:\/\//i.test(linkTrimmed)) {
       setCreateError("Reference link must start with http:// or https://");
@@ -381,8 +520,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     setIsCreatingInvoice(true);
     setIsCreateOpen(false);
     onNotify?.(
-      "Invoice generation started",
-      "The invoice popup is closed. Generation is running in the background and you will get an update in about 2-3 minutes.",
+      newIsWaveOff ? "Wave-off request submitted" : "Invoice generation started",
+      newIsWaveOff
+        ? "Your wave-off request was submitted for manager approval."
+        : "The invoice popup is closed. Generation is running in the background and you will get an update in about 2-3 minutes.",
       "info",
       student?.id ? { studentId: student.id, view: "finance" } : null,
       7e3
@@ -390,14 +531,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     const newInv = {
       id: `INV-${Date.now()}`,
       studentId: student.id,
-      amount: parseFloat(newAmount),
+      amount: newIsWaveOff ? 0 : parseFloat(newAmount),
       currency: newCurrency,
       description: newDesc,
       issueDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-      dueDate: newDueDate,
-      status: "Pending"
+      dueDate: newIsWaveOff ? (/* @__PURE__ */ new Date()).toISOString().split("T")[0] : newDueDate,
+      status: newIsWaveOff ? "Wave-off Pending" : "Pending",
+      isWaveOff: newIsWaveOff || undefined,
+      waveOffReason: newIsWaveOff ? String(newWaveOffReason || "").trim() : undefined,
     };
-    const selectedAccount = resolvedPaymentAccounts.find((a) => String(a.id) === String(newPaymentAccountId));
+    const selectedAccount = newIsWaveOff ? null : resolvedPaymentAccounts.find((a) => String(a.id) === String(newPaymentAccountId));
     let invoiceAttachmentDataUrl;
     if (newAttachmentFile) {
       invoiceAttachmentDataUrl = await new Promise((resolve, reject) => {
@@ -409,14 +552,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       if (!invoiceAttachmentDataUrl) {
         setCreateError("Unable to read attachment file.");
         setIsCreatingInvoice(false);
+        setIsCreateOpen(true);
         return;
       }
     }
-    const invoiceImageDataUrl = await generateInvoiceImageDataUrl({ invoice: newInv, student, paymentAccount: selectedAccount });
+    const invoiceImageDataUrl = newIsWaveOff
+      ? ""
+      : await generateInvoiceImageDataUrl({ invoice: newInv, student, paymentAccount: selectedAccount });
     const result = await onCreateInvoice({
       ...newInv,
       attachmentLink: linkTrimmed || void 0,
-      paymentAccountId: newPaymentAccountId || void 0,
+      paymentAccountId: newIsWaveOff ? void 0 : newPaymentAccountId || void 0,
       invoiceAttachmentDataUrl: invoiceAttachmentDataUrl || void 0,
       invoiceAttachmentName: newAttachmentFile?.name,
       receiptImageDataUrl: invoiceImageDataUrl || void 0,
@@ -430,8 +576,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     }
     resetCreateForm();
     onNotify?.(
-      "Invoice generated",
-      `Invoice ${result?.data?.id || newInv.id} is ready. We will keep you updated if any further processing is needed.`,
+      newIsWaveOff ? "Wave-off request submitted" : "Invoice generated",
+      newIsWaveOff
+        ? `Wave-off request ${result?.data?.id || newInv.id} is pending manager approval.`
+        : `Invoice ${result?.data?.id || newInv.id} is ready. We will keep you updated if any further processing is needed.`,
       "success",
       student?.id ? { studentId: student.id, view: "finance" } : null,
       7e3
@@ -708,8 +856,14 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     switch (status) {
       case "Paid":
         return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      case "Waived":
+        return "bg-teal-50 text-teal-700 border-teal-200";
       case "Pending":
         return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Wave-off Pending":
+        return "bg-orange-50 text-orange-700 border-orange-200";
+      case "Wave-off Rejected":
+        return "bg-rose-50 text-rose-700 border-rose-200";
       case "Verifying":
         return "bg-blue-50 text-blue-700 border-blue-200";
       case "Overdue":
@@ -724,11 +878,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
   const isCounselorStaff = isCounselorEquivalentAccountRole(userRole);
   const isStaff =
     ["admin", "manager", "team lead", "country coordinator"].includes(roleNorm) || isCounselorStaff;
+  const openCreateInvoiceHandledRef = useRef(false);
   useEffect(() => {
-    if (openCreateInvoice && isStaff) {
-      setIsCreateOpen(true);
+    if (!openCreateInvoice || !isStaff) {
+      openCreateInvoiceHandledRef.current = false;
+      return;
     }
-  }, [openCreateInvoice, isStaff]);
+    if (openCreateInvoiceHandledRef.current) return;
+    openCreateInvoiceHandledRef.current = true;
+    setIsCreateOpen(true);
+    onOpenCreateInvoiceConsumed?.();
+  }, [openCreateInvoice, isStaff, onOpenCreateInvoiceConsumed]);
   const canAcceptPayment =
     roleNorm === "admin" ||
     roleNorm === "manager" ||
@@ -740,11 +900,17 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
     inv?.paymentAccount || inv?.attachmentLink || inv?.attachmentFileUrl || inv?.generatedReceiptUrl
   );
   const hasRejectedPaymentEvidenceOnInvoice = hasRejectedPaymentEvidence;
+  const ledgerInvoices = sortInvoicesForLedger(studentInvoices);
   const paymentRows = buildPaymentTableRows(studentInvoices).sort((a, b) => {
     const dateA = new Date(a.evidence?.uploadedAt || 0).getTime();
     const dateB = new Date(b.evidence?.uploadedAt || 0).getTime();
     return dateB - dateA;
   });
+  const pendingPaymentCount = paymentRows.filter((row) => {
+    const inv = row.invoice;
+    const evidence = row.evidence;
+    return evidence.isCurrent && String(inv?.status || "").trim() === "Verifying";
+  }).length;
   const openEvidenceModal = (inv, evidence = null) => {
     const claimed = evidence?.claimedAmount ?? inv?.paymentProofClaimedAmount;
     const approved = evidence?.approvedAmount;
@@ -768,8 +934,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
   const closeEvidenceModal = () => setEvidenceModal({ open: false, invoice: null, evidence: null, paidAmount: "", error: "", saving: false });
   const canUploadForInvoice = (inv) => {
     if (!canUploadEvidence) return false;
+    if (inv?.isWaveOff) return false;
     const status = String(inv?.status || "").trim();
     if (status === "Verifying" || isInvoiceFullyPaid(inv)) return false;
+    if (status === "Wave-off Pending" || status === "Waived" || status === "Wave-off Rejected") return false;
     if (!invoiceProofUrl(inv)) return true;
     return hasRejectedPaymentEvidenceOnInvoice(inv);
   };
@@ -836,7 +1004,14 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           /* @__PURE__ */ jsx("div", { className: "p-2 bg-indigo-50 text-indigo-600 rounded-lg", children: /* @__PURE__ */ jsx(FileText, { size: 20 }) }),
           /* @__PURE__ */ jsx("span", { className: "text-xs font-bold text-slate-400 uppercase", children: "Total Invoiced" })
         ] }),
-        /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: studentInvoices.length })
+        /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("div", { className: "text-2xl font-bold text-slate-900", children: formatRawLKR(totalInvoiced) }),
+          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+            studentInvoices.length,
+            " invoice",
+            studentInvoices.length === 1 ? "" : "s"
+          ] })
+        ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "bg-white p-5 rounded-xl border border-gray-200 shadow-sm", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 mb-2", children: [
@@ -872,10 +1047,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         " Create Invoice"
       ] })
     ] }),
-    isCreateOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
+    isCreateOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-6", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "New Invoice Details" }),
-        /* @__PURE__ */ jsxs("button", { onClick: () => setIsCreateOpen(false), className: "text-slate-400 hover:text-slate-600", children: [
+        /* @__PURE__ */ jsxs("button", { onClick: closeCreateModal, className: "text-slate-400 hover:text-slate-600", children: [
           /* @__PURE__ */ jsx("span", { className: "sr-only", children: "Close" }),
           /* @__PURE__ */ jsx("svg", { className: "w-5 h-5", fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: "2", d: "M6 18L18 6M6 6l12 12" }) })
         ] })
@@ -896,15 +1071,49 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
             }
           )
         ] }),
+        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+          /* @__PURE__ */ jsxs("label", { className: "inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer", children: [
+            /* @__PURE__ */ jsx("input", {
+              type: "checkbox",
+              className: "rounded border-gray-300 text-indigo-600 focus:ring-indigo-500",
+              checked: newIsWaveOff,
+              onChange: (e) => {
+                const checked = e.target.checked;
+                setNewIsWaveOff(checked);
+                if (checked) {
+                  setNewAmount("");
+                  setNewPaymentAccountId("");
+                  setNewDueDate("");
+                } else {
+                  setNewWaveOffReason("");
+                }
+              }
+            }),
+            /* @__PURE__ */ jsx("span", { className: "font-medium", children: "Wave-off invoice" }),
+            /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-500", children: "(requires manager approval)" })
+          ] })
+        ] }),
+        newIsWaveOff ? /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Wave-off reason" }),
+          /* @__PURE__ */ jsx("textarea", {
+            required: true,
+            rows: 3,
+            className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 resize-y min-h-[80px]",
+            placeholder: "Explain why this invoice should be waived…",
+            value: newWaveOffReason,
+            onChange: (e) => setNewWaveOffReason(e.target.value)
+          })
+        ] }) : null,
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Amount" }),
           /* @__PURE__ */ jsx(
             "input",
             {
-              required: true,
+              required: !newIsWaveOff,
+              disabled: newIsWaveOff,
               type: "number",
-              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
-              placeholder: "0.00",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-400",
+              placeholder: newIsWaveOff ? "Not required for wave-off" : "0.00",
               value: newAmount,
               onChange: (e) => setNewAmount(e.target.value)
             }
@@ -915,7 +1124,8 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           /* @__PURE__ */ jsxs(
             "select",
             {
-              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              disabled: newIsWaveOff,
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-400",
               value: newCurrency,
               onChange: (e) => setNewCurrency(e.target.value),
               children: [
@@ -933,15 +1143,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           /* @__PURE__ */ jsx(
             "input",
             {
-              required: true,
+              required: !newIsWaveOff,
+              disabled: newIsWaveOff,
               type: "date",
-              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-400",
               value: newDueDate,
               onChange: (e) => setNewDueDate(e.target.value)
             }
           )
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+        !newIsWaveOff ? /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Payment account" }),
           /* @__PURE__ */ jsxs("select", {
             className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500",
@@ -961,7 +1172,7 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
             ]
           }),
           resolvedPaymentAccounts.length === 0 ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-amber-700 mt-1.5", children: "Add bank accounts under Admin → Settings → Invoice payment accounts, then refresh this page." }) : null
-        ] }),
+        ] }) : null,
         /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
           /* @__PURE__ */ jsxs("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1 flex items-center gap-1", children: [
             /* @__PURE__ */ jsx(Link2, { size: 12 }),
@@ -986,75 +1197,76 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "md:col-span-2 flex gap-3 pt-2", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", className: "flex-1", onClick: () => {
-            setIsCreateOpen(false);
+            closeCreateModal();
             resetCreateForm();
           }, children: "Cancel" }),
-          /* @__PURE__ */ jsx(Button, { type: "submit", className: "flex-1", isLoading: isCreatingInvoice, children: "Issue Invoice" })
+          /* @__PURE__ */ jsx(Button, { type: "submit", className: "flex-1", isLoading: isCreatingInvoice, children: newIsWaveOff ? "Submit for Approval" : "Issue Invoice" })
         ] })
       ] })
     ] }) }),
     /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
       /* @__PURE__ */ jsx("h4", { className: "font-bold text-slate-800 text-sm", children: "Ledger" }),
-      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "All invoices for this student. Paid and balance due update when payments are approved in the Payments table below." })
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "All invoices for this student, oldest first. Click a row to view full details." })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-      /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500 font-medium", children: /* @__PURE__ */ jsxs("tr", { children: [
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Invoice" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Status" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Invoiced" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Paid" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Balance" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-right", children: "Details" })
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
+        ledgerInvoices.length,
+        " invoice",
+        ledgerInvoices.length === 1 ? "" : "s",
+        " · Totals shown in LKR using current exchange rates"
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : studentInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : studentInvoices.map((inv) => {
-        const paidSoFar = invoiceApprovedPaid(inv);
-        const balanceDue = invoiceBalanceDue(inv);
-        const invoiceStatus = String(inv?.status || "—").trim() || "—";
-        return /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors", children: [
-          /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 font-medium text-slate-700", children: [
-            /* @__PURE__ */ jsx("div", { className: "font-mono text-xs text-slate-500", children: inv.id }),
-            inv.description,
-            !isStudentView && inv.createdByName ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-500 mt-0.5", children: [
-              "Created by: ",
-              inv.createdByName
-            ] }) : null,
-            inv.issueDate ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-400 mt-0.5", children: [
-              "Issued: ",
-              inv.issueDate,
-              inv.dueDate ? ` · Due: ${inv.dueDate}` : ""
-            ] }) : null
-          ] }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(invoiceStatus)}`, children: invoiceStatus }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col", children: [
-            /* @__PURE__ */ jsxs("span", { className: "font-semibold", children: [
-              inv.currency,
-              " ",
-              invoiceLedgerAmount(inv).toLocaleString()
-            ] }),
-            inv.currency !== "LKR" ? /* @__PURE__ */ jsxs("span", { className: "text-[10px] text-slate-400 font-normal", children: [
-              "\u2248 ",
-              formatLKR(invoiceLedgerAmount(inv), inv.currency, exchangeRates)
-            ] }) : null
-          ] }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: paidSoFar > 0 ? /* @__PURE__ */ jsxs("span", { className: "font-semibold text-emerald-700", children: [
-            inv.currency,
-            " ",
-            paidSoFar.toLocaleString()
-          ] }) : /* @__PURE__ */ jsx("span", { className: "text-slate-400", children: "—" }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono text-slate-900", children: isInvoiceFullyPaid(inv) ? /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-emerald-600", children: "Settled" }) : /* @__PURE__ */ jsxs("span", { className: "font-semibold text-amber-700", children: [
-            inv.currency,
-            " ",
-            balanceDue.toLocaleString()
-          ] }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => handleOpenDetails(inv), children: "View" }) })
-        ] }, inv.id);
-      }) })
-    ] }) }),
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsx("tr", { children: LEDGER_TABLE_COLUMNS.map((col) => /* @__PURE__ */ jsx("th", { scope: "col", className: `whitespace-nowrap ${dt.th} ${col.className || ""}`, children: col.label }, col.key)) }) }),
+        /* @__PURE__ */ jsxs("tbody", { className: dt.body, children: [
+          invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : ledgerInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : ledgerInvoices.map((inv) => {
+            const balanceDue = invoiceBalanceDue(inv);
+            const invoiceStatus = String(inv?.status || "—").trim() || "—";
+            return /* @__PURE__ */ jsxs("tr", {
+              className: CLICKABLE_ROW_CLASS,
+              onClick: () => handleOpenDetails(inv),
+              onKeyDown: (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleOpenDetails(inv);
+                }
+              },
+              tabIndex: 0,
+              role: "button",
+              children: [
+              /* @__PURE__ */ jsxs("td", { className: "px-4 py-3 font-medium text-slate-800", children: [
+                /* @__PURE__ */ jsx("div", { className: "truncate max-w-[240px]", children: inv.description || "Invoice" }),
+                /* @__PURE__ */ jsx("div", { className: "font-mono text-[11px] text-slate-400 mt-0.5", children: inv.id })
+              ] }),
+              /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border whitespace-nowrap ${getStatusColor(invoiceStatus)}`, children: invoiceStatus }) }),
+              /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono text-slate-900 tabular-nums text-right", children: isInvoiceFullyPaid(inv) ? /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-emerald-600", children: "Settled" }) : inv.isWaveOff && invoiceStatus === "Waived" ? /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-teal-700", children: "Waived" }) : /* @__PURE__ */ jsxs("span", { className: "font-semibold text-amber-700", children: [
+                inv.currency,
+                " ",
+                balanceDue.toLocaleString()
+              ] }) })
+            ] }, inv.id);
+          }),
+          !invoicesLoading && ledgerInvoices.length > 0 ? /* @__PURE__ */ jsx("tr", { className: "bg-slate-50/90 border-t border-slate-200 text-xs text-slate-600", children: /* @__PURE__ */ jsxs("td", { className: "px-4 py-3 text-right", colSpan: LEDGER_TABLE_COLUMNS.length, children: [
+            "Totals (LKR): Invoiced ",
+            formatRawLKR(totalInvoiced),
+            " · Paid ",
+            formatRawLKR(totalPaid),
+            " · Outstanding ",
+            /* @__PURE__ */ jsx("span", { className: "font-semibold text-amber-700", children: formatRawLKR(totalPending) })
+          ] }) }) : null
+        ] })
+      ] }) })
+    ] }),
+    pendingPaymentCount > 0 && canAcceptPayment ? /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900", children: [
+      /* @__PURE__ */ jsx("span", { className: "font-semibold", children: pendingPaymentCount }),
+      " payment",
+      pendingPaymentCount === 1 ? "" : "s",
+      " awaiting review — click the highlighted row to review."
+    ] }) : null,
     /* @__PURE__ */ jsxs("div", { className: "space-y-2 pt-2", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
         /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
           /* @__PURE__ */ jsx("h4", { className: "font-bold text-slate-800 text-sm", children: "Payments" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: isStudentView ? "Approved, pending, and rejected receipts — one row per slip. Upload new receipts with the button." : "Approved, pending, and rejected payment evidence. Open a pending row to approve and set the amount received; the ledger balances update automatically." })
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: isStudentView ? "One row per receipt. Click a row to view details or upload new receipts with the button." : "One row per payment slip. Click a row to view evidence, approve, or reject." })
         ] }),
         canUploadEvidence ? /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: handleOpenAddEvidence, children: [
           /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-1.5" }),
@@ -1062,60 +1274,87 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         ] }) : null
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-      /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 border-b border-gray-200 text-slate-500 font-medium", children: /* @__PURE__ */ jsxs("tr", { children: [
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Date" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Status" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Amount" }),
-        /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-right", children: "Evidence" })
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
+        paymentRows.length,
+        " payment",
+        paymentRows.length === 1 ? "" : "s",
+        pendingPaymentCount > 0 ? ` · ${pendingPaymentCount} awaiting review` : ""
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : paymentRows.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-10", children: /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
-        /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: isStudentView ? "No payment receipts yet." : "No payment evidence yet." }),
-        canUploadEvidence ? /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: handleOpenAddEvidence, children: [
-          /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-1.5" }),
-          isStudentView ? "Add receipt" : "Add evidence"
-        ] }) : null
-      ] }) }) }) : paymentRows.map((row) => {
-        const inv = row.invoice;
-        const evidence = row.evidence;
-        const proofUrl = evidenceProofUrl(evidence);
-        const showReupload = evidence.isCurrent && canUploadForInvoice(inv) && hasRejectedPaymentEvidenceOnInvoice(inv);
-        const approvalLabel = getEvidenceApprovalLabel(evidence, inv);
-        const approvalClass = getPaymentApprovalClass(approvalLabel);
-        const rowAmount = evidenceDisplayAmount(evidence, inv);
-        const paymentKind = evidencePaymentKind(evidence, inv);
-        const paymentKindLabel = evidencePaymentKindLabel(paymentKind);
-        const paymentKindClass = evidencePaymentKindClass(paymentKind);
-        const rejectionNote = String(evidence?.rejectionReason || (evidence.isCurrent ? inv.paymentRejectionReason : "") || "").trim();
-        const evidenceLabel = evidence?.name || null;
-        const isPendingPayment = evidence.isCurrent && String(inv?.status || "").trim() === "Verifying";
-        const canReviewCurrent = canAcceptPayment && isPendingPayment;
-        return /* @__PURE__ */ jsxs("tr", { className: `hover:bg-slate-50 transition-colors ${isPendingPayment ? "bg-blue-50/40" : ""}`, children: [
-          /* @__PURE__ */ jsxs("td", { className: "px-6 py-4", children: [
-            /* @__PURE__ */ jsx("div", { className: "text-slate-800", children: formatPaymentTableDate(inv, evidence) }),
-            /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-400 mt-0.5", children: inv.description }),
-            evidenceLabel ? /* @__PURE__ */ jsx("div", { className: "text-xs text-slate-500 mt-0.5 truncate max-w-[220px]", children: evidenceLabel }) : null,
-            rejectionNote && approvalLabel === "Rejected" ? /* @__PURE__ */ jsxs("div", { className: "text-xs text-rose-600 mt-1", children: [
-              "Feedback: ",
-              rejectionNote
-            ] }) : null
-          ] }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${approvalClass}`, children: approvalLabel }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 font-mono font-semibold text-slate-900", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-1", children: [
-            /* @__PURE__ */ jsxs("span", { children: [
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsx("tr", { children: PAYMENTS_TABLE_COLUMNS.map((col) => /* @__PURE__ */ jsx("th", { scope: "col", className: `${dt.th} ${col.className || ""}`, children: col.label }, col.key)) }) }),
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: PAYMENTS_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : paymentRows.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: PAYMENTS_TABLE_COLUMNS.length, className: "text-center py-10", children: /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: isStudentView ? "No payment receipts yet." : "No payment evidence yet." }),
+          canUploadEvidence ? /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: handleOpenAddEvidence, children: [
+            /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-1.5" }),
+            isStudentView ? "Add receipt" : "Add evidence"
+          ] }) : null
+        ] }) }) }) : paymentRows.map((row) => {
+          const inv = row.invoice;
+          const evidence = row.evidence;
+          const approvalLabel = getEvidenceApprovalLabel(evidence, inv);
+          const approvalClass = getPaymentApprovalClass(approvalLabel);
+          const rowAmount = evidenceDisplayAmount(evidence, inv);
+          const isRefundRow = String(evidence?.outcome || "").trim() === "refund";
+          const isPendingPayment = evidence.isCurrent && String(inv?.status || "").trim() === "Verifying";
+          return /* @__PURE__ */ jsxs("tr", {
+            className: `${CLICKABLE_ROW_CLASS} ${isPendingPayment ? "bg-blue-50/50" : ""} ${isRefundRow ? "bg-rose-50/40" : ""}`,
+            onClick: () => !isRefundRow && openEvidenceModal(inv, evidence),
+            onKeyDown: (event) => {
+              if (isRefundRow) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openEvidenceModal(inv, evidence);
+              }
+            },
+            tabIndex: isRefundRow ? -1 : 0,
+            role: isRefundRow ? undefined : "button",
+            children: [
+            /* @__PURE__ */ jsx("td", { className: "px-4 py-3 whitespace-nowrap text-slate-800", children: formatPaymentTableDate(inv, evidence) }),
+            /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border whitespace-nowrap ${approvalClass}`, children: approvalLabel }) }),
+            /* @__PURE__ */ jsx("td", { className: `px-4 py-3 font-mono font-semibold tabular-nums text-right ${isRefundRow ? "text-rose-700" : "text-slate-900"}`, children: /* @__PURE__ */ jsxs("span", { children: [
+              isRefundRow ? "−" : "",
               inv.currency,
               " ",
               rowAmount.toLocaleString()
-            ] }),
-            paymentKindLabel && paymentKind !== "partial" ? /* @__PURE__ */ jsx("span", { className: `inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${paymentKindClass}`, children: paymentKindLabel }) : null
-          ] }) }),
-          /* @__PURE__ */ jsx("td", { className: "px-6 py-4 text-right", children: /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap justify-end gap-2", children: [
-            canReviewCurrent ? /* @__PURE__ */ jsx(Button, { size: "sm", className: "bg-indigo-600 hover:bg-indigo-700 text-white", onClick: () => openEvidenceModal(inv, evidence), children: "Approve" }) : /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: () => openEvidenceModal(inv, evidence), children: proofUrl ? "View evidence" : "View details" }),
-            showReupload ? /* @__PURE__ */ jsx(Button, { size: "sm", onClick: () => handlePayClick(inv), children: isStudentView ? "Re-upload receipt" : "Re-upload evidence" }) : null
-          ] }) })
-        ] }, row.rowKey);
-      }) })
-    ] }) }),
+            ] }) })
+          ] }, row.rowKey);
+        }) })
+      ] }) })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "space-y-2 pt-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
+        /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+          /* @__PURE__ */ jsx("h4", { className: "font-bold text-slate-800 text-sm", children: "Refunds" }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: isStaff ? "Request a refund with a reason. Approved refunds are processed by the accountant and reflected in the ledger." : "Refund requests submitted for this student." })
+        ] }),
+        isStaff ? /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "border-rose-200 text-rose-700 hover:bg-rose-50", onClick: () => setRefundDialog({ open: true, amount: "", currency: "LKR", invoiceId: "", reason: "", saving: false, error: "" }), children: [
+          /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-1.5" }),
+          "Request refund"
+        ] }) : null
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
+        refundRows.length,
+        " refund request",
+        refundRows.length === 1 ? "" : "s"
+      ] }) }),
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+          /* @__PURE__ */ jsx("th", { scope: "col", className: dt.th, children: "Submitted" }),
+          /* @__PURE__ */ jsx("th", { scope: "col", className: dt.th, children: "Amount" }),
+          /* @__PURE__ */ jsx("th", { scope: "col", className: dt.th, children: "Status" }),
+          /* @__PURE__ */ jsx("th", { scope: "col", className: `${dt.th} text-right`, children: "Reason" })
+        ] }) }),
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: refundsLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : refundRows.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No refund requests yet." }) }) : refundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80", children: [
+          /* @__PURE__ */ jsx("td", { className: "px-4 py-3 whitespace-nowrap text-slate-600 text-sm", children: String(row.requestedAt || "").slice(0, 10) || "—" }),
+          /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono font-semibold text-slate-900 tabular-nums", children: /* @__PURE__ */ jsxs("span", { children: [row.currency || "LKR", " ", Number(row.amount || 0).toLocaleString()] }) }),
+          /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border whitespace-nowrap ${requestStatusBadgeClass(row.status)}`, children: requestStatusLabel(row.status) }) }),
+          /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-right text-sm text-slate-600 max-w-[240px] truncate", title: row.reason || "", children: row.reason || "—" })
+        ] }, row.id)) })
+      ] }) })
+    ] }),
     isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
         /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Invoice Details" }),
@@ -1126,6 +1365,10 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-3 text-sm", children: [
         renderInvoiceDeliveryPanel(detailsInvoice),
+        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Status:" }),
+          /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(String(detailsInvoice.status || "—").trim())}`, children: detailsInvoice.status || "—" })
+        ] }),
         /* @__PURE__ */ jsxs("p", { children: [
           /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Invoice ID: " }),
           /* @__PURE__ */ jsx("span", { className: "font-mono text-slate-800", children: detailsInvoice.id })
@@ -1134,14 +1377,27 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Description: " }),
           /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: detailsInvoice.description })
         ] }),
+        !isStudentView && detailsInvoice.createdByName ? /* @__PURE__ */ jsxs("p", { children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Created by: " }),
+          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.createdByName })
+        ] }) : null,
         /* @__PURE__ */ jsxs("p", { children: [
-          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Amount: " }),
-          /* @__PURE__ */ jsxs("span", { className: "font-semibold text-slate-800", children: [
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Invoiced: " }),
+          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: detailsInvoice.isWaveOff ? "Wave-off (no charge)" : /* @__PURE__ */ jsxs(Fragment, { children: [
             detailsInvoice.currency,
             " ",
-            invoiceLedgerAmount(detailsInvoice).toLocaleString()
-          ] })
+            invoiceLedgerAmount(detailsInvoice).toLocaleString(),
+            detailsInvoice.currency !== "LKR" ? ` (≈ ${formatLKR(invoiceLedgerAmount(detailsInvoice), detailsInvoice.currency, exchangeRates)})` : ""
+          ] }) })
         ] }),
+        detailsInvoice.isWaveOff && detailsInvoice.waveOffReason ? /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-orange-100 bg-orange-50/60 p-3", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold uppercase text-orange-800 mb-1", children: "Wave-off reason" }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-orange-900 whitespace-pre-wrap", children: detailsInvoice.waveOffReason })
+        ] }) : null,
+        detailsInvoice.waveOffReviewNote ? /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-3", children: [
+          /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold uppercase text-slate-600 mb-1", children: "Review note" }),
+          /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-800 whitespace-pre-wrap", children: detailsInvoice.waveOffReviewNote })
+        ] }) : null,
         invoiceApprovedPaid(detailsInvoice) > 0 ? /* @__PURE__ */ jsxs("p", { children: [
           /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Paid so far: " }),
           /* @__PURE__ */ jsxs("span", { className: "font-semibold text-emerald-700", children: [
@@ -1159,16 +1415,12 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
           ] })
         ] }) : null,
         /* @__PURE__ */ jsxs("p", { children: [
-          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Status: " }),
-          /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-800", children: detailsInvoice.status })
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Issue date: " }),
+          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.issueDate || "—" })
         ] }),
         /* @__PURE__ */ jsxs("p", { children: [
-          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Issue Date: " }),
-          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.issueDate || "-" })
-        ] }),
-        /* @__PURE__ */ jsxs("p", { children: [
-          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Due Date: " }),
-          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.dueDate || "-" })
+          /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Due date: " }),
+          /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: detailsInvoice.dueDate || "—" })
         ] }),
         /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium pt-1", children: PAYMENT_NOT_REFUNDABLE_NOTICE })
       ] }),
@@ -1357,10 +1609,16 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
       const canEnterPaidAmount = canAcceptPayment && modalStatus === "Verifying" && (!modalEvidence || modalEvidence.isCurrent);
       const showModalReupload = modalEvidence?.isCurrent && canUploadForInvoice(modalInv) && hasRejectedPaymentEvidenceOnInvoice(modalInv);
       const modalRejectionNote = String(modalEvidence?.rejectionReason || (modalEvidence?.isCurrent ? modalInv.paymentRejectionReason : "") || "").trim();
+      const modalApprovalLabel = modalEvidence ? getEvidenceApprovalLabel(modalEvidence, modalInv) : getPaymentApprovalLabel(modalInv);
+      const modalApprovalClass = getPaymentApprovalClass(modalApprovalLabel);
+      const modalPaymentKind = modalEvidence ? evidencePaymentKind(modalEvidence, modalInv) : "";
+      const modalPaymentKindLabel = evidencePaymentKindLabel(modalPaymentKind);
+      const modalPaymentKindClass = evidencePaymentKindClass(modalPaymentKind);
+      const modalMethodLabel = modalEvidence ? paymentMethodLabel(modalEvidence, modalInv) : paymentMethodLabel(null, modalInv);
       return /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[60] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-2xl scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start gap-4 mb-4", children: [
           /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: canEnterPaidAmount ? "Approve payment" : "Payment evidence" }),
+            /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: canEnterPaidAmount ? "Approve payment" : "Payment details" }),
             /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-500 mt-1", children: [
               modalInv.description,
               " · ",
@@ -1368,6 +1626,36 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
             ] })
           ] }),
           /* @__PURE__ */ jsx("button", { onClick: closeEvidenceModal, className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm space-y-2 mb-4", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Status:" }),
+            /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${modalApprovalClass}`, children: modalApprovalLabel })
+          ] }),
+          /* @__PURE__ */ jsxs("p", { children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Date: " }),
+            /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: formatPaymentTableDate(modalInv, modalEvidence) })
+          ] }),
+          modalMethodLabel !== "—" ? /* @__PURE__ */ jsxs("p", { children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Method: " }),
+            /* @__PURE__ */ jsx("span", { className: "text-slate-800", children: modalMethodLabel })
+          ] }) : null,
+          modalPaymentKindLabel ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Type:" }),
+            /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${modalPaymentKindClass}`, children: modalPaymentKindLabel })
+          ] }) : null,
+          modalProofName ? /* @__PURE__ */ jsxs("p", { children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "File: " }),
+            /* @__PURE__ */ jsx("span", { className: "text-slate-800 break-all", children: modalProofName })
+          ] }) : null,
+          /* @__PURE__ */ jsxs("p", { children: [
+            /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Amount: " }),
+            /* @__PURE__ */ jsxs("span", { className: "font-semibold text-slate-900 font-mono", children: [
+              modalInv.currency || "LKR",
+              " ",
+              modalRowAmount.toLocaleString()
+            ] })
+          ] })
         ] }),
         modalProofUrl ? isImageProof(modalProofUrl, modalProofName) ? /* @__PURE__ */ jsx("img", { src: modalProofUrl, alt: modalProofName, className: "max-w-full max-h-[min(50vh,420px)] mx-auto rounded-lg border border-slate-200 object-contain" }) : isPdfProof(modalProofUrl, modalProofName) ? /* @__PURE__ */ jsx("iframe", { title: modalProofName, src: modalProofUrl, className: "w-full h-[min(50vh,420px)] rounded-lg border border-slate-200 bg-slate-50" }) : /* @__PURE__ */ jsxs("div", { className: "text-center py-10 space-y-4", children: [
           /* @__PURE__ */ jsx(FileText, { size: 40, className: "mx-auto text-slate-400" }),
@@ -1438,7 +1726,24 @@ const FinanceModule = ({ student, userRole, paymentAccounts = [], onCreateInvoic
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-1 leading-relaxed", children: whatsappNotification.message })
       ] }),
       /* @__PURE__ */ jsx("button", { onClick: () => setWhatsappNotification({ show: false, message: "" }), className: "text-slate-400 hover:text-slate-600", children: /* @__PURE__ */ jsx(X, { size: 16 }) })
-    ] }) })
+    ] }) }),
+    /* @__PURE__ */ jsx(RefundRequestModal, {
+      student,
+      open: refundDialog.open,
+      amount: refundDialog.amount,
+      currency: refundDialog.currency,
+      invoiceId: refundDialog.invoiceId,
+      reason: refundDialog.reason,
+      saving: refundDialog.saving,
+      error: refundDialog.error,
+      paidInvoices: paidInvoicesForRefund,
+      onClose: () => setRefundDialog({ open: false, amount: "", currency: "LKR", invoiceId: "", reason: "", saving: false, error: "" }),
+      onAmountChange: (value) => setRefundDialog((prev) => ({ ...prev, amount: value, error: "" })),
+      onCurrencyChange: (value) => setRefundDialog((prev) => ({ ...prev, currency: value, error: "" })),
+      onInvoiceIdChange: (value) => setRefundDialog((prev) => ({ ...prev, invoiceId: value, error: "" })),
+      onReasonChange: (value) => setRefundDialog((prev) => ({ ...prev, reason: value, error: "" })),
+      onSubmit: handleSubmitRefundRequest
+    })
   ] });
 };
 export {

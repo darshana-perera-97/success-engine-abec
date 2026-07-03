@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { DOC_MAPPING_FILE, STAGES_FILE } = require("../config");
+const { defaultCountryIntakeOptions, normalizeCountryIntakeOptions } = require("../lib/intakeUtils");
 
 /**
  * stages.json shape (country-keyed array):
@@ -102,6 +103,7 @@ function emptyDocConfig() {
     stageDeadlines: {},
     accountDetailsStageId: DEFAULT_ACCOUNT_DETAILS_STAGE_ID,
     documentNotifyDocs: defaultDocumentNotifyDocs(),
+    intakeOptions: defaultCountryIntakeOptions(),
   };
 }
 
@@ -239,6 +241,8 @@ module.exports = {
   defaultDocumentNotifyDocs,
   normalizeStageDeadlines,
   buildDefaultStageDeadlines,
+  normalizeCountryIntakeOptions,
+  defaultCountryIntakeOptions,
   DEFAULT_STAGES,
   DEFAULT_PIPELINE_DOC,
   DEFAULT_ACCOUNT_DETAILS_STAGE_ID,

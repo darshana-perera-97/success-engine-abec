@@ -1,4 +1,5 @@
 const { parseBody, sendJson } = require("../lib/httpUtils");
+const { logEvent } = require("../lib/logger");
 const { readInvoices, writeInvoices } = require("../models/invoices");
 const { readStudemts, publicInvoiceRecord, publicChatFileUrl } = require("../models/students");
 const { readPaymentAccounts } = require("../models/paymentAccounts");
@@ -7,6 +8,8 @@ const { buildInvoiceWhatsappMessage } = require("../services/whatsappMessages");
 const { deliverInvoicePackageToStudentWhatsapp, notifyInvoicePaymentDecision } = require("../services/notifications");
 const { readSystemData } = require("../models/systemData");
 const { isCounselorRole } = require("../services/roles");
+
+const WAVE_OFF_APPROVER_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 
 function normalizePaidAmount(value) {
   const n = Number(value);
@@ -28,8 +31,33 @@ function invoiceBalanceDue(invoice) {
 }
 
 function isInvoiceFullyPaid(invoice) {
-  if (String(invoice?.status || "").trim() === "Paid") return true;
+  const status = String(invoice?.status || "").trim();
+  if (status === "Paid" || status === "Waived") return true;
+  if (status === "Wave-off Rejected") return true;
   return invoiceBalanceDue(invoice) <= 0.009;
+}
+
+function mapInvoiceToWaveOffRequest(invoice, studentNameById = new Map()) {
+  const studentId = String(invoice?.studentId || "").trim();
+  return {
+    id: String(invoice?.id || "").trim(),
+    requestType: "invoice-wave-off",
+    invoiceId: String(invoice?.id || "").trim(),
+    studentId,
+    studentName: String(invoice?.studentName || studentNameById.get(studentId) || "").trim(),
+    description: String(invoice?.description || "").trim(),
+    reason: String(invoice?.waveOffReason || "").trim(),
+    status: String(invoice?.waveOffStatus || "pending").trim().toLowerCase(),
+    requestedByUserId: String(invoice?.createdById || "").trim(),
+    requestedByName: String(invoice?.createdByName || "").trim(),
+    requestedByRole: String(invoice?.createdByRole || "").trim(),
+    requestedAt: String(invoice?.issueDate || invoice?.updatedAt || "").trim(),
+    reviewedByUserId: String(invoice?.waveOffReviewedByUserId || "").trim() || undefined,
+    reviewedByName: String(invoice?.waveOffReviewedByName || "").trim() || undefined,
+    reviewedByRole: String(invoice?.waveOffReviewedByRole || "").trim() || undefined,
+    reviewedAt: String(invoice?.waveOffReviewedAt || "").trim() || undefined,
+    reviewNote: String(invoice?.waveOffReviewNote || "").trim() || undefined,
+  };
 }
 
 async function actorCanReviewInvoicePayment(actorRole) {
@@ -93,6 +121,42 @@ function clearCurrentPaymentProofFields(invoice) {
 }
 
 async function handle(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/invoice-wave-off-requests") {
+    try {
+      const requestedBy = String(url.searchParams.get("requestedBy") || "").trim();
+      const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
+      const pendingOnly = url.searchParams.get("pendingOnly") === "1" || url.searchParams.get("pendingOnly") === "true";
+      const studentId = String(url.searchParams.get("studentId") || "").trim();
+
+      const invoices = await readInvoices();
+      const students = await readStudemts();
+      const studentNameById = new Map(
+        students.map((s) => [String(s.id || "").trim(), String(s.name || "").trim()])
+      );
+
+      let list = invoices.filter((inv) => inv?.isWaveOff === true);
+      if (requestedBy) {
+        list = list.filter((inv) => String(inv.createdById || "").trim() === requestedBy);
+      }
+      if (studentId) {
+        list = list.filter((inv) => String(inv.studentId || "").trim() === studentId);
+      }
+      if (pendingOnly) {
+        list = list.filter((inv) => String(inv.waveOffStatus || "").trim().toLowerCase() === "pending");
+      } else if (status) {
+        list = list.filter((inv) => String(inv.waveOffStatus || "").trim().toLowerCase() === status);
+      }
+
+      const rows = list
+        .map((inv) => mapInvoiceToWaveOffRequest(inv, studentNameById))
+        .sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
+      sendJson(res, 200, { ok: true, data: rows });
+    } catch {
+      sendJson(res, 500, { ok: false, error: "Failed to load invoice wave-off requests." });
+    }
+    return true;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/invoices") {
     try {
       const invoices = await readInvoices();
@@ -210,7 +274,19 @@ async function handle(req, res, url) {
       const currency = String(body.currency || "LKR").trim().toUpperCase();
       const amountNum = Number(body.amount);
       const dueDate = String(body.dueDate || "").trim();
-      if (!studentId || !description || !dueDate || !Number.isFinite(amountNum) || amountNum <= 0) {
+      const isWaveOff = body.isWaveOff === true;
+      const waveOffReason = String(body.waveOffReason || "").trim();
+
+      if (!studentId || !description || !dueDate) {
+        sendJson(res, 400, { ok: false, error: "Invalid invoice payload." });
+        return true;
+      }
+      if (isWaveOff) {
+        if (!waveOffReason) {
+          sendJson(res, 400, { ok: false, error: "Wave-off reason is required." });
+          return true;
+        }
+      } else if (!Number.isFinite(amountNum) || amountNum <= 0) {
         sendJson(res, 400, { ok: false, error: "Invalid invoice payload." });
         return true;
       }
@@ -229,14 +305,18 @@ async function handle(req, res, url) {
       const invoice = {
         id: String(body.id || `INV-${Date.now()}`),
         studentId,
-        amount: Number(amountNum),
+        amount: isWaveOff ? 0 : Number(amountNum),
         currency,
         description,
         createdByName: String(body.createdByName || "").trim(),
         createdById: String(body.createdById || "").trim(),
+        createdByRole: String(body.createdByRole || "").trim() || undefined,
         issueDate: String(body.issueDate || new Date().toISOString().split("T")[0]),
         dueDate,
-        status: String(body.status || "Pending"),
+        status: isWaveOff ? "Wave-off Pending" : String(body.status || "Pending"),
+        isWaveOff: isWaveOff || undefined,
+        waveOffReason: isWaveOff ? waveOffReason : undefined,
+        waveOffStatus: isWaveOff ? "pending" : undefined,
         paymentMethod: body.paymentMethod ? String(body.paymentMethod) : undefined,
         generatedReceiptUrl: body.generatedReceiptUrl ? String(body.generatedReceiptUrl) : undefined,
         paymentProofUrl: body.paymentProofUrl ? String(body.paymentProofUrl) : undefined,
@@ -284,51 +364,144 @@ async function handle(req, res, url) {
       }
 
       let whatsappDelivery = { attempted: false, status: "skipped", reason: "Not attempted." };
-      try {
+      if (!isWaveOff) {
+        try {
+          const students = await readStudemts();
+          const student = students.find((item) => String(item.id || "") === studentId);
+          const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
+          if (!student) {
+            whatsappDelivery = { attempted: false, status: "skipped", reason: "Student record not found." };
+          } else if (!counselorId || counselorId === "Unassigned") {
+            whatsappDelivery = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
+          } else {
+            const messageText = buildInvoiceWhatsappMessage({
+              studentName: String(student.name || "").trim(),
+              invoiceId: invoice.id,
+              currency: invoice.currency,
+              amount: invoice.amount,
+              description: invoice.description,
+              issueDate: invoice.issueDate,
+              dueDate: invoice.dueDate,
+              paymentAccount,
+              attachmentLink: invoice.attachmentLink,
+              attachmentFileUrl: invoice.attachmentFileUrl,
+              attachmentFileName: invoice.attachmentFileName,
+              generatedReceiptUrl: invoice.generatedReceiptUrl,
+            });
+            whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
+              senderId: counselorId,
+              receiverId: studentId,
+              messageText,
+              receiptAttachment,
+              invoiceFileAttachment,
+            });
+          }
+        } catch (error) {
+          whatsappDelivery = {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send invoice via WhatsApp."),
+            sentAt: new Date().toISOString(),
+          };
+          console.error("Invoice WhatsApp send failed:", error);
+        }
+      } else {
+        whatsappDelivery = {
+          attempted: false,
+          status: "skipped",
+          reason: "Wave-off invoice pending manager approval.",
+        };
         const students = await readStudemts();
         const student = students.find((item) => String(item.id || "") === studentId);
-        const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
-        if (!student) {
-          whatsappDelivery = { attempted: false, status: "skipped", reason: "Student record not found." };
-        } else if (!counselorId || counselorId === "Unassigned") {
-          whatsappDelivery = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
-        } else {
-          const messageText = buildInvoiceWhatsappMessage({
-            studentName: String(student.name || "").trim(),
-            invoiceId: invoice.id,
-            currency: invoice.currency,
-            amount: invoice.amount,
-            description: invoice.description,
-            issueDate: invoice.issueDate,
-            dueDate: invoice.dueDate,
-            paymentAccount,
-            attachmentLink: invoice.attachmentLink,
-            attachmentFileUrl: invoice.attachmentFileUrl,
-            attachmentFileName: invoice.attachmentFileName,
-            generatedReceiptUrl: invoice.generatedReceiptUrl,
-          });
-          whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
-            senderId: counselorId,
-            receiverId: studentId,
-            messageText,
-            receiptAttachment,
-            invoiceFileAttachment,
-          });
+        if (student) {
+          invoice.studentName = String(student.name || "").trim();
         }
-      } catch (error) {
-        whatsappDelivery = {
-          attempted: true,
-          status: "failed",
-          reason: String(error?.message || "Failed to send invoice via WhatsApp."),
-          sentAt: new Date().toISOString(),
-        };
-        console.error("Invoice WhatsApp send failed:", error);
+        logEvent("invoice-wave-off", "created", {
+          id: invoice.id,
+          studentId,
+          requestedByUserId: invoice.createdById,
+        });
       }
       invoice.whatsappDelivery = whatsappDelivery;
       const invoices = await readInvoices();
       const nextInvoices = [invoice, ...invoices];
       await writeInvoices(nextInvoices);
       sendJson(res, 201, { ok: true, data: publicInvoiceRecord(req, invoice) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && /^\/api\/invoices\/[^/]+\/decide-wave-off\/?$/.test(url.pathname)) {
+    try {
+      const invoiceId = decodeURIComponent(url.pathname.replace("/api/invoices/", "").split("/")[0] || "").trim();
+      if (!invoiceId) {
+        sendJson(res, 400, { ok: false, error: "Invoice ID is required." });
+        return true;
+      }
+      const body = await parseBody(req);
+      const decision = String(body.decision || "").trim().toLowerCase();
+      const reviewerRole = String(body.reviewedByRole || "").trim();
+      const reviewerUserId = String(body.reviewedByUserId || "").trim();
+      const reviewerName = String(body.reviewedByName || "").trim();
+      const reviewNote = String(body.reviewNote || "").trim();
+
+      if (!WAVE_OFF_APPROVER_ROLES.has(reviewerRole)) {
+        sendJson(res, 403, { ok: false, error: "You do not have permission to review wave-off invoices." });
+        return true;
+      }
+      if (decision !== "approved" && decision !== "rejected") {
+        sendJson(res, 400, { ok: false, error: "Decision must be approved or rejected." });
+        return true;
+      }
+
+      const invoices = await readInvoices();
+      const idx = invoices.findIndex((inv) => String(inv.id || "") === invoiceId);
+      if (idx === -1) {
+        sendJson(res, 404, { ok: false, error: "Invoice not found." });
+        return true;
+      }
+      const current = invoices[idx];
+      if (current?.isWaveOff !== true) {
+        sendJson(res, 400, { ok: false, error: "This invoice is not a wave-off request." });
+        return true;
+      }
+      if (String(current.waveOffStatus || "").trim().toLowerCase() !== "pending") {
+        sendJson(res, 400, { ok: false, error: "This wave-off request has already been reviewed." });
+        return true;
+      }
+
+      const reviewedAt = new Date().toISOString();
+      const merged = {
+        ...current,
+        waveOffStatus: decision,
+        waveOffReviewedByUserId: reviewerUserId,
+        waveOffReviewedByName: reviewerName,
+        waveOffReviewedByRole: reviewerRole,
+        waveOffReviewedAt: reviewedAt,
+        waveOffReviewNote: reviewNote || undefined,
+        updatedAt: reviewedAt,
+      };
+      if (decision === "approved") {
+        merged.status = "Waived";
+        merged.amount = 0;
+      } else {
+        merged.status = "Wave-off Rejected";
+        merged.amount = 0;
+      }
+
+      const updated = [...invoices];
+      updated[idx] = merged;
+      await writeInvoices(updated);
+
+      logEvent("invoice-wave-off", decision, {
+        id: invoiceId,
+        studentId: merged.studentId,
+        reviewedByUserId: reviewerUserId,
+      });
+
+      sendJson(res, 200, { ok: true, data: publicInvoiceRecord(req, merged) });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }
@@ -592,6 +765,10 @@ async function handle(req, res, url) {
       }
       if (isInvoiceFullyPaid(current)) {
         sendJson(res, 400, { ok: false, error: "This invoice is already fully paid." });
+        return true;
+      }
+      if (current?.isWaveOff === true) {
+        sendJson(res, 400, { ok: false, error: "Payment evidence cannot be uploaded for a wave-off invoice." });
         return true;
       }
       const balanceDue = invoiceBalanceDue(current);

@@ -2,6 +2,7 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import React from "react";
 import { Download, Filter, User, X } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { offerStatusBadgeClass } from "../utils/universityOfferLetters";
 import {
   MILESTONE_TYPES,
@@ -36,6 +37,8 @@ const defaultFilters = {
   country: "All",
   counselor: "All",
   status: "All",
+  intakeMonth: "All",
+  intakeYear: "All",
   dateFrom: "",
   dateTo: "",
 };
@@ -48,6 +51,8 @@ function countActiveFilters(filters) {
   if (filters.country !== "All") count += 1;
   if (filters.counselor !== "All") count += 1;
   if (filters.status !== "All") count += 1;
+  if (filters.intakeMonth !== "All") count += 1;
+  if (filters.intakeYear !== "All") count += 1;
   if (filters.dateFrom) count += 1;
   if (filters.dateTo) count += 1;
   return count;
@@ -341,6 +346,42 @@ const StudentMilestonesTable = ({
           /* @__PURE__ */ jsxs("label", { className: "block", children: [
             /* @__PURE__ */ jsx("span", {
               className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+              children: "Intake month",
+            }),
+            /* @__PURE__ */ jsxs("select", {
+              value: filters.intakeMonth,
+              onChange: (e) => updateFilter("intakeMonth", e.target.value),
+              className:
+                "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+              children: [
+                /* @__PURE__ */ jsx("option", { value: "All", children: "All months" }),
+                ...filterOptions.intakeMonths.map((month) =>
+                  /* @__PURE__ */ jsx("option", { value: month, children: month }, month)
+                ),
+              ],
+            }),
+          ] }),
+          /* @__PURE__ */ jsxs("label", { className: "block", children: [
+            /* @__PURE__ */ jsx("span", {
+              className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
+              children: "Intake year",
+            }),
+            /* @__PURE__ */ jsxs("select", {
+              value: filters.intakeYear,
+              onChange: (e) => updateFilter("intakeYear", e.target.value),
+              className:
+                "mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+              children: [
+                /* @__PURE__ */ jsx("option", { value: "All", children: "All years" }),
+                ...filterOptions.intakeYears.map((year) =>
+                  /* @__PURE__ */ jsx("option", { value: year, children: year }, year)
+                ),
+              ],
+            }),
+          ] }),
+          /* @__PURE__ */ jsxs("label", { className: "block", children: [
+            /* @__PURE__ */ jsx("span", {
+              className: "text-[10px] font-bold uppercase tracking-wide text-slate-500",
               children: "From date",
             }),
             /* @__PURE__ */ jsx("input", {
@@ -408,33 +449,32 @@ const StudentMilestonesTable = ({
               : "No records match the current filters.",
           })
         : /* @__PURE__ */ jsx("div", {
-            className: "overflow-x-auto overflow-y-auto max-h-[520px] border border-slate-100 rounded-lg",
+            className: `${dt.scrollY} max-h-[520px] rounded-lg border border-slate-200`,
             children: /* @__PURE__ */ jsxs("table", {
-              className: "min-w-full text-sm",
+              className: dt.table,
               children: [
                 /* @__PURE__ */ jsx("thead", {
-                  className: "bg-slate-50 sticky top-0 z-10",
+                  className: dt.headSticky,
                   children: /* @__PURE__ */ jsxs("tr", {
-                    className: "text-left text-[10px] font-bold uppercase tracking-wide text-slate-500",
                     children: [
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Date" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Student" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Milestone" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Status" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Branch" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Country" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3", children: "Counselor" }),
-                      /* @__PURE__ */ jsx("th", { className: "px-3 py-3 text-right", children: "Profile" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Date" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Student" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Milestone" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Status" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Branch" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Country" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Counselor" }),
+                      /* @__PURE__ */ jsx("th", { className: dt.thCompactRight, children: "Profile" }),
                     ],
                   }),
                 }),
                 /* @__PURE__ */ jsx("tbody", {
-                  className: "divide-y divide-slate-100",
+                  className: dt.body,
                   children: filteredRows.map((row) =>
                     /* @__PURE__ */ jsxs(
                       "tr",
                       {
-                        className: "hover:bg-slate-50/80",
+                        className: dt.row,
                         children: [
                           /* @__PURE__ */ jsx("td", {
                             className: "px-3 py-3 text-slate-600 whitespace-nowrap",

@@ -4,6 +4,7 @@ import { DollarSign, ExternalLink } from "lucide-react";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { getFilteredInvoices } from "../authApi";
+import { dt } from "./DataTable";
 
 const TABS = [
   { id: "all", label: "All" },
@@ -121,20 +122,20 @@ const AllInvoices = ({
       })
     ] }),
     jsxs("div", {
-      className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
+      className: dt.card,
       children: [
-        jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
+        jsx("div", { className: dt.toolbar, children: jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
           rows.length,
           " invoice",
           rows.length === 1 ? "" : "s",
           " · ",
           TABS.find((t) => t.id === activeTab)?.label || "All"
         ] }) }),
-        jsx("div", { className: "overflow-x-auto", children: jsxs("table", {
-          className: "min-w-full text-sm border-collapse",
+        jsx("div", { className: dt.scroll, children: jsxs("table", {
+          className: dt.table,
           children: [
             jsx("thead", {
-              className: "bg-slate-50 border-b border-slate-200 text-left text-xs font-bold uppercase tracking-wide text-slate-500",
+              className: dt.head,
               children: jsx("tr", {
                 children: COLUMNS.map((col) =>
                   jsx(
@@ -150,7 +151,7 @@ const AllInvoices = ({
               })
             }),
             jsx("tbody", {
-              className: "divide-y divide-slate-100",
+              className: dt.body,
               children: loading
                 ? jsx("tr", {
                     children: jsx("td", {

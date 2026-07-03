@@ -1,5 +1,5 @@
 const { PIPELINE_STEPS, LEGACY_STATUS_TO_CANONICAL } = require("../config");
-const { isCounselorRole } = require("./roles");
+const { isStudentContactStaffRole } = require("./roles");
 
 function normalizePipelineStatus(status) {
   const raw = String(status || "").trim();
@@ -22,7 +22,7 @@ function buildCounselorIdentitySet(users, branch) {
   const identitySet = new Set();
   const n = (v) => String(v || "").trim().toLowerCase();
   for (const user of Array.isArray(users) ? users : []) {
-    if (!isCounselorRole(user?.role)) continue;
+    if (!isStudentContactStaffRole(user?.role)) continue;
     if (!branchesMatchBackend(user?.branch, branchLabel)) continue;
     const id = n(user.id); if (id) identitySet.add(id);
     const email = n(user.email); if (email) identitySet.add(email);

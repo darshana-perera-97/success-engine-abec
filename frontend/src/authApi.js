@@ -426,7 +426,7 @@ export async function getReqStudents(params = {}) {
   }
 }
 
-/** Admin: bulk import Meta leads (or similar) into req-students.json */
+/** Admin/Manager: bulk import Meta leads (or similar) into req-students.json */
 export async function bulkImportReqStudents(entries) {
   const rows = Array.isArray(entries) ? entries : [];
   if (!rows.length) {
@@ -631,6 +631,38 @@ export async function getAllDocMapping() {
     const res = await fetch(`${API_BASE}/api/doc-mapping/all`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) return { ok: false, error: data.error || "Failed to load doc mapping." };
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
+export async function getDocMappingIntakeOptions(country) {
+  const key = String(country || "").trim();
+  if (!key) return { ok: false, error: "Country is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/intake-options?country=${encodeURIComponent(key)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to load intake options." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server." };
+  }
+}
+
+export async function saveDocMappingIntakeOptions(country, intakeOptions, role = "Admin") {
+  try {
+    const res = await fetch(`${API_BASE}/api/doc-mapping/intake-options`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, intakeOptions, role }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to save intake options." };
+    }
     return { ok: true, data: data.data };
   } catch {
     return { ok: false, error: "Cannot reach server." };
@@ -1187,6 +1219,25 @@ export async function getStudents(params = {}) {
   }
 }
 
+export async function sendStudentLoginDetails(studentId, payload = {}) {
+  try {
+    const id = String(studentId || "").trim();
+    if (!id) return { ok: false, error: "Student ID is required." };
+    const res = await fetch(`${API_BASE}/api/students/${encodeURIComponent(id)}/send-login-details`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to send login details." };
+    }
+    return { ok: true, data: data.data || null, delivery: data.delivery || data.data?.delivery || null };
+  } catch {
+    return { ok: false, error: "Cannot reach student server. Please contact the Support team." };
+  }
+}
+
 export async function getStudentById(studentId) {
   try {
     const id = String(studentId || "").trim();
@@ -1733,5 +1784,357 @@ export async function getCompanyProfile() {
       ok: false,
       error: "Cannot reach server. Please contact the Support team.",
     };
+  }
+}
+
+export async function getCountryChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/country-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load country change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createCountryChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/country-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit country change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideCountryChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/country-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review country change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getIntakeChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/intake-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load intake change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createIntakeChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/intake-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit intake change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideIntakeChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/intake-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review intake change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getStudentDetailChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/student-detail-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load student detail change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createStudentDetailChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/student-detail-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit student detail change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideStudentDetailChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/student-detail-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review student detail change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getInvoiceWaveOffRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/invoice-wave-off-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load invoice wave-off requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideInvoiceWaveOff(invoiceId, payload) {
+  const id = String(invoiceId || "").trim();
+  if (!id) return { ok: false, error: "Invoice id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/invoices/${encodeURIComponent(id)}/decide-wave-off`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review wave-off invoice." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getStudentRemovalRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/student-removal-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load student removal requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createStudentRemovalRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/student-removal-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit student removal request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideStudentRemovalRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/student-removal-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review student removal request." };
+    }
+    return { ok: true, data: data.data || null, removedStudent: data.removedStudent || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getRefundRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    if (params.approvedOnly) search.set("approvedOnly", "1");
+    if (params.accountantQueue) search.set("accountantQueue", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/refund-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load refund requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createRefundRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/refund-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit refund request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideRefundRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/refund-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review refund request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function markRefundRequestRefunded(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/refund-requests/${encodeURIComponent(id)}/mark-refunded`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to mark refund as paid." };
+    }
+    return { ok: true, data: data.data || null, invoice: data.invoice || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
   }
 }

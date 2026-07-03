@@ -1,7 +1,4 @@
-/**
- * Canonical student pipeline stages and per-stage SLAs (see product spec).
- * Legacy CRM status strings are normalized for display and escalation logic.
- */
+import { isStudentContactStaffAccountRole } from "./roles";
 
 export const PIPELINE_STEPS = [
   "Inquiry",
@@ -675,7 +672,7 @@ export function resolveStudentBranchKey(
   return "";
 }
 
-/** Counselor/consultor account ids and emails at a branch (normalized lowercase). */
+/** Staff who may be linked to students as counselors at a branch (normalized lowercase). */
 export function buildBranchCounselorIdentitySet(employees = [], managerBranch) {
   const branch = String(managerBranch || "").trim();
   if (!branch) return new Set();
@@ -686,16 +683,7 @@ export function buildBranchCounselorIdentitySet(employees = [], managerBranch) {
     if (normalized) identitySet.add(normalized);
   };
   for (const employee of Array.isArray(employees) ? employees : []) {
-    const role = String(employee?.role || "").trim().toLowerCase();
-    if (
-      !role.includes("counsel") &&
-      role !== "consultor" &&
-      role !== "visa officer" &&
-      role !== "visa officer & counselor" &&
-      role !== "visa officer & counsellor"
-    ) {
-      continue;
-    }
+    if (!isStudentContactStaffAccountRole(employee?.role)) continue;
     if (!branchesMatch(employee?.branch, branch)) continue;
     addIdentity(employee.id);
     addIdentity(employee.email);

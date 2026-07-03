@@ -10,6 +10,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { formatRawLKR, formatLKR } from "../utils";
 import { useExchangeRates } from "../useExchangeRates";
 import { isPaidInvoice, invoiceAmountLkr } from "../pipeline";
@@ -239,12 +240,12 @@ const AccountantDashboard = ({
 
   const renderInvoiceTable = (rows, emptyMessage) =>
     /* @__PURE__ */ jsx("div", {
-      className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
-      children: /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", {
-        className: "min-w-full text-sm",
+      className: dt.card,
+      children: /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", {
+        className: dt.table,
         children: [
           /* @__PURE__ */ jsx("thead", {
-            className: "bg-slate-50 border-b border-slate-200 text-left text-xs font-bold uppercase tracking-wide text-slate-500",
+            className: dt.head,
             children: /* @__PURE__ */ jsxs("tr", { children: [
               /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Invoice" }),
               /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Student" }),
@@ -255,7 +256,7 @@ const AccountantDashboard = ({
             ] })
           }),
           /* @__PURE__ */ jsx("tbody", {
-            className: "divide-y divide-slate-100",
+            className: dt.body,
             children: invoicesLoading
               ? /* @__PURE__ */ jsx("tr", {
                   children: /* @__PURE__ */ jsx("td", {

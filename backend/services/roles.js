@@ -25,6 +25,18 @@ function isCountryCoordinatorRole(role) {
   return String(role || "").trim() === "Country Coordinator";
 }
 
+/** Staff who may be linked to students as primary or secondary counselors. */
+function isStudentContactStaffRole(role) {
+  const normalized = normalizeRoleKey(role);
+  return (
+    isCounselorRole(role) ||
+    isCountryCoordinatorRole(role) ||
+    normalized === "admin" ||
+    normalized === "manager" ||
+    normalized === "team lead"
+  );
+}
+
 /** Counselors and country coordinators connect their own WhatsApp sessions. */
 function isWhatsappIntegratedStaffRole(role) {
   return isCounselorRole(role) || isCountryCoordinatorRole(role);
@@ -71,6 +83,7 @@ module.exports = {
   normalizeRoleKey,
   isCounselorRole,
   isCountryCoordinatorRole,
+  isStudentContactStaffRole,
   isWhatsappIntegratedStaffRole,
   isStaffWelcomeEmailRole,
   staffWelcomeRolePhrase,

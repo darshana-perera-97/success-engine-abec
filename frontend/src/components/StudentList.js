@@ -4,12 +4,13 @@ import { getAccounts, searchStudents } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
-import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole } from "../roles";
+import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole, canActAsPrimaryCounselorPortalRole } from "../roles";
 import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, getAssignedCounselorIds, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
+import { dt } from "./DataTable";
 
 import { SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 
@@ -178,7 +179,7 @@ const StudentList = ({
     if (String(userRole || "") === "Manager" && scopeBranch) {
       base = base.filter((item) => branchesMatch(item.branch, scopeBranch));
     }
-    if (!(isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator") || !currentUser) {
+    if (!canActAsPrimaryCounselorPortalRole(userRole) || !currentUser) {
       return base;
     }
     const exists = base.some(
@@ -263,7 +264,7 @@ const StudentList = ({
     const normalized = String(value ?? "").trim().toLowerCase();
     return normalized === "" || normalized === "unassigned" || normalized === "none" || normalized === "null";
   };
-  const canManageCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Country Coordinator";
+  const canManageCounselors = userRole === "Admin" || userRole === "Manager" || userRole === "Team Lead" || userRole === "Country Coordinator";
   const handleAddStudent = async (newStudent) => {
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);
@@ -494,22 +495,22 @@ const StudentList = ({
           ] })
         ] })
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden", children: [
-      /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-        /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 text-slate-500 font-medium border-b border-gray-200", children: /* @__PURE__ */ jsxs("tr", { children: [
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3 w-[120px]", children: "ID" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Student Name" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Country" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Branch" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Pipeline Stage" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3", children: "Counselor" }),
-          /* @__PURE__ */ jsx("th", { className: "px-6 py-3 text-right", children: "Next Stage" })
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+          /* @__PURE__ */ jsx("th", { className: `${dt.th} w-[120px]`, children: "ID" }),
+          /* @__PURE__ */ jsx("th", { className: dt.th, children: "Student Name" }),
+          /* @__PURE__ */ jsx("th", { className: dt.th, children: "Country" }),
+          /* @__PURE__ */ jsx("th", { className: dt.th, children: "Branch" }),
+          /* @__PURE__ */ jsx("th", { className: dt.th, children: "Pipeline Stage" }),
+          /* @__PURE__ */ jsx("th", { className: dt.th, children: "Counselor" }),
+          /* @__PURE__ */ jsx("th", { className: dt.thRight, children: "Next Stage" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
           "tr",
           {
             onClick: () => onSelectStudent(student),
-            className: "hover:bg-slate-50 cursor-pointer transition-colors group",
+            className: dt.rowInteractive,
             children: [
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 font-mono text-xs text-slate-400", children: student.id }),
               /* @__PURE__ */ jsxs("td", { className: "px-6 py-3 font-medium text-slate-900", children: [

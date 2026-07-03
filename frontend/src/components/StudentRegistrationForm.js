@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { getBranches, getCountries, submitStudentRegFormRequest } from "../authApi";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
+import { resolveFormWhatsappNumber, validateWhatsappFields } from "../utils/phoneWhatsapp";
 import { LIVING_STATUSES, YES_NO_OPTIONS } from "./InquiryIntakeForm";
+import { IntakeFields } from "./IntakeFields";
+import { validateIntakeFields } from "../utils/intakeFields";
+import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { Button } from "./Button";
+import { PhoneWhatsappFields } from "./PhoneWhatsappFields";
 
 const EDUCATION_LEVELS = [
   "High school",
@@ -30,6 +35,8 @@ export function StudentRegistrationForm() {
     name: "",
     email: "",
     phone: "",
+    whatsappSameAsPhone: true,
+    whatsappNumber: "",
     countryToVisit: "",
     city: "",
     nearestOffice: "",
@@ -37,8 +44,12 @@ export function StudentRegistrationForm() {
     visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
     intendedProgram: "",
+    intakeMonth: "",
+    intakeYear: "",
     message: ""
   });
+
+  const intakeOptions = useIntakeOptionsForCountry(form.countryToVisit);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,11 +105,27 @@ export function StudentRegistrationForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError("");
+    const email = form.email.trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFormError("Please enter a valid email address.");
+      return;
+    }
+    const whatsappValidation = validateWhatsappFields(form);
+    if (!whatsappValidation.ok) {
+      setFormError(whatsappValidation.error);
+      return;
+    }
+    const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: false });
+    if (!intakeValidation.ok) {
+      setFormError(intakeValidation.error);
+      return;
+    }
     setIsSaving(true);
     const result = await submitStudentRegFormRequest({
       name: form.name.trim(),
-      email: form.email.trim(),
+      email,
       phone: form.phone.trim(),
+      whatsappNumber: resolveFormWhatsappNumber(form),
       countryToVisit: form.countryToVisit.trim(),
       city: form.city.trim(),
       nearestOffice: form.nearestOffice.trim(),
@@ -106,6 +133,8 @@ export function StudentRegistrationForm() {
       visaRejectionAnyCountry: form.visaRejectionAnyCountry.trim(),
       currentEducationLevel: form.currentEducationLevel,
       intendedProgram: form.intendedProgram.trim(),
+      intakeMonth: intakeValidation.intakeMonth,
+      intakeYear: intakeValidation.intakeYear,
       message: form.message.trim()
     });
     setIsSaving(false);
@@ -174,11 +203,10 @@ export function StudentRegistrationForm() {
 
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Email <span className="text-rose-500">*</span>
+              Email
             </label>
             <input
               type="email"
-              required
               autoComplete="email"
               className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={form.email}
@@ -187,18 +215,28 @@ export function StudentRegistrationForm() {
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Contact number <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="tel"
-              required
-              autoComplete="tel"
-              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              value={form.phone}
-              onChange={(e) => update("phone", e.target.value)}
-              placeholder="Include country code if applicable"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <PhoneWhatsappFields
+              phone={form.phone}
+              whatsappNumber={form.whatsappNumber}
+              whatsappSameAsPhone={form.whatsappSameAsPhone}
+              phoneLabel="Contact number"
+              onPhoneChange={(value) =>
+                setForm((prev) => ({
+                  ...prev,
+                  phone: value,
+                  whatsappNumber: prev.whatsappSameAsPhone !== false ? value : prev.whatsappNumber
+                }))
+              }
+              onWhatsappNumberChange={(value) => update("whatsappNumber", value)}
+              onWhatsappSameAsPhoneChange={(checked) =>
+                setForm((prev) => ({
+                  ...prev,
+                  whatsappSameAsPhone: checked,
+                  whatsappNumber: checked ? prev.phone : prev.whatsappNumber
+                }))
+              }
+              compactLabels
             />
           </div>
 
@@ -222,12 +260,12 @@ export function StudentRegistrationForm() {
                 ))
               )}
             </select>
-            <p className="mt-1 text-[11px] text-slate-500">{branchCountriesEnabled ? "Options depend on the nearest office you select." : "Showing the global destination list."}</p>
+            <p className="mt-1 text-[11px] text-slate-500">{branchCountriesEnabled ? "Options depend on the preferred branch you select." : "Showing the global destination list."}</p>
           </div>
 
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Nearest office <span className="text-rose-500">*</span>
+              Preferred branch <span className="text-rose-500">*</span>
             </label>
             <select
               required
@@ -247,7 +285,7 @@ export function StudentRegistrationForm() {
                 ))
               )}
             </select>
-            <p className="mt-1 text-[11px] text-slate-500">Choose the branch closest to you. Options come from branch settings.</p>
+            <p className="mt-1 text-[11px] text-slate-500">Choose your preferred branch. Options come from branch settings.</p>
           </div>
 
           <div>
@@ -332,6 +370,16 @@ export function StudentRegistrationForm() {
               placeholder="e.g. BSc Computer Science, MBA, A-levels"
             />
           </div>
+
+          <IntakeFields
+            intakeMonth={form.intakeMonth}
+            intakeYear={form.intakeYear}
+            onIntakeMonthChange={(value) => update("intakeMonth", value)}
+            onIntakeYearChange={(value) => update("intakeYear", value)}
+            fieldClassName="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+            monthOptions={intakeOptions.months}
+            yearOptions={intakeOptions.years}
+          />
 
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">

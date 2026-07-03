@@ -1,3 +1,5 @@
+import { formatInquirySource } from "./inquirySource";
+
 function extractWebFormNameFromMessage(message) {
   const text = String(message || "").trim();
   const match = text.match(/^Form:\s*(.+?)(?:\n\n|$)/s);
@@ -11,16 +13,5 @@ export function resolveWebFormName(row) {
 }
 
 export function formatRequestedStudentSource(row) {
-  const source = String(row?.source || "").trim().toLowerCase();
-
-  if (source === "meta-leads-import") return "Import";
-  if (source === "student-reg-form") return "Student-reg-form";
-  if (source === "counselor-reassignment" || source === "custom-input") return "Custom Input";
-  if (source === "web-form") {
-    const formName = resolveWebFormName(row);
-    return formName ? `Web form — ${formName}` : "Web form";
-  }
-
-  const raw = String(row?.source || "").trim();
-  return raw || "—";
+  return formatInquirySource(row?.source);
 }

@@ -34,6 +34,11 @@ const APPOINTMENTS_FILE = path.join(DATA_DIR, "appointments.json");
 const INVOICES_FILE = path.join(DATA_DIR, "invoices.json");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
 const REQ_STUDENTS_FILE = path.join(DATA_DIR, "req-students.json");
+const COUNTRY_CHANGE_REQUESTS_FILE = path.join(DATA_DIR, "countryChangeRequests.json");
+const STUDENT_DETAIL_CHANGE_REQUESTS_FILE = path.join(DATA_DIR, "studentDetailChangeRequests.json");
+const STUDENT_REMOVAL_REQUESTS_FILE = path.join(DATA_DIR, "studentRemovalRequests.json");
+const INTAKE_CHANGE_REQUESTS_FILE = path.join(DATA_DIR, "intakeChangeRequests.json");
+const REFUND_REQUESTS_FILE = path.join(DATA_DIR, "refundRequests.json");
 const DOC_MAPPING_FILE = path.join(DATA_DIR, "docMapping.json");
 const WEB_FORMS_FILE = path.join(DATA_DIR, "webForms.json");
 const STAGES_FILE = path.join(DATA_DIR, "stages.json");
@@ -80,6 +85,7 @@ const DEFAULT_SYSTEM_DATA = {
   counselorCanAcceptPayments: false,
   adminChatEnabled: false,
   branchCountriesEnabled: false,
+  goldLoansAcceptable: true,
 };
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
@@ -196,6 +202,11 @@ module.exports = {
   INVOICES_FILE,
   TASKS_FILE,
   REQ_STUDENTS_FILE,
+  COUNTRY_CHANGE_REQUESTS_FILE,
+  STUDENT_DETAIL_CHANGE_REQUESTS_FILE,
+  STUDENT_REMOVAL_REQUESTS_FILE,
+  INTAKE_CHANGE_REQUESTS_FILE,
+  REFUND_REQUESTS_FILE,
   DOC_MAPPING_FILE,
   WEB_FORMS_FILE,
   STAGES_FILE,

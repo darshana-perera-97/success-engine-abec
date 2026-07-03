@@ -153,9 +153,15 @@ npm install
 npm start              # http://localhost:3000
 ```
 
-When the browser is on `localhost`, the frontend **automatically** calls `http://localhost:3334` (no need to change profile `API_BASE`).
+On `localhost`, the frontend UI stays on `:3000` and **API calls use `API_BASE` from the active profile** (`frontend/src/profile/<name>/companyConfig.js`) — e.g. the live server while you develop locally.
 
-Optional override in `frontend/.env.development`:
+To use a **local** backend instead, add to `frontend/.env.development`:
+
+```env
+REACT_APP_USE_LOCAL_BACKEND=true
+```
+
+Or force any API host:
 
 ```env
 REACT_APP_API_BASE=http://localhost:3334

@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
+const { logEvent } = require("../lib/logger");
 const {
   readBranches,
   writeBranches,
@@ -16,6 +17,7 @@ const { readPaymentAccounts, writePaymentAccounts, normalizePaymentAccount } = r
 const { readUniversityPrograms, writeUniversityPrograms } = require("../models/universityPrograms");
 const { getWebFormById } = require("../models/webForms");
 const { readSystemData } = require("../models/systemData");
+const { validateIntakeFields } = require("../lib/intakeUtils");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -85,11 +87,17 @@ async function handle(req, res, url) {
       const name = String(body.name || "").trim();
       const email = normalizeEmail(body.email);
       const phone = String(body.phone || body.contactNumber || "").trim();
+      const whatsappNumber = String(body.whatsappNumber || phone || "").trim();
       const countryToVisitRaw = String(body.countryToVisit || "").trim();
       const city = String(body.city || "").trim();
       const nearestOfficeRaw = String(body.nearestOffice || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
       const intendedProgram = String(body.intendedProgram || "").trim();
+      const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
+      if (!intakeValidation.ok) {
+        sendJson(res, 400, intakeValidation);
+        return true;
+      }
       let message = String(body.message || "").trim();
       const webFormId = String(body.webFormId || "").trim();
       const livingStatus = String(body.livingStatus || "").trim();
@@ -105,14 +113,14 @@ async function handle(req, res, url) {
         }
       }
 
-      if (!name || !email || !phone || !countryToVisitRaw) {
+      if (!name || !phone || !countryToVisitRaw) {
         sendJson(res, 400, {
           ok: false,
-          error: "Name, email, contact number, and country to visit are required.",
+          error: "Name, contact number, and country to visit are required.",
         });
         return true;
       }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         sendJson(res, 400, { ok: false, error: "Please enter a valid email address." });
         return true;
       }
@@ -144,7 +152,7 @@ async function handle(req, res, url) {
         if (!nearestOfficeRaw) {
           sendJson(res, 400, {
             ok: false,
-            error: "Please choose your nearest office from the list.",
+            error: "Please choose your preferred branch from the list.",
           });
           return true;
         }
@@ -154,7 +162,7 @@ async function handle(req, res, url) {
         if (!matchedOffice) {
           sendJson(res, 400, {
             ok: false,
-            error: "Please choose a valid nearest office from the list.",
+            error: "Please choose a valid preferred branch from the list.",
           });
           return true;
         }
@@ -185,6 +193,7 @@ async function handle(req, res, url) {
         name,
         email,
         phone,
+        whatsappNumber,
         countryToVisit: String(matchedCountry).trim(),
         city: city || null,
         nearestOffice,
@@ -192,10 +201,12 @@ async function handle(req, res, url) {
         visaRejectionAnyCountry: visaRejection,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
+        intakeMonth: intakeValidation.intakeMonth,
+        intakeYear: intakeValidation.intakeYear,
         message: message || null,
         webFormId: webFormId || null,
         webFormName: webFormName || null,
-        source: webFormId ? "web-form" : "student-reg-form",
+        source: webFormId ? "web-form" : "walking",
       };
 
       await appendReqStudent(entry);
@@ -251,7 +262,7 @@ async function handle(req, res, url) {
             email: normalizeEmail(row.email),
             countryToVisit: String(row.countryToVisit || "").trim() || "UAE",
             nearestOffice,
-            source: String(row.source || "meta-leads-import").trim() || "meta-leads-import",
+            source: String(row.source || "marketing-team").trim() || "marketing-team",
           };
         })
         .filter((row) => row.name || row.phone);

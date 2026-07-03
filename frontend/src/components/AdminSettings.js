@@ -5,6 +5,7 @@ import { Button } from "./Button";
 import { createCountry, createPaymentAccount, deleteCountry, deletePaymentAccount, getBranches, getCountries, getPaymentAccounts, updateBranchCountries } from "../authApi";
 import { getStoredBranchCountries } from "../utils/branchCountries";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
+import { dt } from "./DataTable";
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onSaveSystemData, paymentAccounts = [], onPaymentAccountsChange }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -53,7 +54,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     currency: "LKR",
     notes: ""
   });
-  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, goldLoansAcceptable: true });
   const [financeError, setFinanceError] = useState("");
   const [financeSuccess, setFinanceSuccess] = useState("");
   const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
@@ -128,7 +129,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     setFinanceForm({
       counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
       adminChatEnabled: systemData.adminChatEnabled === true,
-      branchCountriesEnabled: systemData.branchCountriesEnabled === true
+      branchCountriesEnabled: systemData.branchCountriesEnabled === true,
+      goldLoansAcceptable: systemData.goldLoansAcceptable !== false
     });
   }, [systemData]);
 
@@ -192,15 +194,15 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           /* @__PURE__ */ jsx("option", { value: 30, children: "30 minutes" })
         ] })
       ] }) }),
-      /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
-        /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
+      /* @__PURE__ */ jsx("div", { className: dt.embedded, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Day" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Open" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Start" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "End" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: dayNames.map((dayName, dayIdx) => {
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: dayNames.map((dayName, dayIdx) => {
           const day = meetingForm.daySchedules[dayIdx] || defaultDaySchedules[dayIdx];
           return /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
             /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-700 font-medium", children: dayName }),
@@ -299,6 +301,18 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission."
         ] })
       ] }) }),
+      /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.goldLoansAcceptable,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, goldLoansAcceptable: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Accept gold loans for show money" }),
+          "When enabled, counselors see gold loans as an acceptable funding source on the Show Money calculator (if disbursed into a savings account). When disabled, gold loans are flagged as not accepted."
+        ] })
+      ] }) }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
         type: "button",
         isLoading: isSavingFinanceSettings,
@@ -307,7 +321,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           setFinanceSuccess("");
           setIsSavingFinanceSettings(true);
           const result = await onSaveSystemData?.({
-            counselorCanAcceptPayments: financeForm.counselorCanAcceptPayments
+            counselorCanAcceptPayments: financeForm.counselorCanAcceptPayments,
+            goldLoansAcceptable: financeForm.goldLoansAcceptable
           });
           setIsSavingFinanceSettings(false);
           if (!result?.ok) {
@@ -505,12 +520,12 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           children: "Add country"
         })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden max-w-xl", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
-        /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
+      /* @__PURE__ */ jsx("div", { className: `${dt.embedded} max-w-xl`, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 2 }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: "px-3 py-4 text-slate-500", children: "No global countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 2, compact: true }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: dt.emptyRow, children: "No global countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right", children: /* @__PURE__ */ jsx(Button, {
             type: "button",
@@ -617,13 +632,13 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         },
         children: "Add payment account"
       }) }),
-      /* @__PURE__ */ jsx("div", { className: "border border-gray-200 rounded-lg overflow-hidden max-w-3xl", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm", children: [
-        /* @__PURE__ */ jsx("thead", { className: "bg-slate-50 border-b border-gray-200 text-xs uppercase tracking-wide text-slate-500", children: /* @__PURE__ */ jsxs("tr", { children: [
+      /* @__PURE__ */ jsx("div", { className: `${dt.embedded} max-w-3xl`, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+        /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Label" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Bank / Account" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: !paymentAccountsReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 3 }) : localPaymentAccounts.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: "px-3 py-4 text-slate-500", children: "No payment accounts yet. Add one above for invoice creators to select." }) }) : localPaymentAccounts.map((acct) => /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !paymentAccountsReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 3, compact: true }) : localPaymentAccounts.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: dt.emptyRow, children: "No payment accounts yet. Add one above for invoice creators to select." }) }) : localPaymentAccounts.map((acct) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
           /* @__PURE__ */ jsxs("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: [
             acct.label,
             /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-500 font-normal", children: [acct.currency || "LKR"] })

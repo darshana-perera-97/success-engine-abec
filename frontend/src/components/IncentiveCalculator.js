@@ -3,6 +3,7 @@ import { formatRawLKR } from "../utils";
 import { normalizePipelineStatus } from "../pipeline";
 import { Calendar, Banknote } from "lucide-react";
 import { isCounselorEquivalentAccountRole } from "../roles";
+import { dt } from "./DataTable";
 
 const FLAT_COMMISSION_LKR = 150;
 const VOLUME_BONUS_RATE = 0.002;
@@ -97,7 +98,7 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
   }).sort((a, b) => b.totalPayout - a.totalPayout || b.pipelinePayout - a.pipelinePayout);
   const totalMonthPayout = incentiveData.reduce((acc, curr) => acc + curr.totalPayout, 0);
   const totalPipelineRevenue = incentiveData.reduce((acc, curr) => acc + curr.pipelinePayout, 0);
-  return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden", children: [
+  return /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
     /* @__PURE__ */ jsxs("div", { className: "p-6 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gradient-to-r from-gray-50 to-white", children: [
       /* @__PURE__ */ jsxs("div", { children: [
         /* @__PURE__ */ jsxs("h3", { className: "font-bold text-slate-900 flex items-center gap-2", children: [
@@ -117,15 +118,15 @@ const IncentiveCalculator = ({ students = [], employees = [] }) => {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", { className: "w-full text-sm text-left", children: [
-      /* @__PURE__ */ jsx("thead", { className: "bg-gray-50 text-slate-500 font-medium border-b border-gray-200", children: /* @__PURE__ */ jsxs("tr", { children: [
+    /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+      /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Counselor" }),
         SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Target Progress" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Visas Granted" }),
         SHOW_INCENTIVE_MONEY && /* @__PURE__ */ jsx("th", { className: "px-6 py-4", children: "Total Commission" }),
         /* @__PURE__ */ jsx("th", { className: "px-6 py-4 text-center", children: "Status" })
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: "divide-y divide-gray-100", children: incentiveData.map((agent) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50 transition-colors", children: [
+      /* @__PURE__ */ jsx("tbody", { className: dt.body, children: incentiveData.map((agent) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
         /* @__PURE__ */ jsxs("td", { className: "px-6 py-4 flex items-center gap-3", children: [
           /* @__PURE__ */ jsx("div", { className: "w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-xs", children: agent.name.charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [

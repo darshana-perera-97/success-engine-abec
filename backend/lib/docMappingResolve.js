@@ -282,8 +282,9 @@ function getEnrolledAdvanceBlockReasons(student, invoices, countryConfig) {
     );
   }
   const sid = String(student?.id || "").trim();
+  const settledStatuses = new Set(["Paid", "Waived", "Wave-off Rejected"]);
   const unpaid = (invoices || []).filter(
-    (inv) => String(inv.studentId || "") === sid && String(inv.status || "") !== "Paid"
+    (inv) => String(inv.studentId || "") === sid && !settledStatuses.has(String(inv.status || "").trim())
   );
   if (unpaid.length > 0) {
     reasons.push(

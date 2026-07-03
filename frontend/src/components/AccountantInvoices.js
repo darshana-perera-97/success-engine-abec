@@ -1,16 +1,20 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DollarSign, X, ExternalLink, FileText } from "lucide-react";
 import { Button } from "./Button";
+import { dt } from "./DataTable";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { invoiceApprovedPaid, invoiceBalanceDue, invoiceInvoicedAmount, evidencePaymentKind, evidencePaymentKindLabel, evidencePaymentKindClass } from "../invoicePaymentHelpers";
+import { getRefundRequests, markRefundRequestRefunded } from "../authApi";
+import { requestStatusBadgeClass, requestStatusLabel } from "../utils/studentDetailChangeRequests";
 
 const INVOICE_TABS = [
   { id: "all", label: "All" },
   { id: "to_approve", label: "To approve" },
   { id: "rejected", label: "Rejected" },
-  { id: "pending", label: "Pending" }
+  { id: "pending", label: "Pending" },
+  { id: "refunds", label: "Refunds" }
 ];
 
 function hasRejectedPaymentEvidence(inv) {
@@ -135,7 +139,10 @@ const AccountantInvoices = ({
   invoicesLoading = false,
   students = [],
   paymentAccounts = [],
+  currentUser = null,
+  userRole = "Accountant",
   onUpdateInvoice,
+  onSyncInvoice,
   onNotify
 }) => {
   const [activeTab, setActiveTab] = useState("to_approve");
@@ -144,6 +151,21 @@ const AccountantInvoices = ({
   const [query, setQuery] = useState("");
   const [evidenceModal, setEvidenceModal] = useState({ open: false, invoice: null, paidAmount: "", error: "" });
   const [rejectModal, setRejectModal] = useState({ open: false, invoice: null, reason: "", error: "" });
+  const [refundRows, setRefundRows] = useState([]);
+  const [refundsLoading, setRefundsLoading] = useState(true);
+  const [busyRefundId, setBusyRefundId] = useState("");
+  const [refundModal, setRefundModal] = useState({ open: false, row: null, note: "", error: "" });
+
+  const loadRefundRows = useCallback(async () => {
+    setRefundsLoading(true);
+    const result = await getRefundRequests({ accountantQueue: true });
+    if (result.ok) setRefundRows(result.data);
+    setRefundsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadRefundRows();
+  }, [loadRefundRows]);
 
   const studentById = useMemo(() => {
     const map = new Map();
@@ -164,15 +186,16 @@ const AccountantInvoices = ({
   }, [paymentAccounts]);
 
   const tabCounts = useMemo(() => {
-    const counts = { all: 0, pending: 0, to_approve: 0, rejected: 0 };
+    const counts = { all: 0, pending: 0, to_approve: 0, rejected: 0, refunds: 0 };
     (invoices || []).forEach((inv) => {
       counts.all += 1;
       if (invoiceMatchesTab(inv, "pending")) counts.pending += 1;
       if (invoiceMatchesTab(inv, "to_approve")) counts.to_approve += 1;
       if (invoiceMatchesTab(inv, "rejected")) counts.rejected += 1;
     });
+    counts.refunds = (refundRows || []).filter((row) => row.status === "approved" || row.status === "refunded").length;
     return counts;
-  }, [invoices]);
+  }, [invoices, refundRows]);
 
   const filteredRows = useMemo(() => {
     const q = String(query || "").trim().toLowerCase();
@@ -194,6 +217,25 @@ const AccountantInvoices = ({
           new Date(a.issueDate || a.createdAt || 0).getTime()
       );
   }, [invoices, activeTab, query, studentById, paymentAccountsById]);
+
+  const filteredRefundRows = useMemo(() => {
+    const q = String(query || "").trim().toLowerCase();
+    return (refundRows || [])
+      .filter((row) => row.status === "approved" || row.status === "refunded")
+      .filter((row) => {
+        if (!q) return true;
+        const studentName = String(row.studentName || "").toLowerCase();
+        const studentId = String(row.studentId || "").toLowerCase();
+        const id = String(row.id || "").toLowerCase();
+        const reason = String(row.reason || "").toLowerCase();
+        return studentName.includes(q) || studentId.includes(q) || id.includes(q) || reason.includes(q);
+      })
+      .sort((a, b) => {
+        if (a.status === "approved" && b.status !== "approved") return -1;
+        if (b.status === "approved" && a.status !== "approved") return 1;
+        return new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime();
+      });
+  }, [refundRows, query]);
 
   const isBusy = (invId, action) => busyInvoiceId === invId && busyAction === action;
 
@@ -276,6 +318,39 @@ const AccountantInvoices = ({
     onNotify?.("Payment evidence rejected", `Invoice ${inv.id} was sent back to the student with your reason.`, "info");
   };
 
+  const handleMarkRefunded = async () => {
+    const row = refundModal.row;
+    if (!row?.id) return;
+    const actorUserId = String(currentUser?.id || "").trim();
+    const actorName = String(currentUser?.username || currentUser?.name || userRole).trim();
+    if (!actorUserId) {
+      setRefundModal((prev) => ({ ...prev, error: "Your user id is required." }));
+      return;
+    }
+    setBusyRefundId(row.id);
+    const result = await markRefundRequestRefunded(row.id, {
+      actorUserId,
+      actorName,
+      actorRole: userRole,
+      refundNote: String(refundModal.note || "").trim(),
+    });
+    setBusyRefundId("");
+    if (!result.ok) {
+      setRefundModal((prev) => ({ ...prev, error: result.error || "Failed to mark refund as paid." }));
+      return;
+    }
+    if (result.invoice && onSyncInvoice) {
+      onSyncInvoice(result.invoice);
+    }
+    setRefundModal({ open: false, row: null, note: "", error: "" });
+    onNotify?.(
+      "Refund processed",
+      `Refund for ${row.studentName || row.studentId} was recorded and the student ledger was updated.`,
+      "success"
+    );
+    loadRefundRows();
+  };
+
   const modalInvoice = evidenceModal.invoice;
   const modalProofUrl = modalInvoice ? proofUrl(modalInvoice) : "";
   const modalStudentName = modalInvoice
@@ -296,9 +371,21 @@ const AccountantInvoices = ({
       /* @__PURE__ */ jsx("p", {
         className: "text-sm text-slate-500 max-w-2xl",
         children:
-          "All branch invoices by status. Open payment evidence on the To approve tab, then approve with the amount received (partial payments are supported) or reject."
+          "All branch invoices by status. Open payment evidence on the To approve tab, then approve with the amount received (partial payments are supported) or reject. Process approved refunds on the Refunds tab."
       }),
-      /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium", children: "Payment is not refundable." })
+      tabCounts.refunds > 0 && (refundRows || []).some((row) => row.status === "approved") &&
+      /* @__PURE__ */ jsxs("div", {
+        className: "rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900",
+        children: [
+          /* @__PURE__ */ jsx("span", { className: "font-semibold", children: (refundRows || []).filter((row) => row.status === "approved").length }),
+          " approved refund",
+          (refundRows || []).filter((row) => row.status === "approved").length === 1 ? "" : "s",
+          " ready to pay out — use the ",
+          /* @__PURE__ */ jsx("span", { className: "font-semibold", children: "Refunds" }),
+          " tab."
+        ]
+      }),
+      /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium", children: "Refunds require manager approval before accountant processing." })
     ] }),
     tabCounts.to_approve > 0 &&
       /* @__PURE__ */ jsxs("div", {
@@ -327,27 +414,63 @@ const AccountantInvoices = ({
       ) }),
       /* @__PURE__ */ jsx("input", {
         type: "search",
-        placeholder: "Search student, description, transfer account…",
+        placeholder: activeTab === "refunds" ? "Search student, refund id, reason…" : "Search student, description, transfer account…",
         value: query,
         onChange: (e) => setQuery(e.target.value),
         className: "flex-1 min-w-[200px] px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
       })
     ] }),
     /* @__PURE__ */ jsxs("div", {
-      className: "bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden",
+      className: dt.card,
       children: [
-        /* @__PURE__ */ jsx("div", { className: "px-4 py-3 border-b border-slate-100 bg-slate-50/80", children: /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
-          filteredRows.length,
-          " invoice",
-          filteredRows.length === 1 ? "" : "s",
+        /* @__PURE__ */ jsx("div", { className: dt.toolbar, children: /* @__PURE__ */ jsxs("p", { className: "text-xs font-semibold text-slate-600", children: [
+          activeTab === "refunds" ? filteredRefundRows.length : filteredRows.length,
+          activeTab === "refunds" ? " refund" : " invoice",
+          (activeTab === "refunds" ? filteredRefundRows.length : filteredRows.length) === 1 ? "" : "s",
           " · ",
           INVOICE_TABS.find((t) => t.id === activeTab)?.label || "All"
         ] }) }),
-        /* @__PURE__ */ jsx("div", { className: "overflow-x-auto", children: /* @__PURE__ */ jsxs("table", {
-          className: "min-w-full text-sm border-collapse",
+        activeTab === "refunds"
+          ? /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", {
+              className: dt.table,
+              children: [
+                /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+                  /* @__PURE__ */ jsx("th", { className: dt.th, children: "Student" }),
+                  /* @__PURE__ */ jsx("th", { className: dt.th, children: "Amount" }),
+                  /* @__PURE__ */ jsx("th", { className: dt.th, children: "Invoice" }),
+                  /* @__PURE__ */ jsx("th", { className: dt.th, children: "Status" }),
+                  /* @__PURE__ */ jsx("th", { className: dt.th, children: "Reason" }),
+                  /* @__PURE__ */ jsx("th", { className: `${dt.th} text-right`, children: "Actions" })
+                ] }) }),
+                /* @__PURE__ */ jsx("tbody", { className: dt.body, children: refundsLoading
+                  ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "px-4 py-12 text-center text-sm text-slate-500", children: "Loading…" }) })
+                  : filteredRefundRows.length === 0
+                    ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "px-4 py-12 text-center text-sm text-slate-500", children: "No approved or completed refunds yet." }) })
+                    : filteredRefundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80 align-middle", children: [
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-medium text-slate-900", children: row.studentName || row.studentId || "—" }),
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono text-slate-800 tabular-nums whitespace-nowrap", children: `${row.currency || "LKR"} ${Number(row.amount || 0).toLocaleString()}` }),
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-slate-600 font-mono text-xs", children: row.invoiceId || "Auto" }),
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 whitespace-nowrap", children: /* @__PURE__ */ jsx("span", { className: `inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${requestStatusBadgeClass(row.status)}`, children: requestStatusLabel(row.status) }) }),
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-slate-600 max-w-[200px] truncate", title: row.reason || "", children: row.reason || "—" }),
+                        /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-right whitespace-nowrap", children: row.status === "approved"
+                          ? /* @__PURE__ */ jsx(Button, {
+                              size: "sm",
+                              className: "text-xs h-8 bg-rose-600 hover:bg-rose-700 text-white",
+                              disabled: busyRefundId === row.id,
+                              onClick: () => setRefundModal({ open: true, row, note: "", error: "" }),
+                              children: busyRefundId === row.id ? "Processing…" : "Mark refunded"
+                            })
+                          : /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-400", children: row.refundedAt ? String(row.refundedAt).slice(0, 10) : "Done" })
+                        })
+                      ] }, row.id))
+                })
+              ]
+            }) })
+          : /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", {
+          className: dt.table,
           children: [
             /* @__PURE__ */ jsx("thead", {
-              className: "bg-slate-50 border-b border-slate-200 text-left text-xs font-bold uppercase tracking-wide text-slate-500",
+              className: dt.head,
               children: /* @__PURE__ */ jsx("tr", {
                 children: TABLE_COLUMNS.map((col) =>
                   /* @__PURE__ */ jsx(
@@ -363,7 +486,7 @@ const AccountantInvoices = ({
               })
             }),
             /* @__PURE__ */ jsx("tbody", {
-              className: "divide-y divide-slate-100",
+              className: dt.body,
               children: invoicesLoading
                 ? /* @__PURE__ */ jsx("tr", {
                     children: /* @__PURE__ */ jsx("td", {
@@ -607,6 +730,43 @@ const AccountantInvoices = ({
               onClick: handleReject,
               isLoading: isBusy(rejectModal.invoice.id, "reject"),
               children: "Reject evidence"
+            })
+          ] })
+        ]
+      })
+    }),
+    refundModal.open && refundModal.row && /* @__PURE__ */ jsx("div", {
+      className: "fixed inset-0 z-[60] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm",
+      children: /* @__PURE__ */ jsxs("div", {
+        className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-md my-auto",
+        children: [
+          /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-2", children: "Mark refund as paid" }),
+          /* @__PURE__ */ jsxs("p", { className: "text-sm text-slate-600 mb-4", children: [
+            "Confirm payout of ",
+            /* @__PURE__ */ jsx("span", { className: "font-semibold", children: `${refundModal.row.currency || "LKR"} ${Number(refundModal.row.amount || 0).toLocaleString()}` }),
+            " to ",
+            refundModal.row.studentName || refundModal.row.studentId,
+            ". This will reduce the paid amount on the linked invoice and add a refund entry to the ledger."
+          ] }),
+          /* @__PURE__ */ jsx("textarea", {
+            className: "w-full min-h-[80px] border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500",
+            placeholder: "Optional note (reference, bank transfer id, etc.)",
+            value: refundModal.note,
+            onChange: (e) => setRefundModal((prev) => ({ ...prev, note: e.target.value, error: "" }))
+          }),
+          refundModal.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-2", children: refundModal.error }) : null,
+          /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6", children: [
+            /* @__PURE__ */ jsx(Button, {
+              variant: "ghost",
+              className: "flex-1",
+              onClick: () => setRefundModal({ open: false, row: null, note: "", error: "" }),
+              children: "Cancel"
+            }),
+            /* @__PURE__ */ jsx(Button, {
+              className: "flex-1 bg-rose-600 hover:bg-rose-700 text-white",
+              onClick: handleMarkRefunded,
+              isLoading: busyRefundId === refundModal.row.id,
+              children: "Confirm refund"
             })
           ] })
         ]

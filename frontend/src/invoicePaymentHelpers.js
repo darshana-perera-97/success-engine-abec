@@ -13,7 +13,9 @@ export function invoiceBalanceDue(inv) {
 }
 
 export function isInvoiceFullyPaid(inv) {
-  if (String(inv?.status || "").trim() === "Paid") return true;
+  const status = String(inv?.status || "").trim();
+  if (status === "Paid" || status === "Waived") return true;
+  if (status === "Wave-off Rejected") return true;
   return invoiceBalanceDue(inv) <= 0.009;
 }
 

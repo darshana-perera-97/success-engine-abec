@@ -12,10 +12,10 @@ import {
   sanitizeInquiryExamResults,
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
-import { isCounselorEquivalentPortalRole, isStudentMessagingStaffRole } from "../roles";
+import { canActAsPrimaryCounselorPortalRole } from "../roles";
 
 function resolveCounselorId(userRole, currentUser, counselorOptions) {
-  if (!isStudentMessagingStaffRole(userRole)) return "";
+  if (!canActAsPrimaryCounselorPortalRole(userRole)) return "";
   const currentUserId = currentUser?.id || "";
   const byId = counselorOptions.find((item) => item.id === currentUserId);
   const byEmail = counselorOptions.find(
@@ -135,10 +135,15 @@ const AddStudentModal = ({
   useEffect(() => {
     if (!isOpen || step !== 2 || !showAssignStep) return;
     if (assignedCounselorId) return;
+    const selfId = resolveCounselorId(userRole, currentUser, counselorOptions);
+    if (selfId && assignableCounselors.some((c) => String(c.id) === String(selfId))) {
+      setAssignedCounselorId(selfId);
+      return;
+    }
     if (assignableCounselors.length === 1) {
       setAssignedCounselorId(String(assignableCounselors[0].id || ""));
     }
-  }, [isOpen, step, showAssignStep, assignableCounselors, assignedCounselorId]);
+  }, [isOpen, step, showAssignStep, assignableCounselors, assignedCounselorId, userRole, currentUser, counselorOptions]);
 
   if (!isOpen) return null;
 
@@ -156,7 +161,7 @@ const AddStudentModal = ({
 
   const handleFinalSubmit = async () => {
     setFormError("");
-    const validation = validateInquiryFormRequired(form, { requireBudget: false });
+    const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
       return;
@@ -178,6 +183,7 @@ const AddStudentModal = ({
       branch: fields.branch,
       email: fields.email,
       phone: fields.phone,
+      whatsappNumber: fields.whatsappNumber,
       password,
       ielts: ieltsFromExamResults(form.examResults),
       gpa: "0.0",
@@ -191,7 +197,10 @@ const AddStudentModal = ({
       city: fields.city,
       currentEducationLevel: fields.currentEducationLevel,
       intendedProgram: fields.intendedProgram,
+      intakeMonth: fields.intakeMonth,
+      intakeYear: fields.intakeYear,
       message: fields.message,
+      inquirySource: fields.inquirySource || null,
       lastEducationDate: new Date().toISOString().split("T")[0],
       documents: []
     };
@@ -228,7 +237,7 @@ const AddStudentModal = ({
   const handleStep1Continue = (e) => {
     e.preventDefault();
     setFormError("");
-    const validation = validateInquiryFormRequired(form, { requireBudget: false });
+    const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
       return;
@@ -243,10 +252,10 @@ const AddStudentModal = ({
 
   const assignStepDescription =
     userRole === "Manager" && scopeBranch
-      ? `Counselors at ${scopeBranch}.`
+      ? `Staff at ${scopeBranch} who can act as primary counselor.`
       : userRole === "Admin"
-        ? "All counselors in the organization."
-        : "Select a counselor for this lead.";
+        ? "All staff who can act as primary counselor."
+        : "Select who will be the primary counselor for this lead.";
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center px-4 py-6 overflow-y-auto">
@@ -304,6 +313,8 @@ const AddStudentModal = ({
             submitLabel={showAssignStep ? "Continue" : "Add Student"}
             cancelLabel="Cancel"
             showBudgetField={false}
+            showSourceField={true}
+            intakeCountry={form.countryToVisit}
           />
         ) : (
           <form

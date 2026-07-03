@@ -4,6 +4,7 @@ const {
   readStages, writeStages, getCountryStages,
   readDocMapping, writeDocMapping, emptyDocConfig, ensureDefaultPipelineDocs,
   normalizeStageTasks, normalizeStageDeadlines, normalizeAccountDetailsStageId, normalizeDocumentNotifyDocs,
+  normalizeCountryIntakeOptions,
   DEFAULT_STAGES
 } = require("../models/docMapping");
 
@@ -16,6 +17,7 @@ function docMappingPayload(stages, docs) {
     stageDeadlines: normalizeStageDeadlines(docs.stageDeadlines, stages),
     accountDetailsStageId: normalizeAccountDetailsStageId(docs.accountDetailsStageId, stages),
     documentNotifyDocs: normalizeDocumentNotifyDocs(docs.documentNotifyDocs),
+    intakeOptions: normalizeCountryIntakeOptions(docs.intakeOptions),
   };
 }
 
@@ -242,6 +244,53 @@ async function handle(req, res, url) {
       const allDocs = await readDocMapping();
       if (!allDocs[country]) allDocs[country] = emptyDocConfig();
       allDocs[country].visaDocs = cleaned;
+      await writeDocMapping(allDocs);
+
+      const allStages = await readStages();
+      const stages = getCountryStages(allStages, country);
+      sendJson(res, 200, { ok: true, data: docMappingPayload(stages, allDocs[country]) });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
+  // GET /api/doc-mapping/intake-options?country=<name> — public read for forms
+  if (req.method === "GET" && url.pathname === "/api/doc-mapping/intake-options") {
+    const country = String(url.searchParams.get("country") || "").trim();
+    if (!country) {
+      sendJson(res, 400, { ok: false, error: "Country query parameter is required." });
+      return true;
+    }
+    const allDocs = await readDocMapping();
+    const docs = allDocs[country] || emptyDocConfig();
+    sendJson(res, 200, { ok: true, data: normalizeCountryIntakeOptions(docs.intakeOptions) });
+    return true;
+  }
+
+  // PUT /api/doc-mapping/intake-options — admin only
+  if (req.method === "PUT" && url.pathname === "/api/doc-mapping/intake-options") {
+    try {
+      const body = await parseBody(req);
+      const country = String(body.country || "").trim();
+      const role = String(body.role || body.userRole || "").trim();
+      if (role !== "Admin") {
+        sendJson(res, 403, { ok: false, error: "Only Admin can update country intake options." });
+        return true;
+      }
+      if (!country) {
+        sendJson(res, 400, { ok: false, error: "Country is required." });
+        return true;
+      }
+      const intakeOptions = normalizeCountryIntakeOptions(body.intakeOptions);
+      if (!intakeOptions.months.length || !intakeOptions.years.length) {
+        sendJson(res, 400, { ok: false, error: "At least one intake month and one intake year are required." });
+        return true;
+      }
+
+      const allDocs = await readDocMapping();
+      if (!allDocs[country]) allDocs[country] = emptyDocConfig();
+      allDocs[country].intakeOptions = intakeOptions;
       await writeDocMapping(allDocs);
 
       const allStages = await readStages();
