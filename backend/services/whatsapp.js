@@ -1,6 +1,8 @@
 const fs = require("fs/promises");
+const fsSync = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execFileSync } = require("child_process");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const QRCode = require("qrcode");
 const {
@@ -25,6 +27,67 @@ const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
+
+// Puppeteer's bundled Chrome for linux_arm is often an invalid binary (shell reports
+// `Syntax error: ")" unexpected`). Prefer an explicit path or system Chromium/Chrome.
+function resolvePuppeteerExecutablePath() {
+  const fromEnv = String(
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+      process.env.CHROME_PATH ||
+      process.env.CHROMIUM_PATH ||
+      ""
+  ).trim();
+  if (fromEnv) {
+    if (!fsSync.existsSync(fromEnv)) {
+      throw new Error(
+        `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist.`
+      );
+    }
+    return fromEnv;
+  }
+
+  const candidates = [
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/snap/bin/chromium",
+  ];
+  for (const candidate of candidates) {
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+
+  for (const name of ["chromium-browser", "chromium", "google-chrome-stable", "google-chrome"]) {
+    try {
+      const found = String(execFileSync("which", [name], { encoding: "utf8" })).trim();
+      if (found && fsSync.existsSync(found)) return found;
+    } catch {
+      // Binary not on PATH.
+    }
+  }
+
+  // On ARM Linux, Puppeteer's cached Chrome is commonly broken — fail with a clear fix.
+  const arch = String(process.arch || "");
+  if (process.platform === "linux" && (arch === "arm" || arch === "arm64")) {
+    throw new Error(
+      "No system Chromium/Chrome found. Puppeteer's bundled browser does not work on ARM Linux. " +
+        "Install Chromium (e.g. `sudo apt-get install -y chromium-browser` or `chromium`) " +
+        "and set PUPPETEER_EXECUTABLE_PATH to its path in backend/.env."
+    );
+  }
+
+  return "";
+}
+
+function buildPuppeteerOptions() {
+  const options = {
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  };
+  const executablePath = resolvePuppeteerExecutablePath();
+  if (executablePath) options.executablePath = executablePath;
+  return options;
+}
 
 async function resolveCounselor(userId) {
   const id = String(userId || "").trim();
@@ -191,10 +254,7 @@ async function startWhatsappSession(userId) {
     takeoverOnConflict: true,
     takeoverTimeoutMs: 10000,
     bypassCSP: true,
-    puppeteer: {
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-    },
+    puppeteer: buildPuppeteerOptions(),
   });
   state.client = client;
   state.status = "connecting";
