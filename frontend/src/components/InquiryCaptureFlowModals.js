@@ -363,18 +363,6 @@ const InquiryCaptureFlowModals = ({
       status: existingStudent.status,
       notes: existingStudent.notes
     });
-    if (!merged.ok) {
-      setInquiryError(merged.error || "Please fix the highlighted fields before scheduling.");
-      return;
-    }
-    const sourceValidation = validateInquiryFormRequired(inquiryForm, {
-      requireBudget: false,
-      requireSource: true
-    });
-    if (!sourceValidation.ok) {
-      setInquiryError(sourceValidation.error);
-      return;
-    }
     setInquiryError("");
     modalFlowRef.current = "schedule-later";
     setScheduleLaterStudent(merged.student);

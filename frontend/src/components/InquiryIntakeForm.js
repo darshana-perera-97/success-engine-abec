@@ -5,7 +5,7 @@ import { dt } from "./DataTable";
 import { PhoneWhatsappFields } from "./PhoneWhatsappFields";
 import { IntakeFields } from "./IntakeFields";
 import { resolveFormWhatsappNumber, validateWhatsappFields } from "../utils/phoneWhatsapp";
-import { validateIntakeFields } from "../utils/intakeFields";
+import { intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { INQUIRY_SOURCE_OPTIONS, isValidInquirySource, normalizeInquirySource } from "../utils/inquirySource";
 
@@ -145,18 +145,46 @@ export function inquiryFormToStudentFields(form, baseStudent = {}, { requireInta
   };
 }
 
+function pickNonEmptyFormValue(formValue, baseValue) {
+  const trimmed = String(formValue ?? "").trim();
+  return trimmed || String(baseValue ?? "").trim();
+}
+
 /** Merge inquiry form into student without requiring every intake field (for Schedule Later). */
 export function mergeInquiryFormForScheduleLater(form, baseStudent = {}) {
+  const baseIntake = intakeFieldsFromStudent(baseStudent);
   const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: false });
-  if (!intakeValidation.ok) return intakeValidation;
-  const phone = String(form.phone || "").trim();
-  if (phone) {
-    const whatsappValidation = validateWhatsappFields(form);
-    if (!whatsappValidation.ok) return whatsappValidation;
-  }
+  const intakeMonth = intakeValidation.ok
+    ? intakeValidation.intakeMonth ?? baseIntake.intakeMonth
+    : baseIntake.intakeMonth;
+  const intakeYear = intakeValidation.ok
+    ? intakeValidation.intakeYear ?? baseIntake.intakeYear
+    : baseIntake.intakeYear;
+  const effectiveForm = {
+    ...form,
+    name: pickNonEmptyFormValue(form.name, baseStudent.name),
+    email: pickNonEmptyFormValue(form.email, baseStudent.email),
+    phone: pickNonEmptyFormValue(form.phone, baseStudent.phone),
+    countryToVisit: pickNonEmptyFormValue(form.countryToVisit, baseStudent.countryToVisit || baseStudent.country),
+    nearestOffice: pickNonEmptyFormValue(form.nearestOffice, baseStudent.nearestOffice || baseStudent.branch),
+    city: pickNonEmptyFormValue(form.city, baseStudent.city),
+    livingStatus: pickNonEmptyFormValue(form.livingStatus, baseStudent.livingStatus),
+    budget: pickNonEmptyFormValue(form.budget, baseStudent.budget),
+    budgetCurrency: pickNonEmptyFormValue(form.budgetCurrency, baseStudent.budgetCurrency) || "LKR",
+    visaRejectionAnyCountry:
+      pickNonEmptyFormValue(form.visaRejectionAnyCountry, baseStudent.visaRejectionAnyCountry) || "No",
+    currentEducationLevel: pickNonEmptyFormValue(form.currentEducationLevel, baseStudent.currentEducationLevel),
+    intendedProgram: pickNonEmptyFormValue(form.intendedProgram, baseStudent.intendedProgram),
+    intakeMonth,
+    intakeYear,
+    message: pickNonEmptyFormValue(form.message, baseStudent.message),
+    inquirySource:
+      normalizeInquirySource(form.inquirySource) || normalizeInquirySource(baseStudent.inquirySource) || "",
+    priority: pickNonEmptyFormValue(form.priority, baseStudent.priority) || "Medium"
+  };
   return {
     ok: true,
-    student: inquiryFormToStudentFields(form, baseStudent, { requireIntake: false })
+    student: inquiryFormToStudentFields(effectiveForm, baseStudent, { requireIntake: false })
   };
 }
 
