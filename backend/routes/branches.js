@@ -11,6 +11,8 @@ const { readInvoices } = require("../models/invoices");
 const { readStudemts } = require("../models/students");
 const { readUsers, splitAdminRecord } = require("../models/users");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
+const { findBranchWhatsappMessengerUser, isBranchWhatsappEnabled } = require("../services/branchWhatsapp");
+const { snapshotWhatsappState } = require("../services/whatsapp");
 
 const financeSummaryCache = new Map();
 
@@ -298,6 +300,64 @@ async function handle(req, res, url) {
     } catch (err) {
       console.error("branch-analytics/revenue-breakdown error:", err);
       sendJson(res, 500, { ok: false, error: "Failed to compute revenue breakdown." });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/branch-analytics/whatsapp-connectivity") {
+    try {
+      const scopeBranch = String(url.searchParams.get("branch") || "").trim();
+      const scopeKey = scopeBranch ? scopeBranch.toLowerCase() : "";
+      const branchWhatsappEnabled = await isBranchWhatsappEnabled();
+      if (!branchWhatsappEnabled) {
+        sendJson(res, 200, { ok: true, data: { enabled: false, branches: [] } });
+        return true;
+      }
+
+      const branches = await readBranches();
+      const filtered = scopeKey
+        ? branches.filter((b) => String(b?.location || "").trim().toLowerCase() === scopeKey)
+        : branches;
+
+      const rows = await Promise.all(
+        filtered.map(async (branch) => {
+          const name = String(branch?.location || "").trim();
+          const messenger = await findBranchWhatsappMessengerUser(branch);
+          const messengerUserId = messenger ? String(messenger.id || "").trim() : "";
+          const messengerName = messenger
+            ? String(messenger.username || messenger.email || "").trim()
+            : "";
+
+          let status = "disconnected";
+          let whatsappName = "";
+          let whatsappNumber = "";
+          let connectedAt = "";
+
+          if (messengerUserId) {
+            const state = snapshotWhatsappState(messengerUserId);
+            status = String(state?.status || "disconnected");
+            whatsappName = String(state?.whatsappName || "").trim();
+            whatsappNumber = String(state?.whatsappNumber || "").trim();
+            connectedAt = String(state?.connectedAt || "").trim();
+          }
+
+          return {
+            name,
+            messengerUserId,
+            messengerName,
+            status,
+            whatsappName,
+            whatsappNumber,
+            connectedAt,
+          };
+        })
+      );
+
+      rows.sort((a, b) => a.name.localeCompare(b.name));
+      sendJson(res, 200, { ok: true, data: { enabled: true, branches: rows } });
+    } catch (err) {
+      console.error("branch-analytics/whatsapp-connectivity error:", err);
+      sendJson(res, 500, { ok: false, error: "Failed to load branch WhatsApp connectivity." });
     }
     return true;
   }

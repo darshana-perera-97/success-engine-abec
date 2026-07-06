@@ -18,6 +18,7 @@ const { readUniversityPrograms, writeUniversityPrograms } = require("../models/u
 const { getWebFormById } = require("../models/webForms");
 const { readSystemData } = require("../models/systemData");
 const { validateIntakeFields } = require("../lib/intakeUtils");
+const { normalizeStudentPhone, normalizeWhatsappNumber } = require("../services/whatsapp");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -86,8 +87,10 @@ async function handle(req, res, url) {
       const body = await parseBody(req);
       const name = String(body.name || "").trim();
       const email = normalizeEmail(body.email);
-      const phone = String(body.phone || body.contactNumber || "").trim();
-      const whatsappNumber = String(body.whatsappNumber || phone || "").trim();
+      const phoneInput = String(body.phone || body.contactNumber || "").trim();
+      const whatsappInput = String(body.whatsappNumber || phoneInput || "").trim();
+      const phone = normalizeStudentPhone(phoneInput);
+      const whatsappNumber = normalizeWhatsappNumber(whatsappInput) || phone;
       const countryToVisitRaw = String(body.countryToVisit || "").trim();
       const city = String(body.city || "").trim();
       const nearestOfficeRaw = String(body.nearestOffice || "").trim();
@@ -113,10 +116,17 @@ async function handle(req, res, url) {
         }
       }
 
-      if (!name || !phone || !countryToVisitRaw) {
+      if (!name || !phoneInput || !countryToVisitRaw) {
         sendJson(res, 400, {
           ok: false,
           error: "Name, contact number, and country to visit are required.",
+        });
+        return true;
+      }
+      if (!phone) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid phone number (e.g. +94771234567, 0771234567, 771234567, or +14155552671).",
         });
         return true;
       }

@@ -36,7 +36,7 @@ export function PhoneWhatsappFields({
           className={fieldClassName}
           value={phone}
           onChange={(e) => onPhoneChange(e.target.value)}
-          placeholder="Include country code if applicable"
+          placeholder="e.g. +94771234567, 0771234567, or 771234567"
         />
       </div>
       <div>
@@ -52,7 +52,7 @@ export function PhoneWhatsappFields({
           value={displayedWhatsapp}
           onChange={(e) => onWhatsappNumberChange(e.target.value)}
           disabled={sameAsPhone}
-          placeholder={sameAsPhone ? "Same as phone" : "e.g. +94771234567 or +14155552671"}
+          placeholder={sameAsPhone ? "Same as phone" : "e.g. +94771234567, 0771234567, or +14155552671"}
         />
         <label className="mt-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
           <input

@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
 import { COMPANY_LOGO_ALT, COMPANY_NAME } from "../companyConfig";
-import { isCounselorEquivalentPortalRole } from "../roles";
+import { isCounselorEquivalentPortalRole, isBranchWhatsappManagerRole } from "../roles";
 import { getRoleDisplayName } from "../roleDisplay";
 import {
   Users,
@@ -30,12 +30,15 @@ import {
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
-const whatsappNavStatusLabel = (status) => {
+const whatsappNavStatusLabel = (status, branchWhatsappEnabled = false) => {
   const s = String(status || "").trim();
-  if (s === "connected" || s === "authenticated") return "WhatsApp connected";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "WhatsApp connecting — scan QR in Integrations";
-  if (s === "auth_failed" || s === "error") return "WhatsApp error — open Integrations to reconnect";
-  return "WhatsApp disconnected — open Integrations to connect";
+  const branchPrefix = branchWhatsappEnabled ? "Branch WhatsApp" : "WhatsApp";
+  if (s === "connected" || s === "authenticated") return `${branchPrefix} connected`;
+  if (s === "connecting" || s === "awaiting_qr_scan") return `${branchPrefix} connecting — scan QR in Integrations`;
+  if (s === "auth_failed" || s === "error") return `${branchPrefix} error — open Integrations to reconnect`;
+  return branchWhatsappEnabled
+    ? "Branch WhatsApp disconnected"
+    : "WhatsApp disconnected — open Integrations to connect";
 };
 const whatsappNavStatusClass = (status) => {
   const s = String(status || "").trim();
@@ -83,7 +86,8 @@ const Layout = ({
   pageLoading = false,
   showWhatsappNavIndicator = false,
   whatsappConnectionStatus = "disconnected",
-  adminChatEnabled = false
+  adminChatEnabled = false,
+  branchWhatsappEnabled = false
 }) => {
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -213,16 +217,32 @@ const Layout = ({
     { id: "tasks", label: "Pipeline Tasks", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: typeof navMyTasksCount === "number" && navMyTasksCount > 0 ? String(navMyTasksCount) : "" }
   ];
   const withStaffMessagingNav = (items) => {
-    if (!adminChatEnabled) return items;
-    const messagesIndex = items.findIndex((item) => item.id === "messages");
     const integrationItem = { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) };
-    const next = items.map((item) =>
-      item.id === "messages" ? { ...item, label: "Omni-Channel" } : item
-    );
-    if (messagesIndex >= 0) {
-      next.splice(messagesIndex, 0, integrationItem);
-    } else {
-      next.push(integrationItem);
+    let next = items;
+    const branchManagerCanSend =
+      branchWhatsappEnabled && isBranchWhatsappManagerRole(currentRole);
+    if (adminChatEnabled) {
+      const messagesIndex = items.findIndex((item) => item.id === "messages");
+      next = items.map((item) =>
+        item.id === "messages" ? { ...item, label: "Omni-Channel" } : item
+      );
+      if (messagesIndex >= 0) {
+        next = [...next];
+        next.splice(messagesIndex, 0, integrationItem);
+      } else {
+        next = [...next, integrationItem];
+      }
+    } else if (branchManagerCanSend) {
+      const messagesIndex = items.findIndex((item) => item.id === "messages");
+      next = items.map((item) =>
+        item.id === "messages" ? { ...item, label: "Inbox" } : item
+      );
+      if (messagesIndex >= 0) {
+        next = [...next];
+        next.splice(messagesIndex, 0, integrationItem);
+      } else {
+        next = [...next, integrationItem];
+      }
     }
     return next;
   };
@@ -473,8 +493,8 @@ const Layout = ({
             {
               type: "button",
               className: `relative p-2 rounded-full transition-colors hover:bg-gray-100 ${whatsappNavStatusClass(whatsappConnectionStatus)}`,
-              title: whatsappNavStatusLabel(whatsappConnectionStatus),
-              "aria-label": whatsappNavStatusLabel(whatsappConnectionStatus),
+              title: whatsappNavStatusLabel(whatsappConnectionStatus, branchWhatsappEnabled),
+              "aria-label": whatsappNavStatusLabel(whatsappConnectionStatus, branchWhatsappEnabled),
               onClick: () => onNavigate?.("integration"),
               children: /* @__PURE__ */ jsx(WhatsappGlyph, {})
             }

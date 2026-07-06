@@ -81,3 +81,29 @@ export function isStaffOmniChannelMessenger(role, adminChatEnabled = false) {
   if (adminChatEnabled !== true) return false;
   return STAFF_OMNI_CHANNEL_ROLES.has(String(role || "").trim());
 }
+
+/** Leadership may reply in Omni-Channel (not ghost mode) when staff chat or branch WhatsApp is enabled. */
+export function canSendStaffStudentMessages(role, adminChatEnabled = false, branchWhatsappEnabled = false) {
+  if (isStaffOmniChannelMessenger(role, adminChatEnabled)) return true;
+  if (branchWhatsappEnabled === true && isBranchWhatsappManagerRole(role)) return true;
+  return false;
+}
+
+/** Manager / Team Lead may link branch WhatsApp when branch mode is enabled. */
+export function isBranchWhatsappManagerRole(role) {
+  const r = String(role || "").trim();
+  return r === "Manager" || r === "Team Lead";
+}
+
+/** Counselors and coordinators who may view but not connect branch WhatsApp. */
+export function isBranchWhatsappViewerRole(role) {
+  return isWhatsappIntegrationRole(role) && !isBranchWhatsappManagerRole(role);
+}
+
+/** Roles that can open Integrations and poll WhatsApp status in the navbar. */
+export function canAccessWhatsappIntegration(role, adminChatEnabled = false, branchWhatsappEnabled = false) {
+  if (isWhatsappIntegrationRole(role)) return true;
+  if (isStaffOmniChannelMessenger(role, adminChatEnabled)) return true;
+  if (branchWhatsappEnabled === true && isBranchWhatsappManagerRole(role)) return true;
+  return false;
+}

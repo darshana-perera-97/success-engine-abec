@@ -50,6 +50,7 @@ import {
   isRecognizedPortalRole,
   isStaffOmniChannelMessenger,
   isWhatsappIntegrationRole,
+  canAccessWhatsappIntegration,
   VISA_OFFICER_COUNSELOR_ROLE,
   VISA_OFFICER_ROLE,
 } from "./roles";
@@ -144,7 +145,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
-  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, goldLoansAcceptable: true });
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, goldLoansAcceptable: true });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -382,6 +383,7 @@ function App({ initialView = "dashboard" }) {
   };
   const currentUser = getCurrentUserObject();
   const adminChatEnabled = systemData.adminChatEnabled === true;
+  const branchWhatsappEnabled = systemData.branchWhatsappEnabled === true;
   const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
   /** Match pipeline scope: primary counselor, else inquiry counselor (legacy rows may only set one). */
   const effectiveAssignedCounselorKey = (student) => {
@@ -1244,7 +1246,7 @@ function App({ initialView = "dashboard" }) {
   }, [currentRole]);
   useEffect(() => {
     let cancelled = false;
-    const canPollWhatsapp = isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+    const canPollWhatsapp = canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled);
     const userId = String(currentUser?.id || "").trim();
     if (!canPollWhatsapp || !userId) {
       whatsappPollUserIdRef.current = "";
@@ -1277,9 +1279,9 @@ function App({ initialView = "dashboard" }) {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [currentRole, currentUser?.id, adminChatEnabled]);
+  }, [currentRole, currentUser?.id, adminChatEnabled, branchWhatsappEnabled]);
   useEffect(() => {
-    const canPollWhatsapp = isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+    const canPollWhatsapp = canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled);
     if (!canPollWhatsapp) return;
     const userId = String(currentUser?.id || "").trim();
     if (!userId) return;
@@ -1305,7 +1307,7 @@ function App({ initialView = "dashboard" }) {
     tick();
     const intervalId = setInterval(tick, 4000);
     return () => clearInterval(intervalId);
-  }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification, adminChatEnabled]);
+  }, [currentRole, currentUser?.id, whatsappConnectionStatus, addNotification, adminChatEnabled, branchWhatsappEnabled]);
   const handleNavigate = (view, options = {}) => {
     if (view === "counselors" && currentView === "counselors") {
       setCounselorListResetSignal((prev) => prev + 1);
@@ -2459,8 +2461,8 @@ function App({ initialView = "dashboard" }) {
   };
   const renderContent = () => {
     if (currentView === "integration") {
-      if (isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled)) {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
+      if (canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)) {
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled });
       }
     }
     if (currentView === "messages") {
@@ -2472,7 +2474,7 @@ function App({ initialView = "dashboard" }) {
             : (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active
               ? managerScopedStudents
               : students;
-      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled });
+      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled, branchWhatsappEnabled });
     }
     if (currentView === "resume") {
       return /* @__PURE__ */ jsx(AIResumeBuilder, {
@@ -2604,7 +2606,7 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (isWhatsappIntegrationRole(currentRole) && currentView === "integration") {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser });
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled });
       }
       if (currentView === "branch") {
         const coordBranch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
@@ -2784,9 +2786,9 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (currentView === "integration") {
-        return adminChatEnabled
-          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser })
-          : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable admin messaging in Settings to use Integrations." });
+        return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled })
+          : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       }
       return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
     }
@@ -2853,7 +2855,8 @@ function App({ initialView = "dashboard" }) {
         }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Settings are available for Admin only." });
       case "branch":
         return /* @__PURE__ */ jsx(BranchAnalytics, {
-          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null
+          scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
+          branchWhatsappEnabled: systemData.branchWhatsappEnabled === true
         });
       case "students":
         return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, counselorIdentitySet: primaryCounselorIdentitySet });
@@ -2899,7 +2902,9 @@ function App({ initialView = "dashboard" }) {
       case "maps":
         return /* @__PURE__ */ jsx(DocMapping, { userRole: currentRole });
       case "integration":
-        return adminChatEnabled ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser }) : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable admin messaging in Settings to use Integrations." });
+        return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled })
+          : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       case "web-forms":
         return /* @__PURE__ */ jsx(WebForms, {});
       default:
@@ -2968,9 +2973,10 @@ function App({ initialView = "dashboard" }) {
         counselorStageEscalationBadge: counselorStageNavBadge,
         counselorStudentsBadge: "",
         pageLoading: !appDataLoaded,
-        showWhatsappNavIndicator: isWhatsappIntegrationRole(currentRole) || isStaffOmniChannelMessenger(currentRole, adminChatEnabled),
+        showWhatsappNavIndicator: canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled),
         whatsappConnectionStatus,
         adminChatEnabled,
+        branchWhatsappEnabled,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);

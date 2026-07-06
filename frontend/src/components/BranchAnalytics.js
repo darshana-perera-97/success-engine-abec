@@ -3,11 +3,44 @@ import { formatRawLKR } from "../utils";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { MapPin, TrendingUp, Download, Banknote, Clock, Plus, X } from "lucide-react";
 import { Button } from "./Button";
-import { createBranch, getBranchFinanceSummary, getBranchManagers } from "../authApi";
+import { createBranch, getBranchFinanceSummary, getBranchManagers, getBranchWhatsappConnectivity } from "../authApi";
 import { POLL_MS } from "../runtimeConfig";
+
+const WHATSAPP_STATUS_LABELS = {
+  disconnected: "Disconnected",
+  connecting: "Connecting",
+  awaiting_qr_scan: "Awaiting QR",
+  authenticated: "Linking",
+  connected: "Connected",
+  auth_failed: "Auth failed",
+  error: "Error",
+};
+
+const whatsappStatusLabel = (status, hasMessenger) => {
+  if (!hasMessenger) return "Not connected";
+  const key = String(status || "disconnected");
+  return WHATSAPP_STATUS_LABELS[key] || key;
+};
+
+const whatsappStatusTextClass = (status, hasMessenger) => {
+  if (!hasMessenger) return "text-slate-500";
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "text-emerald-600";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600";
+  return "text-rose-600";
+};
+
+const whatsappStatusDotClass = (status, hasMessenger) => {
+  if (!hasMessenger) return "bg-slate-300";
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "bg-emerald-500";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  return "bg-rose-500";
+};
 
 const BranchAnalytics = ({
   scopeBranch = null,
+  branchWhatsappEnabled = false,
 }) => {
   const formatRevenueNumber = (value) => {
     const formatted = formatRawLKR(value);
@@ -25,9 +58,11 @@ const BranchAnalytics = ({
   const reportRef = useRef(null);
   const [isExporting, setIsExporting] = useState(false);
   const [pageLoads, setPageLoads] = useState({ finance: false, managers: false });
+  const [whatsappByBranch, setWhatsappByBranch] = useState({});
 
   const branchPageReady = pageLoads.finance && pageLoads.managers;
   const scopeKey = scopeBranch ? String(scopeBranch).trim().toLowerCase() : "";
+  const showBranchWhatsapp = branchWhatsappEnabled && !scopeBranch;
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +99,32 @@ const BranchAnalytics = ({
     loadManagers();
     return () => { cancelled = true; };
   }, [scopeBranch, scopeKey]);
+
+  useEffect(() => {
+    if (!showBranchWhatsapp) {
+      setWhatsappByBranch({});
+      return undefined;
+    }
+    let cancelled = false;
+    const loadWhatsappConnectivity = async () => {
+      const result = await getBranchWhatsappConnectivity("");
+      if (!result.ok || cancelled || !result.data?.enabled) return;
+      const next = {};
+      (result.data.branches || []).forEach((row) => {
+        const key = String(row?.name || "").trim().toLowerCase();
+        if (key) next[key] = row;
+      });
+      setWhatsappByBranch(next);
+    };
+    loadWhatsappConnectivity();
+    const intervalId = setInterval(loadWhatsappConnectivity, POLL_MS.whatsapp);
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [showBranchWhatsapp]);
+
+  const getWhatsappForBranch = (branchName) => {
+    const key = String(branchName || "").trim().toLowerCase();
+    return whatsappByBranch[key] || null;
+  };
 
   const revenueRankedData = useMemo(
     () =>
@@ -263,6 +324,30 @@ const BranchAnalytics = ({
                   </p>
                 </div>
               </div>
+              {showBranchWhatsapp ? (() => {
+                const wa = getWhatsappForBranch(data.name);
+                const hasMessenger = Boolean(wa?.messengerUserId);
+                const status = wa?.status || "disconnected";
+                const isLive = status === "connected" || status === "authenticated";
+                return (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-slate-400 uppercase">WhatsApp</p>
+                      <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${whatsappStatusTextClass(status, hasMessenger)}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${whatsappStatusDotClass(status, hasMessenger)}`} />
+                        {whatsappStatusLabel(status, hasMessenger)}
+                      </span>
+                    </div>
+                    {isLive && wa?.whatsappNumber ? (
+                      <p className="text-[10px] text-slate-500 mt-1 truncate">{wa.whatsappNumber}</p>
+                    ) : wa?.messengerName ? (
+                      <p className="text-[10px] text-slate-500 mt-1 truncate">By {wa.messengerName}</p>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 mt-1">No branch account linked</p>
+                    )}
+                  </div>
+                );
+              })() : null}
             </div>
           ))}
         </div>
@@ -353,6 +438,39 @@ const BranchAnalytics = ({
                 )}
               </div>
             </div>
+
+            {showBranchWhatsapp ? (
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Branch WhatsApp</h4>
+                <div className="space-y-3">
+                  {cardRankedData.map((data) => {
+                    const wa = getWhatsappForBranch(data.name);
+                    const hasMessenger = Boolean(wa?.messengerUserId);
+                    const status = wa?.status || "disconnected";
+                    const isLive = status === "connected" || status === "authenticated";
+                    return (
+                      <div key={`${data.name}-wa`} className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-700 truncate">{data.name}</p>
+                          {wa?.messengerName ? (
+                            <p className="text-[11px] text-slate-500 truncate">{wa.messengerName}</p>
+                          ) : (
+                            <p className="text-[11px] text-slate-400">No manager linked</p>
+                          )}
+                          {isLive && wa?.whatsappNumber ? (
+                            <p className="text-[11px] text-slate-500 truncate">{wa.whatsappNumber}</p>
+                          ) : null}
+                        </div>
+                        <span className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold ${whatsappStatusTextClass(status, hasMessenger)}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${whatsappStatusDotClass(status, hasMessenger)}`} />
+                          {whatsappStatusLabel(status, hasMessenger)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
         </>

@@ -17,7 +17,7 @@ import { InlineLoading } from "./LoadingPlaceholder";
 import { MultiSelect } from "./MultiSelect";
 import { isStudentContactStaffAccountRole } from "../roles";
 import { resolveCountriesForOffice } from "../utils/branchCountries";
-import { mapMetaLeadRow, parseMetaLeadsFile } from "../utils/metaLeadsImport";
+import { parseReqStudentsImportFile } from "../utils/reqStudentsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 import { formatIntakeLabel } from "../utils/intakeFields";
 
@@ -173,6 +173,7 @@ export function RequestedStudents({
   const [importError, setImportError] = useState("");
   const [importSaving, setImportSaving] = useState(false);
   const [importParseLoading, setImportParseLoading] = useState(false);
+  const [importFormatLabel, setImportFormatLabel] = useState("");
   const [removingId, setRemovingId] = useState("");
   const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [branchRecords, setBranchRecords] = useState([]);
@@ -363,6 +364,7 @@ export function RequestedStudents({
     setImportPreviewOpen(false);
     setImportRows([]);
     setImportFileName("");
+    setImportFormatLabel("");
     setImportError("");
     setImportSaving(false);
     setImportParseLoading(false);
@@ -375,39 +377,22 @@ export function RequestedStudents({
 
     setImportParseLoading(true);
     setImportError("");
-    const parsed = await parseMetaLeadsFile(file);
-    if (!parsed.ok) {
-      setImportParseLoading(false);
-      setImportError(parsed.error || "Could not read the file.");
-      return;
-    }
 
     const branchesRes = await getBranches();
     const branchLocations = branchesRes.ok
       ? (branchesRes.data || []).map((b) => String(b?.location || "").trim()).filter(Boolean)
       : [];
 
-    const remapped = (parsed.data || []).map((row) =>
-      mapMetaLeadRow(
-        {
-          id: row.metaLeadId,
-          created_time: row.submittedAt,
-          full_name: row.name,
-          phone_number: row.phone,
-          nearest_branch: row.nearestOffice,
-          city: row.city,
-          highest_qualification: row.currentEducationLevel,
-          preferred_intake: row.intendedProgram,
-          campaign_name: row.campaignName,
-          form_name: row.formName,
-          platform: row.platform
-        },
-        { branchLocations }
-      )
-    );
+    const parsed = await parseReqStudentsImportFile(file, { branchLocations });
+    if (!parsed.ok) {
+      setImportParseLoading(false);
+      setError(parsed.error || "Could not read the file.");
+      return;
+    }
 
-    setImportRows(remapped);
+    setImportRows(parsed.data || []);
     setImportFileName(parsed.fileName || file.name);
+    setImportFormatLabel(parsed.formatLabel || "Spreadsheet");
     setImportPreviewOpen(true);
     setImportParseLoading(false);
   };
@@ -549,7 +534,7 @@ export function RequestedStudents({
                 isLoading={importParseLoading}
               >
                 <FileUp size={16} />
-                Import Meta leads
+                Import leads
               </Button>
             </>
           ) : null}
@@ -788,9 +773,10 @@ export function RequestedStudents({
           >
             <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Import Meta leads</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Import leads</h2>
                 <p className="mt-1 text-xs text-slate-500">
                   {importFileName ? `${importFileName} · ` : ""}
+                  {importFormatLabel ? `${importFormatLabel} · ` : ""}
                   {importRows.length} lead{importRows.length === 1 ? "" : "s"} ready to add to Requested Students.
                 </p>
               </div>

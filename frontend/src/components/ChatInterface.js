@@ -4,10 +4,10 @@ import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } 
 import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
-import { isCounselorEquivalentPortalRole, isStaffOmniChannelMessenger, isStudentMessagingStaffRole } from "../roles";
+import { isCounselorEquivalentPortalRole, canSendStaffStudentMessages, isStudentMessagingStaffRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false }) => {
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -136,7 +136,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
     messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
-  const canSendAsStaffMessenger = isStaffOmniChannelMessenger(currentRole, adminChatEnabled);
+  const canSendAsStaffMessenger = canSendStaffStudentMessages(currentRole, adminChatEnabled, branchWhatsappEnabled);
   const getRelevantCounselorId = () => {
     if (canSendAsStaffMessenger) {
       return String(currentUser?.id || "").trim();

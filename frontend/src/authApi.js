@@ -1481,7 +1481,7 @@ export async function getWhatsappStatus(userId) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to load WhatsApp status." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, context: data.context || null };
   } catch {
     return {
       ok: false,
@@ -1501,7 +1501,27 @@ export async function connectWhatsapp(userId) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to start WhatsApp connection." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, context: data.context || null };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Please contact the Support team."
+    };
+  }
+}
+
+export async function regenerateWhatsappQr(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/whatsapp/regenerate-qr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to regenerate WhatsApp QR code." };
+    }
+    return { ok: true, data: data.data, context: data.context || null };
   } catch {
     return {
       ok: false,
@@ -1521,7 +1541,7 @@ export async function disconnectWhatsapp(userId) {
     if (!res.ok || !data.ok || !data.data) {
       return { ok: false, error: data.error || "Failed to disconnect WhatsApp." };
     }
-    return { ok: true, data: data.data };
+    return { ok: true, data: data.data, context: data.context || null };
   } catch {
     return {
       ok: false,
@@ -1680,6 +1700,22 @@ export async function getBranchManagers(branch = "") {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load branch managers." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach server. Please contact the Support team." };
+  }
+}
+
+export async function getBranchWhatsappConnectivity(branch = "") {
+  try {
+    const params = new URLSearchParams();
+    if (branch) params.set("branch", branch);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/branch-analytics/whatsapp-connectivity${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to load branch WhatsApp connectivity." };
     }
     return { ok: true, data: data.data };
   } catch {

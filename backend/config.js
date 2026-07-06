@@ -85,6 +85,7 @@ const DEFAULT_SYSTEM_DATA = {
   counselorCanAcceptPayments: false,
   adminChatEnabled: false,
   branchCountriesEnabled: false,
+  branchWhatsappEnabled: false,
   goldLoansAcceptable: true,
 };
 

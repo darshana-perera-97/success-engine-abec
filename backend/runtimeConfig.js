@@ -19,7 +19,7 @@ const HOST =
   (IS_PRODUCTION ? "0.0.0.0" : "127.0.0.1");
 
 /** Defer Puppeteer/WhatsApp until a user opens Integration or sends a message. Saves ~100–300 MB per session at boot. */
-const WHATSAPP_LAZY_START = envBool("WHATSAPP_LAZY_START", IS_PRODUCTION);
+const WHATSAPP_LAZY_START = envBool("WHATSAPP_LAZY_START", false);
 
 /** Warm in-memory JSON cache on boot so first user requests are fast. */
 const WARM_JSON_CACHE_ON_START = envBool("WARM_JSON_CACHE_ON_START", IS_PRODUCTION);

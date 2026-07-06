@@ -25,7 +25,7 @@ module.exports = {
         NODE_ENV: "production",
         PORT: 3334,
         HOST: "0.0.0.0",
-        WHATSAPP_LAZY_START: "true",
+        WHATSAPP_LAZY_START: "false",
         WARM_JSON_CACHE_ON_START: "true",
       },
       env_development: {

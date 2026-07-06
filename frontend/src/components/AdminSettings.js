@@ -54,7 +54,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     currency: "LKR",
     notes: ""
   });
-  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, goldLoansAcceptable: true });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, goldLoansAcceptable: true });
   const [financeError, setFinanceError] = useState("");
   const [financeSuccess, setFinanceSuccess] = useState("");
   const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
@@ -130,6 +130,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
       counselorCanAcceptPayments: systemData.counselorCanAcceptPayments === true,
       adminChatEnabled: systemData.adminChatEnabled === true,
       branchCountriesEnabled: systemData.branchCountriesEnabled === true,
+      branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
       goldLoansAcceptable: systemData.goldLoansAcceptable !== false
     });
   }, [systemData]);
@@ -357,6 +358,18 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           "When enabled, Admin, Manager, and Team Lead can reply in Omni-Channel (not read-only), the Integrations page appears in their sidebar, and outbound messages use each user's own WhatsApp connection. Student threads stay in one conversation view alongside counselor messages."
         ] })
       ] }) }),
+      /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.branchWhatsappEnabled,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, branchWhatsappEnabled: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Use one WhatsApp account per branch" }),
+          "When enabled, only the Manager or Team Lead of each branch can connect WhatsApp (one account per branch). They can reply to students in Inbox (not read-only ghost mode) using the branch account. Other staff see the connected branch account and its status in the navbar. When disabled, each user connects their own WhatsApp as today."
+        ] })
+      ] }) }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
         type: "button",
         isLoading: isSavingChatSettings,
@@ -365,7 +378,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           setChatSuccess("");
           setIsSavingChatSettings(true);
           const result = await onSaveSystemData?.({
-            adminChatEnabled: financeForm.adminChatEnabled
+            adminChatEnabled: financeForm.adminChatEnabled,
+            branchWhatsappEnabled: financeForm.branchWhatsappEnabled
           });
           setIsSavingChatSettings(false);
           if (!result?.ok) {

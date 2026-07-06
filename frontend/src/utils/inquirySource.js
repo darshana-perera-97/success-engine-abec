@@ -14,7 +14,8 @@ const LEGACY_SOURCE_ALIASES = {
   "web-form": "marketing-team",
   "student-reg-form": "walking",
   "counselor-reassignment": "import",
-  "custom-input": "import"
+  "custom-input": "import",
+  "team-progress": "import"
 };
 
 export function normalizeInquirySource(raw) {

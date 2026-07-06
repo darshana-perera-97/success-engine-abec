@@ -7,7 +7,7 @@ const {
   decideStudentDetailChangeRequest,
 } = require("../models/studentDetailChangeRequests");
 const { readStudemts, writeStudemts } = require("../models/students");
-const { normalizeWhatsappNumber } = require("../services/whatsapp");
+const { normalizeStudentPhone, normalizeWhatsappNumber } = require("../services/whatsapp");
 
 const APPROVER_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 
@@ -101,7 +101,7 @@ async function handle(req, res, url) {
 
       const requestedName = String(body.requestedName ?? currentName).trim();
       const requestedEmail = String(body.requestedEmail ?? currentEmail).trim();
-      const requestedPhone = String(body.requestedPhone ?? currentPhone).trim();
+      const requestedPhoneRaw = String(body.requestedPhone ?? currentPhone).trim();
       let requestedWhatsappNumber = String(body.requestedWhatsappNumber ?? currentWhatsappNumber).trim();
       const requestedEducationLevel = String(body.requestedEducationLevel ?? currentEducationLevel).trim();
 
@@ -113,8 +113,16 @@ async function handle(req, res, url) {
         sendJson(res, 400, { ok: false, error: "Email is required." });
         return true;
       }
-      if (!requestedPhone) {
+      if (!requestedPhoneRaw) {
         sendJson(res, 400, { ok: false, error: "Phone is required." });
+        return true;
+      }
+      const requestedPhone = normalizeStudentPhone(requestedPhoneRaw);
+      if (!requestedPhone) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid phone number (e.g. +94771234567, 0771234567, 771234567, or +14155552671).",
+        });
         return true;
       }
       if (!requestedEducationLevel) {
@@ -123,9 +131,16 @@ async function handle(req, res, url) {
       }
 
       if (requestedWhatsappNumber) {
-        requestedWhatsappNumber = normalizeWhatsappNumber(requestedWhatsappNumber) || requestedWhatsappNumber;
+        requestedWhatsappNumber = normalizeWhatsappNumber(requestedWhatsappNumber) || "";
       } else {
         requestedWhatsappNumber = normalizeWhatsappNumber(requestedPhone) || requestedPhone;
+      }
+      if (!requestedWhatsappNumber) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid WhatsApp number (e.g. +94771234567, 0771234567, or +14155552671).",
+        });
+        return true;
       }
 
       const result = await appendStudentDetailChangeRequest({

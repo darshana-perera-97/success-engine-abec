@@ -5,7 +5,32 @@ const crypto = require("crypto");
 const { PORT, HOST, WHATSAPP_LAZY_START, WARM_JSON_CACHE_ON_START, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS, IS_PRODUCTION } = require("./config");
 const { corsHeaders, sendJson } = require("./lib/httpUtils");
 const { logEvent } = require("./lib/logger");
-const { initializeWhatsappSessionsOnStartup, reconnectActiveWhatsappSessions } = require("./services/whatsapp");
+const {
+  initializeWhatsappSessionsOnStartup,
+  restartActiveWhatsappSessions,
+  shutdownWhatsappSessions,
+  isWhatsappPuppeteerStaleSessionError,
+} = require("./services/whatsapp");
+
+// whatsapp-web.js re-injects on page navigation without catching puppeteer errors.
+function logNonFatalWhatsappPuppeteerError(source, error) {
+  if (!isWhatsappPuppeteerStaleSessionError(error)) return false;
+  console.warn(
+    `WhatsApp puppeteer navigation error (non-fatal, ${source}):`,
+    String(error?.message || error)
+  );
+  return true;
+}
+
+process.on("unhandledRejection", (reason) => {
+  logNonFatalWhatsappPuppeteerError("unhandledRejection", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  if (logNonFatalWhatsappPuppeteerError("uncaughtException", error)) return;
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
 const { processMeetingReminders, processInquiryScheduledCallReminders } = require("./services/notifications");
 
 const authRoutes = require("./routes/auth");
@@ -145,13 +170,17 @@ server.listen(PORT, HOST, async () => {
     });
   }
   if (WHATSAPP_LAZY_START) {
-    console.log("WhatsApp: lazy start enabled — sessions start when a user connects (saves RAM at boot).");
+    console.log(
+      "WhatsApp: lazy start enabled — restoring branch messenger sessions only (other sessions start on connect)."
+    );
+    await initializeWhatsappSessionsOnStartup({ branchMessengersOnly: true });
   } else {
+    console.log("WhatsApp: starting saved sessions on server boot...");
     await initializeWhatsappSessionsOnStartup();
   }
   setInterval(() => {
-    reconnectActiveWhatsappSessions().catch((error) => {
-      console.error("Periodic WhatsApp reconnect failed:", error);
+    restartActiveWhatsappSessions().catch((error) => {
+      console.error("Periodic WhatsApp browser restart failed:", error);
     });
   }, WHATSAPP_RECONNECT_INTERVAL_MS);
   setInterval(() => {
@@ -164,8 +193,13 @@ server.listen(PORT, HOST, async () => {
   }, MEETING_REMINDER_POLL_MS);
 });
 
-function shutdown(signal) {
+async function shutdown(signal) {
   console.log(`${signal} received — shutting down gracefully`);
+  try {
+    await shutdownWhatsappSessions();
+  } catch (error) {
+    console.error("WhatsApp shutdown failed:", error);
+  }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10_000).unref();
 }

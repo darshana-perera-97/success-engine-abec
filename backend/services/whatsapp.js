@@ -18,6 +18,29 @@ const { readStudemts } = require("../models/students");
 const { readChats, writeChats } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { isWhatsappIntegratedStaffRole } = require("./roles");
+const {
+  isBranchWhatsappManagerRole,
+  isWhatsappSessionConnected,
+  isBranchWhatsappEnabled,
+  resolveUserRecord,
+  resolveBranchForUser,
+  findBranchWhatsappMessengerUser,
+  setBranchWhatsappMessenger,
+  clearBranchWhatsappMessenger,
+  resolveEffectiveWhatsappSenderId,
+  resolveWhatsappIntegrationContext,
+  assertCanManageWhatsappConnection,
+  onWhatsappSessionReady,
+  onWhatsappSessionDisconnected,
+} = require("./branchWhatsapp");
+const { readBranches } = require("../models/branches");
+
+const BRANCH_WHATSAPP_ACTIVE_STATUSES = new Set([
+  "connecting",
+  "awaiting_qr_scan",
+  "authenticated",
+  "connected",
+]);
 
 const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
@@ -26,7 +49,17 @@ const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
+const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
+let isWhatsappShuttingDown = false;
+let whatsappInitChain = Promise.resolve();
+
+function notifyWhatsappSessionDisconnected(userId) {
+  if (isWhatsappShuttingDown) return;
+  onWhatsappSessionDisconnected(userId).catch(() => {
+    // Branch unlink is best-effort.
+  });
+}
 
 // Puppeteer's bundled Chrome for linux_arm is often an invalid binary (shell reports
 // `Syntax error: ")" unexpected`). Prefer an explicit path or system Chromium/Chrome.
@@ -82,11 +115,40 @@ function resolvePuppeteerExecutablePath() {
 function buildPuppeteerOptions() {
   const options = {
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   };
   const executablePath = resolvePuppeteerExecutablePath();
   if (executablePath) options.executablePath = executablePath;
   return options;
+}
+
+function enqueueWhatsappInit(task) {
+  const run = whatsappInitChain.then(task);
+  whatsappInitChain = run.catch(() => {});
+  return run;
+}
+
+function markWhatsappInitializeFailed(state, userId, error) {
+  clearWhatsappAuthenticatedTimeout(state);
+  state.status = "error";
+  state.error = String(error?.message || "Failed to initialize WhatsApp client.");
+  state.lastUpdatedAt = new Date().toISOString();
+  const staleClient = state.client;
+  state.client = null;
+  if (staleClient && typeof staleClient.destroy === "function") {
+    staleClient.destroy().catch(() => {
+      // Ignore cleanup failure after a failed initialize.
+    });
+  }
+  const cleanUserId = String(userId || "").trim();
+  if (cleanUserId) {
+    notifyWhatsappSessionDisconnected(cleanUserId);
+  }
 }
 
 async function resolveCounselor(userId) {
@@ -113,8 +175,11 @@ async function isAdminWhatsappMessenger(userId) {
 async function resolveStaffWhatsappMessenger(userId) {
   const id = String(userId || "").trim();
   if (!id) return null;
-  if (!(await isStaffWhatsappMessagingEnabled())) return null;
+  const systemData = await readSystemData();
+  const adminChatEnabled = systemData.adminChatEnabled === true;
+  const branchWhatsappEnabled = systemData.branchWhatsappEnabled === true;
   if (id === ADMIN_WHATSAPP_USER_ID) {
+    if (!adminChatEnabled) return null;
     return { id: ADMIN_WHATSAPP_USER_ID, role: "Admin" };
   }
   const users = await readUsers();
@@ -122,6 +187,13 @@ async function resolveStaffWhatsappMessenger(userId) {
   if (!matched) return null;
   const role = String(matched.role || "").trim();
   if (!STAFF_WHATSAPP_ROLES.has(role)) return null;
+  if (role === "Manager" || role === "Team Lead") {
+    if (adminChatEnabled || branchWhatsappEnabled) {
+      return { id, role };
+    }
+    return null;
+  }
+  if (!adminChatEnabled) return null;
   return { id, role };
 }
 
@@ -133,11 +205,149 @@ async function resolveWhatsappMessenger(userId) {
   return resolveCounselor(userId);
 }
 
+async function findBranchWhatsappSessionConflict(actorUserId, branch) {
+  if (!branch?.id) return null;
+  const actorId = String(actorUserId || "").trim();
+  const users = await readUsers();
+  for (const user of users) {
+    const userId = String(user.id || "").trim();
+    if (!userId || userId === actorId) continue;
+    if (!isBranchWhatsappManagerRole(user.role)) continue;
+    const userBranch = await resolveBranchForUser(user);
+    if (!userBranch || String(userBranch.id || "") !== String(branch.id || "")) continue;
+    const sessionState = snapshotWhatsappState(userId);
+    if (BRANCH_WHATSAPP_ACTIVE_STATUSES.has(String(sessionState.status || ""))) {
+      return user;
+    }
+  }
+  return null;
+}
+
+async function enrichBranchWhatsappIntegrationContext(userId, context) {
+  if (context.mode !== "branch" || context.canManage !== true) return context;
+  const actor = await resolveUserRecord(userId);
+  if (!actor) return context;
+  const branch = await resolveBranchForUser(actor);
+  const conflict = await findBranchWhatsappSessionConflict(userId, branch);
+  if (!conflict) return context;
+  const conflictId = String(conflict.id || "").trim();
+  const conflictName = String(conflict.username || conflict.email || "").trim();
+  return {
+    ...context,
+    canManage: false,
+    messengerUserId: conflictId,
+    messengerName: conflictName,
+    statusUserId: conflictId,
+  };
+}
+
+async function resolveWhatsappIntegrationContextForUser(userId) {
+  const context = await resolveWhatsappIntegrationContext(userId);
+  return enrichBranchWhatsappIntegrationContext(userId, context);
+}
+
+async function prepareBranchWhatsappConnect(userId) {
+  const actor = await resolveUserRecord(userId);
+  if (!actor) {
+    return { ok: false, error: "WhatsApp account not found." };
+  }
+  if (!(await isBranchWhatsappEnabled())) {
+    return { ok: true };
+  }
+  if (!isBranchWhatsappManagerRole(actor.role)) {
+    return { ok: true };
+  }
+  const branch = await resolveBranchForUser(actor);
+  if (!branch?.id) {
+    return { ok: true };
+  }
+  const conflict = await findBranchWhatsappSessionConflict(userId, branch);
+  if (conflict) {
+    const conflictName = String(conflict.username || conflict.email || "").trim();
+    return {
+      ok: false,
+      error: conflictName
+        ? `Another Manager or Team Lead (${conflictName}) is already connecting WhatsApp for this branch.`
+        : "Another Manager or Team Lead is already connecting WhatsApp for this branch.",
+    };
+  }
+  const messenger = await findBranchWhatsappMessengerUser(branch);
+  if (!messenger || !isWhatsappSessionConnected(String(messenger.id || ""))) {
+    await setBranchWhatsappMessenger(branch.id, userId);
+  }
+  return { ok: true, branch };
+}
+
 function sanitizeUserIdForPath(userId) {
   return String(userId || "")
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, "_")
     .slice(0, 80);
+}
+
+function resolveWhatsappSessionDataDir(userId) {
+  const safeUserId = sanitizeUserIdForPath(userId);
+  return path.join(
+    WHATSAPP_CONNECTIONS_DIR,
+    safeUserId,
+    `session-${safeUserId}`
+  );
+}
+
+function listBrowserProcessIdsForProfile(profileDir) {
+  if (!profileDir) return [];
+  try {
+    const output = String(
+      execFileSync("ps", ["-ax", "-o", "pid=", "-o", "command="], {
+        encoding: "utf8",
+      }) || ""
+    );
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(.*)$/);
+        if (!match) return null;
+        const pid = Number.parseInt(match[1], 10);
+        const command = match[2] || "";
+        if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
+          return null;
+        }
+        const usesProfileDir = command.includes(profileDir);
+        const isBrowserProcess = /(chrom(e|ium)|headless)/i.test(command);
+        if (!usesProfileDir || !isBrowserProcess) return null;
+        return pid;
+      })
+      .filter((pid) => Number.isInteger(pid));
+  } catch {
+    return [];
+  }
+}
+
+async function terminateBrowserProcessesUsingProfile(profileDir) {
+  const initialPids = listBrowserProcessIdsForProfile(profileDir);
+  if (!initialPids.length) return;
+  for (const pid of initialPids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Process may already be gone.
+    }
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const remaining = listBrowserProcessIdsForProfile(profileDir);
+    if (!remaining.length) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  for (const pid of listBrowserProcessIdsForProfile(profileDir)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Process may already be gone.
+    }
+  }
 }
 
 function ensureWhatsappState(userId) {
@@ -167,7 +377,7 @@ function clearWhatsappAuthenticatedTimeout(state) {
   state.authenticatedTimeout = null;
 }
 
-function markWhatsappAuthenticatedTimeout(state) {
+function markWhatsappAuthenticatedTimeout(state, userId = "") {
   if (!state || state.status !== "authenticated") return;
   state.authTimedOut = true;
   state.status = "error";
@@ -182,12 +392,16 @@ function markWhatsappAuthenticatedTimeout(state) {
       // Ignore cleanup failure; the timed-out client has already been detached.
     });
   }
+  const cleanUserId = String(userId || "").trim();
+  if (cleanUserId) {
+    notifyWhatsappSessionDisconnected(cleanUserId);
+  }
 }
 
-function scheduleWhatsappAuthenticatedTimeout(state) {
+function scheduleWhatsappAuthenticatedTimeout(state, userId = "") {
   clearWhatsappAuthenticatedTimeout(state);
   state.authenticatedTimeout = setTimeout(() => {
-    markWhatsappAuthenticatedTimeout(state);
+    markWhatsappAuthenticatedTimeout(state, userId);
   }, AUTHENTICATED_STUCK_TIMEOUT_MS);
   if (typeof state.authenticatedTimeout.unref === "function") {
     state.authenticatedTimeout.unref();
@@ -201,7 +415,7 @@ function snapshotWhatsappState(userId) {
     const isStaleAuthenticated =
       Number.isFinite(lastUpdateMs) && Date.now() - lastUpdateMs > AUTHENTICATED_STUCK_TIMEOUT_MS;
     if (isStaleAuthenticated) {
-      markWhatsappAuthenticatedTimeout(state);
+      markWhatsappAuthenticatedTimeout(state, userId);
     }
   }
   return {
@@ -217,7 +431,7 @@ function snapshotWhatsappState(userId) {
   };
 }
 
-async function startWhatsappSession(userId) {
+async function startWhatsappSession(userId, { awaitInitialize = false, initAttempt = 1 } = {}) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) throw new Error("Counselor user id is required.");
   const state = ensureWhatsappState(cleanUserId);
@@ -237,6 +451,8 @@ async function startWhatsappSession(userId) {
       // Ignore cleanup failure and allow creating a fresh session.
     }
   }
+  const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
+  await terminateBrowserProcessesUsingProfile(sessionDataDir);
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
   const webVersion = await resolveWhatsappWebVersion();
   const client = new Client({
@@ -286,7 +502,7 @@ async function startWhatsappSession(userId) {
     state.status = "authenticated";
     state.error = "";
     state.authTimedOut = false;
-    scheduleWhatsappAuthenticatedTimeout(state);
+    scheduleWhatsappAuthenticatedTimeout(state, cleanUserId);
     state.lastUpdatedAt = new Date().toISOString();
   });
 
@@ -314,6 +530,9 @@ async function startWhatsappSession(userId) {
     state.whatsappProfilePicUrl = profilePicUrl;
     state.authTimedOut = false;
     state.lastUpdatedAt = new Date().toISOString();
+    onWhatsappSessionReady(cleanUserId).catch(() => {
+      // Branch linkage is best-effort; session remains connected.
+    });
   });
 
   client.on("auth_failure", (message) => {
@@ -321,6 +540,7 @@ async function startWhatsappSession(userId) {
     state.status = "auth_failed";
     state.error = String(message || "WhatsApp authentication failed.");
     state.lastUpdatedAt = new Date().toISOString();
+    notifyWhatsappSessionDisconnected(cleanUserId);
   });
 
   client.on("change_state", (nextState) => {
@@ -348,6 +568,7 @@ async function startWhatsappSession(userId) {
       state.error = "";
     }
     state.lastUpdatedAt = new Date().toISOString();
+    notifyWhatsappSessionDisconnected(cleanUserId);
   });
 
   const handleIncomingMessage = async (message) => {
@@ -361,14 +582,33 @@ async function startWhatsappSession(userId) {
   // "message" is enough for inbound messages; keeping both causes duplicate logs.
   client.on("message", handleIncomingMessage);
 
-  client
-    .initialize()
-    .catch((error) => {
-      clearWhatsappAuthenticatedTimeout(state);
-      state.status = "error";
-      state.error = String(error?.message || "Failed to initialize WhatsApp client.");
-      state.lastUpdatedAt = new Date().toISOString();
-    });
+  const initPromise = enqueueWhatsappInit(async () => {
+    await client.initialize();
+  }).catch(async (error) => {
+    const canRetry =
+      initAttempt < WHATSAPP_INIT_MAX_ATTEMPTS && isWhatsappPuppeteerStaleSessionError(error);
+    if (canRetry) {
+      console.warn(
+        `WhatsApp init retry ${initAttempt}/${WHATSAPP_INIT_MAX_ATTEMPTS - 1} for ${cleanUserId}: ${String(error?.message || error)}`
+      );
+      try {
+        await client.destroy();
+      } catch {
+        // Client may already be partially torn down.
+      }
+      state.client = null;
+      await new Promise((resolve) => setTimeout(resolve, 1500 * initAttempt));
+      return startWhatsappSession(cleanUserId, {
+        awaitInitialize,
+        initAttempt: initAttempt + 1,
+      });
+    }
+    markWhatsappInitializeFailed(state, cleanUserId, error);
+  });
+
+  if (awaitInitialize) {
+    await initPromise;
+  }
 
   return snapshotWhatsappState(cleanUserId);
 }
@@ -411,7 +651,37 @@ async function stopWhatsappSession(userId) {
       throw error;
     }
   }
+  onWhatsappSessionDisconnected(cleanUserId).catch(() => {
+    // Branch unlink is best-effort.
+  });
   return snapshotWhatsappState(cleanUserId);
+}
+
+async function regenerateWhatsappQrCode(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) throw new Error("Counselor user id is required.");
+  const state = ensureWhatsappState(cleanUserId);
+  const status = String(state.status || "");
+  if (status === "connected" || status === "authenticated") {
+    throw new Error("Cannot regenerate QR while WhatsApp is connected.");
+  }
+  if (state.client) {
+    try {
+      await state.client.destroy();
+    } catch {
+      // Ignore cleanup failure and allow creating a fresh session.
+    }
+  }
+  clearWhatsappAuthenticatedTimeout(state);
+  state.client = null;
+  state.status = "disconnected";
+  state.qrCodeDataUrl = "";
+  state.error = "";
+  state.authTimedOut = false;
+  state.lastUpdatedAt = new Date().toISOString();
+  const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
+  await terminateBrowserProcessesUsingProfile(sessionDataDir);
+  return startWhatsappSession(cleanUserId);
 }
 
 async function userHasSavedWhatsappSession(userId) {
@@ -427,35 +697,81 @@ async function userHasSavedWhatsappSession(userId) {
   }
 }
 
-async function initializeWhatsappSessionsOnStartup() {
+async function startSavedWhatsappSessionIfExists(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) return;
+  const hasSavedSession = await userHasSavedWhatsappSession(cleanUserId);
+  if (!hasSavedSession) return;
+  try {
+    await startWhatsappSession(cleanUserId, { awaitInitialize: true });
+  } catch (error) {
+    console.error(`Failed to restore WhatsApp session for ${cleanUserId}:`, error);
+  }
+}
+
+async function collectBranchWhatsappUserIds(users, branches) {
+  const ids = new Set();
+  if (!(await isBranchWhatsappEnabled())) return ids;
+  for (const user of users) {
+    if (!isBranchWhatsappManagerRole(user.role)) continue;
+    const userId = String(user.id || "").trim();
+    if (userId) ids.add(userId);
+  }
+  for (const branch of branches) {
+    const messengerUserId = String(branch?.whatsappMessengerUserId || "").trim();
+    if (messengerUserId) ids.add(messengerUserId);
+  }
+  return ids;
+}
+
+async function initializeWhatsappSessionsOnStartup({ branchMessengersOnly = false } = {}) {
   try {
     const users = await readUsers();
+    const branches = await readBranches();
+    const branchUserIds = await collectBranchWhatsappUserIds(users, branches);
+
+    if (branchMessengersOnly) {
+      for (const userId of branchUserIds) {
+        await startSavedWhatsappSessionIfExists(userId);
+      }
+      return;
+    }
+
     const integratedStaff = users.filter((user) => isWhatsappIntegratedStaffRole(user.role));
     for (const staffUser of integratedStaff) {
       const staffUserId = String(staffUser.id || "").trim();
       if (!staffUserId) continue;
-      const hasSavedSession = await userHasSavedWhatsappSession(staffUserId);
-      if (!hasSavedSession) continue;
-      await startWhatsappSession(staffUserId);
+      await startSavedWhatsappSessionIfExists(staffUserId);
     }
     if (await isStaffWhatsappMessagingEnabled()) {
-      const hasAdminSession = await userHasSavedWhatsappSession(ADMIN_WHATSAPP_USER_ID);
-      if (hasAdminSession) {
-        await startWhatsappSession(ADMIN_WHATSAPP_USER_ID);
-      }
+      await startSavedWhatsappSessionIfExists(ADMIN_WHATSAPP_USER_ID);
       for (const user of users) {
         const role = String(user.role || "").trim();
         if (!STAFF_WHATSAPP_ROLES.has(role)) continue;
         const staffId = String(user.id || "").trim();
         if (!staffId) continue;
-        const hasSavedSession = await userHasSavedWhatsappSession(staffId);
-        if (hasSavedSession) {
-          await startWhatsappSession(staffId);
-        }
+        await startSavedWhatsappSessionIfExists(staffId);
       }
+    }
+    for (const userId of branchUserIds) {
+      await startSavedWhatsappSessionIfExists(userId);
     }
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);
+  }
+}
+
+async function shutdownWhatsappSessions() {
+  isWhatsappShuttingDown = true;
+  for (const [, state] of whatsappSessions.entries()) {
+    clearWhatsappAuthenticatedTimeout(state);
+    if (!state.client) continue;
+    try {
+      await state.client.destroy();
+    } catch {
+      // Browser may already be gone during process shutdown.
+    }
+    state.client = null;
   }
 }
 
@@ -526,6 +842,30 @@ async function restartWhatsappBrowserSession(userId) {
   await recovery;
 }
 
+async function restartActiveWhatsappSessions() {
+  const activeUserIds = [];
+  for (const [userId, state] of whatsappSessions.entries()) {
+    const status = String(state?.status || "");
+    if (
+      status === "connected" ||
+      status === "authenticated" ||
+      status === "awaiting_qr_scan" ||
+      status === "connecting"
+    ) {
+      activeUserIds.push(userId);
+    }
+  }
+  if (!activeUserIds.length) return;
+  console.log(`WhatsApp: periodic browser restart for ${activeUserIds.length} session(s)`);
+  for (const userId of activeUserIds) {
+    try {
+      await restartWhatsappBrowserSession(userId);
+    } catch (error) {
+      console.error(`Failed to restart WhatsApp browser for ${userId}:`, error);
+    }
+  }
+}
+
 function toWhatsAppChatId(phone) {
   const digitsOnly = String(phone || "").replace(/[^\d]/g, "");
   if (!digitsOnly) return "";
@@ -554,7 +894,7 @@ function normalizeSriLankaStudentPhone(phone) {
   return `+94${localMobileDigits}`;
 }
 
-function normalizeWhatsappNumber(phone) {
+function normalizeInternationalPhone(phone) {
   const raw = String(phone || "").trim();
   if (!raw) return "";
   const sriLanka = normalizeSriLankaStudentPhone(raw);
@@ -562,6 +902,14 @@ function normalizeWhatsappNumber(phone) {
   const digitsOnly = normalizePhoneDigits(raw);
   if (digitsOnly.length < 8 || digitsOnly.length > 15) return "";
   return `+${digitsOnly}`;
+}
+
+function normalizeStudentPhone(phone) {
+  return normalizeInternationalPhone(phone);
+}
+
+function normalizeWhatsappNumber(phone) {
+  return normalizeInternationalPhone(phone);
 }
 
 async function resolveWhatsappThreadIdFromMessage(message) {
@@ -687,10 +1035,15 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
 }
 
 async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content, attachment = null }) {
-  const sender = await resolveWhatsappMessenger(senderId);
-  if (!sender) {
+  const actor = await resolveWhatsappMessenger(senderId);
+  if (!actor) {
     return { attempted: false, status: "skipped", reason: "Sender is not authorized for WhatsApp messaging." };
   }
+  const effectiveSenderId = await resolveEffectiveWhatsappSenderId(senderId);
+  if (!effectiveSenderId) {
+    return { attempted: false, status: "skipped", reason: "No WhatsApp account is available for this branch." };
+  }
+  const sender = { id: effectiveSenderId };
   const studentId = String(receiverId || "").trim();
   if (!studentId) {
     return { attempted: false, status: "skipped", reason: "Student receiver id is missing." };
@@ -807,15 +1160,19 @@ module.exports = {
   snapshotWhatsappState,
   startWhatsappSession,
   stopWhatsappSession,
+  regenerateWhatsappQrCode,
   userHasSavedWhatsappSession,
   initializeWhatsappSessionsOnStartup,
+  shutdownWhatsappSessions,
   reconnectActiveWhatsappSessions,
+  restartActiveWhatsappSessions,
   isWhatsappPuppeteerStaleSessionError,
   waitForWhatsappSessionConnected,
   restartWhatsappBrowserSession,
   toWhatsAppChatId,
   normalizePhoneDigits,
   normalizeSriLankaStudentPhone,
+  normalizeStudentPhone,
   normalizeWhatsappNumber,
   resolveStudentWhatsappPhone,
   resolveWhatsappThreadIdFromMessage,
@@ -824,6 +1181,9 @@ module.exports = {
   deliverCounselorMessageToStudentWhatsapp,
   resolveCounselor,
   resolveWhatsappMessenger,
+  resolveWhatsappIntegrationContext,
+  resolveWhatsappIntegrationContextForUser,
+  prepareBranchWhatsappConnect,
   isAdminWhatsappMessenger,
   ADMIN_WHATSAPP_USER_ID,
 };

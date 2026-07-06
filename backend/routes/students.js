@@ -34,7 +34,7 @@ const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData
 const { notifyInquiryCallScheduled } = require("../services/notifications");
 const {
   deliverCounselorMessageToStudentWhatsapp,
-  normalizeSriLankaStudentPhone,
+  normalizeStudentPhone,
   normalizeWhatsappNumber,
 } = require("../services/whatsapp");
 const {
@@ -307,7 +307,7 @@ async function handle(req, res, url) {
       const branch = String(body.branch || "").trim();
       const email = normalizeEmail(body.email);
       const phoneInput = String(body.phone || "").trim();
-      const phone = normalizeSriLankaStudentPhone(phoneInput);
+      const phone = normalizeStudentPhone(phoneInput);
       const whatsappInput = String(body.whatsappNumber || "").trim();
       const whatsappNumber = whatsappInput
         ? normalizeWhatsappNumber(whatsappInput)
@@ -351,13 +351,16 @@ async function handle(req, res, url) {
         return true;
       }
       if (!phone) {
-        sendJson(res, 400, { ok: false, error: "Enter a valid Sri Lankan mobile number in +947XXXXXXXX format." });
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid phone number (e.g. +94771234567, 0771234567, 771234567, or +14155552671).",
+        });
         return true;
       }
       if (!whatsappNumber) {
         sendJson(res, 400, {
           ok: false,
-          error: "Enter a valid WhatsApp number with country code (e.g. +94771234567 or +14155552671).",
+          error: "Enter a valid WhatsApp number (e.g. +94771234567, 0771234567, or +14155552671).",
         });
         return true;
       }
@@ -483,9 +486,12 @@ async function handle(req, res, url) {
         updatedAt: nowIso,
       };
       if (Object.prototype.hasOwnProperty.call(body, "phone")) {
-        const normalizedPhone = normalizeSriLankaStudentPhone(body.phone);
+        const normalizedPhone = normalizeStudentPhone(body.phone);
         if (!normalizedPhone) {
-          sendJson(res, 400, { ok: false, error: "Enter a valid Sri Lankan mobile number in +947XXXXXXXX format." });
+          sendJson(res, 400, {
+            ok: false,
+            error: "Enter a valid phone number (e.g. +94771234567, 0771234567, 771234567, or +14155552671).",
+          });
           return true;
         }
         merged.phone = normalizedPhone;
@@ -498,7 +504,7 @@ async function handle(req, res, url) {
         if (!normalizedWhatsapp) {
           sendJson(res, 400, {
             ok: false,
-            error: "Enter a valid WhatsApp number with country code (e.g. +94771234567 or +14155552671).",
+            error: "Enter a valid WhatsApp number (e.g. +94771234567, 0771234567, or +14155552671).",
           });
           return true;
         }
