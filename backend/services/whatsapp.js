@@ -15,7 +15,7 @@ const {
 const { readUsers } = require("../models/users");
 const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
-const { readChats, writeChats } = require("../models/chats");
+const { readChats, writeChats, appendPortalChatMessage } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { isWhatsappIntegratedStaffRole } = require("./roles");
 const {
@@ -179,7 +179,7 @@ async function resolveStaffWhatsappMessenger(userId) {
   const adminChatEnabled = systemData.adminChatEnabled === true;
   const branchWhatsappEnabled = systemData.branchWhatsappEnabled === true;
   if (id === ADMIN_WHATSAPP_USER_ID) {
-    if (!adminChatEnabled) return null;
+    if (!adminChatEnabled && !branchWhatsappEnabled) return null;
     return { id: ADMIN_WHATSAPP_USER_ID, role: "Admin" };
   }
   const users = await readUsers();
@@ -1034,16 +1034,39 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   await writeChats([...chats, chat]);
 }
 
-async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, content, attachment = null }) {
-  const actor = await resolveWhatsappMessenger(senderId);
-  if (!actor) {
-    return { attempted: false, status: "skipped", reason: "Sender is not authorized for WhatsApp messaging." };
+async function persistOutgoingStudentChatMessage({
+  senderId,
+  receiverId,
+  content,
+  attachment = null,
+  whatsappDelivery = null,
+}) {
+  try {
+    return await appendPortalChatMessage({
+      senderId,
+      receiverId,
+      content,
+      platform: "whatsapp",
+      attachment,
+      whatsappDelivery,
+    });
+  } catch (error) {
+    logEvent("chat", "failed to persist outgoing student message", {
+      senderId,
+      receiverId,
+      reason: String(error?.message || ""),
+    });
+    return null;
   }
-  const effectiveSenderId = await resolveEffectiveWhatsappSenderId(senderId);
-  if (!effectiveSenderId) {
-    return { attempted: false, status: "skipped", reason: "No WhatsApp account is available for this branch." };
-  }
-  const sender = { id: effectiveSenderId };
+}
+
+async function deliverCounselorMessageToStudentWhatsapp({
+  senderId,
+  receiverId,
+  content,
+  attachment = null,
+  persistToChat = true,
+}) {
   const studentId = String(receiverId || "").trim();
   if (!studentId) {
     return { attempted: false, status: "skipped", reason: "Student receiver id is missing." };
@@ -1053,36 +1076,24 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
   if (!student) {
     return { attempted: false, status: "skipped", reason: "Student record not found." };
   }
-  const phone = resolveStudentWhatsappPhone(student);
-  const chatId = toWhatsAppChatId(phone);
-  if (!chatId) {
-    return { attempted: false, status: "skipped", reason: "Student WhatsApp number is missing." };
+
+  const actor = await resolveWhatsappMessenger(senderId);
+  if (!actor) {
+    return { attempted: false, status: "skipped", reason: "Sender is not authorized for WhatsApp messaging." };
   }
+
   const messageText = String(content || "").trim();
   const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
-  let preparedMedia = null;
-  let preparedMediaMime = "";
-  if (outgoingAttachment && outgoingAttachment.url) {
-    preparedMediaMime = String(outgoingAttachment.mime || "").toLowerCase();
-    if (!isSupportedWhatsappMediaMime(preparedMediaMime)) {
-      return {
-        attempted: false,
-        status: "skipped",
-        reason: "Only PDF and image attachments can be sent via WhatsApp.",
-      };
-    }
-    const mediaPath =
-      resolveChatFileDiskPath(String(outgoingAttachment.url || "")) ||
-      resolveStudentDocDiskPath(String(outgoingAttachment.url || ""));
-    if (!mediaPath) {
-      return {
-        attempted: false,
-        status: "skipped",
-        reason: "Attachment file path is invalid.",
-      };
-    }
-    preparedMedia = MessageMedia.fromFilePath(mediaPath);
-  } else if (!messageText) {
+  const chatAttachment =
+    outgoingAttachment && outgoingAttachment.url
+      ? {
+          name: String(outgoingAttachment.name || "attachment").trim(),
+          mime: String(outgoingAttachment.mime || "").trim(),
+          size: outgoingAttachment.size,
+          url: String(outgoingAttachment.url || "").trim(),
+        }
+      : null;
+  if (!messageText && !chatAttachment) {
     return {
       attempted: false,
       status: "skipped",
@@ -1090,67 +1101,151 @@ async function deliverCounselorMessageToStudentWhatsapp({ senderId, receiverId, 
     };
   }
 
-  const senderState = ensureWhatsappState(sender.id);
-  if (!senderState.client || (senderState.status !== "connected" && senderState.status !== "authenticated")) {
-    return { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
-  }
+  const effectiveSenderId = await resolveEffectiveWhatsappSenderId(senderId, student);
+  const chatSenderId = String(effectiveSenderId || senderId || "").trim();
+  const chatContent =
+    messageText || (chatAttachment ? `Sent an attachment (${chatAttachment.name || "file"}).` : "");
 
-  const performSend = async () => {
-    const live = ensureWhatsappState(sender.id);
-    if (!live.client || (live.status !== "connected" && live.status !== "authenticated")) {
-      throw new Error("WhatsApp is not connected.");
-    }
-    if (preparedMedia) {
-      await live.client.sendMessage(chatId, preparedMedia, messageText ? { caption: messageText } : {});
+  let deliveryResult = { attempted: false, status: "skipped", reason: "Not attempted." };
+
+  if (!effectiveSenderId) {
+    const branchWhatsappEnabled = await isBranchWhatsappEnabled();
+    deliveryResult = {
+      attempted: false,
+      status: "skipped",
+      reason: branchWhatsappEnabled
+        ? "No WhatsApp account is connected for this student's branch."
+        : "No WhatsApp account is available for this branch.",
+    };
+  } else {
+    const sender = { id: effectiveSenderId };
+    const phone = resolveStudentWhatsappPhone(student);
+    const waChatId = toWhatsAppChatId(phone);
+    if (!waChatId) {
+      deliveryResult = { attempted: false, status: "skipped", reason: "Student WhatsApp number is missing." };
     } else {
-      await live.client.sendMessage(chatId, messageText);
-    }
-  };
-
-  const logSent = () => {
-    if (preparedMedia) {
-      logEvent("whatsapp", "media message sent", { from: sender.id, to: receiverId, chatId, mime: preparedMediaMime });
-    } else {
-      logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId });
-    }
-  };
-
-  try {
-    await performSend();
-    logSent();
-    return { attempted: true, status: "sent", channel: "whatsapp", chatId };
-  } catch (error) {
-    if (isWhatsappPuppeteerStaleSessionError(error)) {
-      logEvent("whatsapp", "stale session detected; restarting client", {
-        from: sender.id,
-        to: receiverId,
-        reason: String(error?.message || ""),
-      });
-      try {
-        await restartWhatsappBrowserSession(sender.id);
-        await performSend();
-        logSent();
-        return { attempted: true, status: "sent", channel: "whatsapp", chatId };
-      } catch (errorAfter) {
-        logEvent("whatsapp", "message send failed", {
-          from: sender.id,
-          to: receiverId,
-          reason: String(errorAfter?.message || ""),
-        });
-        return {
-          attempted: true,
-          status: "failed",
-          reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
+      let preparedMedia = null;
+      let preparedMediaMime = "";
+      if (chatAttachment) {
+        preparedMediaMime = String(chatAttachment.mime || "").toLowerCase();
+        if (!isSupportedWhatsappMediaMime(preparedMediaMime)) {
+          deliveryResult = {
+            attempted: false,
+            status: "skipped",
+            reason: "Only PDF and image attachments can be sent via WhatsApp.",
+          };
+        } else {
+          const mediaPath =
+            resolveChatFileDiskPath(String(chatAttachment.url || "")) ||
+            resolveStudentDocDiskPath(String(chatAttachment.url || ""));
+          if (!mediaPath) {
+            deliveryResult = {
+              attempted: false,
+              status: "skipped",
+              reason: "Attachment file path is invalid.",
+            };
+          } else {
+            preparedMedia = MessageMedia.fromFilePath(mediaPath);
+          }
+        }
+      } else if (!messageText) {
+        deliveryResult = {
+          attempted: false,
+          status: "skipped",
+          reason: "Message text or attachment is required.",
         };
       }
+
+      if (deliveryResult.status === "skipped" && deliveryResult.reason === "Not attempted.") {
+        const senderState = ensureWhatsappState(sender.id);
+        if (
+          !senderState.client ||
+          (senderState.status !== "connected" && senderState.status !== "authenticated")
+        ) {
+          deliveryResult = { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
+        } else {
+          const performSend = async () => {
+            const live = ensureWhatsappState(sender.id);
+            if (!live.client || (live.status !== "connected" && live.status !== "authenticated")) {
+              throw new Error("WhatsApp is not connected.");
+            }
+            if (preparedMedia) {
+              await live.client.sendMessage(waChatId, preparedMedia, messageText ? { caption: messageText } : {});
+            } else {
+              await live.client.sendMessage(waChatId, messageText);
+            }
+          };
+
+          const logSent = () => {
+            if (preparedMedia) {
+              logEvent("whatsapp", "media message sent", {
+                from: sender.id,
+                to: receiverId,
+                chatId: waChatId,
+                mime: preparedMediaMime,
+              });
+            } else {
+              logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId: waChatId });
+            }
+          };
+
+          try {
+            await performSend();
+            logSent();
+            deliveryResult = { attempted: true, status: "sent", channel: "whatsapp", chatId: waChatId };
+          } catch (error) {
+            if (isWhatsappPuppeteerStaleSessionError(error)) {
+              logEvent("whatsapp", "stale session detected; restarting client", {
+                from: sender.id,
+                to: receiverId,
+                reason: String(error?.message || ""),
+              });
+              try {
+                await restartWhatsappBrowserSession(sender.id);
+                await performSend();
+                logSent();
+                deliveryResult = { attempted: true, status: "sent", channel: "whatsapp", chatId: waChatId };
+              } catch (errorAfter) {
+                logEvent("whatsapp", "message send failed", {
+                  from: sender.id,
+                  to: receiverId,
+                  reason: String(errorAfter?.message || ""),
+                });
+                deliveryResult = {
+                  attempted: true,
+                  status: "failed",
+                  reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
+                };
+              }
+            } else {
+              logEvent("whatsapp", "message send failed", {
+                from: sender.id,
+                to: receiverId,
+                reason: String(error?.message || ""),
+              });
+              deliveryResult = {
+                attempted: true,
+                status: "failed",
+                reason: String(error?.message || "Failed to send message via WhatsApp."),
+              };
+            }
+          }
+        }
+      }
     }
-    logEvent("whatsapp", "message send failed", { from: sender.id, to: receiverId, reason: String(error?.message || "") });
-    return {
-      attempted: true,
-      status: "failed",
-      reason: String(error?.message || "Failed to send message via WhatsApp."),
-    };
   }
+
+  if (persistToChat && chatSenderId && chatContent) {
+    await persistOutgoingStudentChatMessage({
+      senderId: chatSenderId,
+      receiverId: studentId,
+      content: chatContent,
+      attachment: chatAttachment,
+      whatsappDelivery: deliveryResult,
+    });
+  }
+
+  return deliveryResult;
 }
 
 module.exports = {

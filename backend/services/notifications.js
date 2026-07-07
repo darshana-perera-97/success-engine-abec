@@ -268,7 +268,7 @@ async function notifyInvoicePaymentDecision({
     };
   }
 
-  if (studentMessage && portalSenderId) {
+  if (studentMessage && portalSenderId && !managingCounselorIds.length) {
     studentPortalChat = await appendPortalChatMessage({
       senderId: portalSenderId,
       receiverId: String(student.id || ""),

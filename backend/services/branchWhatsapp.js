@@ -98,12 +98,39 @@ async function clearBranchWhatsappMessenger(branchId, userId) {
   return next[index];
 }
 
-async function resolveEffectiveWhatsappSenderId(actorUserId) {
+async function resolveBranchForStudent(student) {
+  if (!student) return null;
+  const label = String(student.branch || student.nearestOffice || "").trim();
+  if (!label) return null;
+  const branch = await findBranchByLocation(label);
+  if (branch) return branch;
+  const branches = await readBranches();
+  return branches.find((row) => officesMatch(row?.location, label)) || null;
+}
+
+async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
   const actor = await resolveUserRecord(actorUserId);
   if (!actor) return null;
   if (!(await isBranchWhatsappEnabled())) {
     return String(actor.id || "").trim() || null;
   }
+
+  const studentBranch = student ? await resolveBranchForStudent(student) : null;
+  if (studentBranch) {
+    const messenger = await findBranchWhatsappMessengerUser(studentBranch);
+    if (messenger?.id) return String(messenger.id);
+    const actorBranch = await resolveBranchForUser(actor);
+    const actorId = String(actor.id || "").trim();
+    if (
+      actorBranch &&
+      String(actorBranch.id || "") === String(studentBranch.id || "") &&
+      isBranchWhatsappManagerRole(actor.role)
+    ) {
+      return actorId || null;
+    }
+    return null;
+  }
+
   if (String(actor.id || "") === ADMIN_WHATSAPP_USER_ID || String(actor.role || "") === "Admin") {
     return String(actor.id || "").trim() || null;
   }
@@ -269,6 +296,7 @@ module.exports = {
   isBranchWhatsappEnabled,
   resolveUserRecord,
   resolveBranchForUser,
+  resolveBranchForStudent,
   findBranchWhatsappMessengerUser,
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,

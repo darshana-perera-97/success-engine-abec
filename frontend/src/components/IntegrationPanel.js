@@ -81,7 +81,7 @@ const defaultContext = {
   messengerName: "",
 };
 
-export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, adminChatEnabled = false }) {
+export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false }) {
   const [state, setState] = useState(null);
   const [context, setContext] = useState(defaultContext);
   const [loading, setLoading] = useState(false);
@@ -92,7 +92,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, a
   const userId = String(currentUser?.id || "").trim();
   const isAdmin = String(currentUser?.role || "").trim() === "Admin";
   const showAdminBranchOverview = isAdmin && branchWhatsappEnabled === true;
-  const showPersonalConnection = !showAdminBranchOverview || adminChatEnabled === true;
+  const showPersonalConnection = !(isAdmin && branchWhatsappEnabled === true);
   const branchMode =
     showPersonalConnection && (context.mode === "branch" || branchWhatsappEnabled === true);
   const isCounselorViewer =

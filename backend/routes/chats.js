@@ -131,6 +131,7 @@ async function handle(req, res, url) {
           receiverId,
           content,
           attachment,
+          persistToChat: false,
         });
       }
       const chats = await readChats();
