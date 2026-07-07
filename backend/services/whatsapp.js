@@ -24,6 +24,7 @@ const {
   isBranchWhatsappEnabled,
   resolveUserRecord,
   resolveBranchForUser,
+  resolveBranchForStudent,
   findBranchWhatsappMessengerUser,
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,
@@ -32,6 +33,7 @@ const {
   assertCanManageWhatsappConnection,
   onWhatsappSessionReady,
   onWhatsappSessionDisconnected,
+  syncBranchWhatsappMessengersFromSessions,
 } = require("./branchWhatsapp");
 const { readBranches } = require("../models/branches");
 
@@ -734,6 +736,7 @@ async function initializeWhatsappSessionsOnStartup({ branchMessengersOnly = fals
       for (const userId of branchUserIds) {
         await startSavedWhatsappSessionIfExists(userId);
       }
+      await syncBranchWhatsappMessengersFromSessions();
       return;
     }
 
@@ -756,6 +759,7 @@ async function initializeWhatsappSessionsOnStartup({ branchMessengersOnly = fals
     for (const userId of branchUserIds) {
       await startSavedWhatsappSessionIfExists(userId);
     }
+    await syncBranchWhatsappMessengersFromSessions();
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);
   }
@@ -1110,12 +1114,24 @@ async function deliverCounselorMessageToStudentWhatsapp({
 
   if (!effectiveSenderId) {
     const branchWhatsappEnabled = await isBranchWhatsappEnabled();
+    let reason;
+    if (branchWhatsappEnabled && student) {
+      const studentBranch = await resolveBranchForStudent(student);
+      if (!studentBranch) {
+        reason =
+          "Student branch is not set or does not match a configured branch office.";
+      } else {
+        reason = "No WhatsApp account is connected for this student's branch.";
+      }
+    } else {
+      reason = branchWhatsappEnabled
+        ? "No WhatsApp account is connected for this student's branch."
+        : "No WhatsApp account is available for this branch.";
+    }
     deliveryResult = {
       attempted: false,
       status: "skipped",
-      reason: branchWhatsappEnabled
-        ? "No WhatsApp account is connected for this student's branch."
-        : "No WhatsApp account is available for this branch.",
+      reason,
     };
   } else {
     const sender = { id: effectiveSenderId };

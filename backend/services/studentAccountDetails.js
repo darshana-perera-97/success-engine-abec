@@ -5,6 +5,7 @@ const {
   sendStudentWelcomeEmail,
   buildStudentPortalLoginUrl,
 } = require("./email");
+const { isBranchWhatsappEnabled } = require("./branchWhatsapp");
 const { deliverStudentNotificationWhatsapp } = require("./notifications");
 const { buildStudentAccountDetailsWhatsappMessage } = require("./whatsappMessages");
 
@@ -18,6 +19,24 @@ function friendlyEmailDeliveryReason(error) {
     return "Could not reach the email server. Check SMTP_HOST and SMTP_PORT.";
   }
   return msg;
+}
+
+async function formatWhatsappDeliveryReason(result) {
+  const reason = String(result?.reason || "").trim();
+  if (!reason) return "";
+  if (reason === "WhatsApp is not connected.") {
+    if (await isBranchWhatsappEnabled()) {
+      return "Branch WhatsApp is not connected. Ask the branch Manager or Team Lead to connect it under Integrations.";
+    }
+    return "Assigned counselor's WhatsApp is not connected. Connect it under Integrations.";
+  }
+  if (reason.includes("No WhatsApp account is connected for this student's branch.")) {
+    return "No branch WhatsApp is connected. Ask the branch Manager or Team Lead to connect it under Integrations.";
+  }
+  if (reason.includes("Student branch is not set or does not match")) {
+    return "Set the student's branch to a configured office, then try again.";
+  }
+  return reason;
 }
 
 /**
@@ -97,18 +116,13 @@ async function sendStudentPortalAccountDetails({ req, student, studentId }) {
         reason:
           result.status === "sent"
             ? ""
-            : result.reason === "WhatsApp is not connected."
-              ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
-              : result.reason || "",
+            : await formatWhatsappDeliveryReason(result),
       };
     } else {
       delivery.whatsapp = {
         attempted: false,
         status: "skipped",
-        reason:
-          result?.reason === "WhatsApp is not connected."
-            ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
-            : result?.reason || "Not attempted.",
+        reason: (await formatWhatsappDeliveryReason(result)) || "Not attempted.",
       };
     }
   } catch (error) {

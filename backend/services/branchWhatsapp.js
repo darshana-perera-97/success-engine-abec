@@ -5,6 +5,7 @@ const { isWhatsappIntegratedStaffRole } = require("./roles");
 const {
   readBranches,
   writeBranches,
+  findBranchById,
   findBranchByLocation,
   officesMatch,
 } = require("../models/branches");
@@ -41,27 +42,66 @@ async function resolveUserRecord(userId) {
   return users.find((user) => String(user.id || "") === id) || null;
 }
 
+async function resolveBranchFromLabel(label) {
+  const clean = String(label || "").trim();
+  if (!clean) return null;
+  const byId = await findBranchById(clean);
+  if (byId) return byId;
+  const byLocation = await findBranchByLocation(clean);
+  if (byLocation) return byLocation;
+  const branches = await readBranches();
+  return branches.find((row) => officesMatch(row?.location, clean)) || null;
+}
+
 async function resolveBranchForUser(user) {
   if (!user) return null;
-  const branch = await findBranchByLocation(user.branch);
-  if (branch) return branch;
-  const branches = await readBranches();
-  return (
-    branches.find((row) => officesMatch(row?.location, user.branch)) || null
-  );
+  return resolveBranchFromLabel(user.branch);
+}
+
+async function findBranchManagers(branch, users = null) {
+  if (!branch?.id) return [];
+  const allUsers = users || (await readUsers());
+  const managers = [];
+  for (const user of allUsers) {
+    if (!isBranchWhatsappManagerRole(user.role)) continue;
+    const userBranch = await resolveBranchForUser(user);
+    if (userBranch && String(userBranch.id || "") === String(branch.id || "")) {
+      managers.push(user);
+    }
+  }
+  return managers;
+}
+
+function pickStoredBranchMessenger(branch, users, managers) {
+  const messengerUserId = String(branch?.whatsappMessengerUserId || "").trim();
+  if (!messengerUserId) return null;
+  const messenger = users.find((user) => String(user.id || "") === messengerUserId);
+  if (!messenger || !isBranchWhatsappManagerRole(messenger.role)) return null;
+  if (!managers.some((manager) => String(manager.id || "") === messengerUserId)) return null;
+  return messenger;
 }
 
 async function findBranchWhatsappMessengerUser(branch) {
-  const messengerUserId = String(branch?.whatsappMessengerUserId || "").trim();
-  if (!messengerUserId) return null;
+  if (!branch?.id) return null;
   const users = await readUsers();
-  const messenger = users.find((user) => String(user.id || "") === messengerUserId);
-  if (!messenger || !isBranchWhatsappManagerRole(messenger.role)) return null;
-  const messengerBranch = await resolveBranchForUser(messenger);
-  if (!messengerBranch || String(messengerBranch.id || "") !== String(branch.id || "")) {
-    return null;
+  const managers = await findBranchManagers(branch, users);
+  const storedMessenger = pickStoredBranchMessenger(branch, users, managers);
+
+  if (storedMessenger) {
+    const storedId = String(storedMessenger.id || "").trim();
+    if (storedId && isWhatsappSessionConnected(storedId)) {
+      return storedMessenger;
+    }
   }
-  return messenger;
+
+  for (const manager of managers) {
+    const managerId = String(manager.id || "").trim();
+    if (managerId && isWhatsappSessionConnected(managerId)) {
+      return manager;
+    }
+  }
+
+  return storedMessenger;
 }
 
 async function setBranchWhatsappMessenger(branchId, userId) {
@@ -101,11 +141,7 @@ async function clearBranchWhatsappMessenger(branchId, userId) {
 async function resolveBranchForStudent(student) {
   if (!student) return null;
   const label = String(student.branch || student.nearestOffice || "").trim();
-  if (!label) return null;
-  const branch = await findBranchByLocation(label);
-  if (branch) return branch;
-  const branches = await readBranches();
-  return branches.find((row) => officesMatch(row?.location, label)) || null;
+  return resolveBranchFromLabel(label);
 }
 
 async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
@@ -124,7 +160,8 @@ async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
     if (
       actorBranch &&
       String(actorBranch.id || "") === String(studentBranch.id || "") &&
-      isBranchWhatsappManagerRole(actor.role)
+      isBranchWhatsappManagerRole(actor.role) &&
+      isWhatsappSessionConnected(actorId)
     ) {
       return actorId || null;
     }
@@ -290,6 +327,24 @@ async function onWhatsappSessionDisconnected(userId) {
   await clearBranchWhatsappMessenger(branch.id, userId);
 }
 
+async function syncBranchWhatsappMessengersFromSessions() {
+  if (!(await isBranchWhatsappEnabled())) return;
+  const branches = await readBranches();
+  const users = await readUsers();
+  for (const branch of branches) {
+    const managers = await findBranchManagers(branch, users);
+    const connectedManagers = managers.filter((manager) =>
+      isWhatsappSessionConnected(String(manager.id || "").trim())
+    );
+    if (connectedManagers.length !== 1) continue;
+    const connectedId = String(connectedManagers[0].id || "").trim();
+    const storedId = String(branch.whatsappMessengerUserId || "").trim();
+    if (connectedId && connectedId !== storedId) {
+      await setBranchWhatsappMessenger(branch.id, connectedId);
+    }
+  }
+}
+
 module.exports = {
   isBranchWhatsappManagerRole,
   isWhatsappSessionConnected,
@@ -306,4 +361,5 @@ module.exports = {
   assertCanManageWhatsappConnection,
   onWhatsappSessionReady,
   onWhatsappSessionDisconnected,
+  syncBranchWhatsappMessengersFromSessions,
 };
