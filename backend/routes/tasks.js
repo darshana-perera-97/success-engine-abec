@@ -3,7 +3,8 @@ const { parseBody, sendJson } = require("../lib/httpUtils");
 const { logEvent } = require("../lib/logger");
 const { readTasks, writeTasks, withTasksMutationLock } = require("../models/tasks");
 const { readStudemts } = require("../models/students");
-const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
+const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
+const { resolveCounselor } = require("../services/whatsapp");
 
 async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/tasks") {
@@ -129,12 +130,14 @@ async function handle(req, res, url) {
         ]
           .filter((line) => line != null)
           .join("\n");
-        if (senderId) {
+        if (senderId || stu) {
           try {
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId,
-              receiverId: studentId,
+            const result = await deliverStudentNotificationWhatsapp({
+              student: stu || null,
+              studentId,
               content: message,
+              preferredSenderIds: [senderId],
+              persistToChat: true,
             });
             taskAssignmentWhatsapp = {
               attempted: Boolean(result?.attempted),

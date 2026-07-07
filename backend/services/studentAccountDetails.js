@@ -5,9 +5,7 @@ const {
   sendStudentWelcomeEmail,
   buildStudentPortalLoginUrl,
 } = require("./email");
-const {
-  deliverCounselorMessageToStudentWhatsapp,
-} = require("./whatsapp");
+const { deliverStudentNotificationWhatsapp } = require("./notifications");
 const { buildStudentAccountDetailsWhatsappMessage } = require("./whatsappMessages");
 
 function friendlyEmailDeliveryReason(error) {
@@ -79,45 +77,39 @@ async function sendStudentPortalAccountDetails({ req, student, studentId }) {
   try {
     const inquiryCounselorId = String(student.inquiryCounselorId || "").trim();
     const counselorId = inquiryCounselorId || String(student.counselor || "").trim();
-    if (!counselorId || counselorId === "Unassigned") {
+    const message = buildStudentAccountDetailsWhatsappMessage({
+      studentName: studentName || emailAddress,
+      emailAddress,
+      password,
+      loginUrl,
+    });
+    const result = await deliverStudentNotificationWhatsapp({
+      student,
+      studentId,
+      content: message,
+      preferredSenderIds: [counselorId],
+      persistToChat: true,
+    });
+    if (result && result.attempted) {
+      delivery.whatsapp = {
+        attempted: true,
+        status: result.status || "failed",
+        reason:
+          result.status === "sent"
+            ? ""
+            : result.reason === "WhatsApp is not connected."
+              ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
+              : result.reason || "",
+      };
+    } else {
       delivery.whatsapp = {
         attempted: false,
         status: "skipped",
-        reason: "Student has no assigned counselor.",
+        reason:
+          result?.reason === "WhatsApp is not connected."
+            ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
+            : result?.reason || "Not attempted.",
       };
-    } else {
-      const message = buildStudentAccountDetailsWhatsappMessage({
-        studentName: studentName || emailAddress,
-        emailAddress,
-        password,
-        loginUrl,
-      });
-      const result = await deliverCounselorMessageToStudentWhatsapp({
-        senderId: counselorId,
-        receiverId: studentId,
-        content: message,
-      });
-      if (result && result.attempted) {
-        delivery.whatsapp = {
-          attempted: true,
-          status: result.status || "failed",
-          reason:
-            result.status === "sent"
-              ? ""
-              : result.reason === "WhatsApp is not connected."
-                ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
-                : result.reason || "",
-        };
-      } else {
-        delivery.whatsapp = {
-          attempted: false,
-          status: "skipped",
-          reason:
-            result?.reason === "WhatsApp is not connected."
-              ? "Assigned counselor's WhatsApp is not connected. Connect it under Integrations."
-              : result?.reason || "Not attempted.",
-        };
-      }
     }
   } catch (error) {
     console.error("Student account details WhatsApp failed:", error);

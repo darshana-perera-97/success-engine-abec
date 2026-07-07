@@ -5,7 +5,7 @@ const { readMeetingSettings, writeMeetingSettings, normalizeMeetingSettings } = 
 const { readBookings, writeBookings } = require("../models/bookings");
 const { readAppointments, writeAppointments } = require("../models/appointments");
 const { readStudemts } = require("../models/students");
-const { deliverCounselorMessageToStudentWhatsapp } = require("../services/whatsapp");
+const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const { buildAppointmentLinkWhatsappMessage } = require("../services/whatsappMessages");
 
 async function handle(req, res, url) {
@@ -181,9 +181,9 @@ async function handle(req, res, url) {
         try {
           const students = await readStudemts();
           const student = students.find((item) => String(item.id || "") === String(appointment.studentId || ""));
-          const result = await deliverCounselorMessageToStudentWhatsapp({
-            senderId: String(appointment.counselorId || "").trim(),
-            receiverId: String(appointment.studentId || "").trim(),
+          const result = await deliverStudentNotificationWhatsapp({
+            student,
+            studentId: String(appointment.studentId || "").trim(),
             content: buildAppointmentLinkWhatsappMessage({
               studentName: student?.name || "",
               title: appointment.title || "Session",
@@ -192,6 +192,8 @@ async function handle(req, res, url) {
               meetingPlatform: meetingPlatformOnCreate,
               meetingLink: meetingLinkOnCreate,
             }),
+            preferredSenderIds: [String(appointment.counselorId || "").trim()],
+            persistToChat: true,
           });
           appointment.meetingLinkWhatsappDelivery = {
             attempted: Boolean(result?.attempted),
@@ -250,9 +252,9 @@ async function handle(req, res, url) {
         try {
           const students = await readStudemts();
           const student = students.find((item) => String(item.id || "") === String(updatedAppointment.studentId || ""));
-          const result = await deliverCounselorMessageToStudentWhatsapp({
-            senderId: String(updatedAppointment.counselorId || "").trim(),
-            receiverId: String(updatedAppointment.studentId || "").trim(),
+          const result = await deliverStudentNotificationWhatsapp({
+            student,
+            studentId: String(updatedAppointment.studentId || "").trim(),
             content: buildAppointmentLinkWhatsappMessage({
               studentName: student?.name || "",
               title: updatedAppointment.title || "Session",
@@ -261,6 +263,8 @@ async function handle(req, res, url) {
               meetingPlatform: updatedAppointment.meetingPlatform || "",
               meetingLink: nextLink,
             }),
+            preferredSenderIds: [String(updatedAppointment.counselorId || "").trim()],
+            persistToChat: true,
           });
           updatedAppointment.meetingLinkWhatsappDelivery = {
             attempted: Boolean(result?.attempted),

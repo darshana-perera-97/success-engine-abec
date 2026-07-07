@@ -31,9 +31,8 @@ const {
   studentTimeMs,
 } = require("../services/pipeline");
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
-const { notifyInquiryCallScheduled } = require("../services/notifications");
+const { notifyInquiryCallScheduled, deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const {
-  deliverCounselorMessageToStudentWhatsapp,
   normalizeStudentPhone,
   normalizeWhatsappNumber,
 } = require("../services/whatsapp");
@@ -116,9 +115,6 @@ async function deliverConfiguredDocumentUploadWhatsapp({
     };
   }
   const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
-  if (!counselorId || counselorId === "Unassigned") {
-    return { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
-  }
   const message = buildDocumentUploadWhatsappMessage({
     studentName: String(student?.name || "").trim(),
     docName: String(docName || docType || "Document").trim(),
@@ -130,11 +126,13 @@ async function deliverConfiguredDocumentUploadWhatsapp({
       ? { url: attachmentUrl, mime: attachmentMime, name: String(fileName || docName || docType || "document").trim() }
       : null;
   try {
-    const result = await deliverCounselorMessageToStudentWhatsapp({
-      senderId: counselorId,
-      receiverId: studentId,
+    const result = await deliverStudentNotificationWhatsapp({
+      student,
+      studentId,
       content: message,
       attachment,
+      preferredSenderIds: [counselorId],
+      persistToChat: true,
     });
     return {
       attempted: Boolean(result?.attempted),
@@ -576,10 +574,12 @@ async function handle(req, res, url) {
               counselorPhone: String(newCounselorUser.phone || "").trim(),
               counselorBranch: String(newCounselorUser.branch || "").trim(),
             });
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId: nextCounselor,
-              receiverId: studentId,
+            const result = await deliverStudentNotificationWhatsapp({
+              student: merged,
+              studentId,
               content: message,
+              preferredSenderIds: [nextCounselor],
+              persistToChat: true,
             });
             counselorAssignmentWhatsapp = {
               attempted: Boolean(result?.attempted),
@@ -662,14 +662,6 @@ async function handle(req, res, url) {
         const studentName = String(merged.name || "").trim();
         const counselorId = String(merged.inquiryCounselorId || merged.counselor || "").trim();
         for (const t of transitions) {
-          if (!counselorId || counselorId === "Unassigned") {
-            documentWhatsappNotifications.push({
-              docId: t.docId,
-              decision: t.decision,
-              whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
-            });
-            continue;
-          }
           const message = buildDocumentDecisionWhatsappMessage({
             studentName,
             docName: t.docName,
@@ -678,10 +670,12 @@ async function handle(req, res, url) {
             rejectionReason: t.rejectionReason,
           });
           try {
-            const result = await deliverCounselorMessageToStudentWhatsapp({
-              senderId: counselorId,
-              receiverId: studentId,
+            const result = await deliverStudentNotificationWhatsapp({
+              student: merged,
+              studentId,
               content: message,
+              preferredSenderIds: [counselorId],
+              persistToChat: true,
             });
             documentWhatsappNotifications.push({
               docId: t.docId,
@@ -1277,14 +1271,6 @@ async function handle(req, res, url) {
           });
           continue;
         }
-        if (!counselorId || counselorId === "Unassigned") {
-          offerLetterWhatsappNotifications.push({
-            letterId: entry.id,
-            offerStatus: entry.offerStatus,
-            whatsapp: { attempted: false, status: "skipped", reason: "Student has no assigned counselor." },
-          });
-          continue;
-        }
         const message = buildUniversityOfferWhatsappMessage({
           studentName,
           fileName: entry.name,
@@ -1296,11 +1282,13 @@ async function handle(req, res, url) {
             ? { url: entry.url, mime: entry.mime, name: entry.name }
             : null;
         try {
-          const result = await deliverCounselorMessageToStudentWhatsapp({
-            senderId: counselorId,
-            receiverId: studentId,
+          const result = await deliverStudentNotificationWhatsapp({
+            student: merged,
+            studentId,
             content: message,
             attachment,
+            preferredSenderIds: [counselorId],
+            persistToChat: true,
           });
           offerLetterWhatsappNotifications.push({
             letterId: entry.id,

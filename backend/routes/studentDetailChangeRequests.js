@@ -8,6 +8,8 @@ const {
 } = require("../models/studentDetailChangeRequests");
 const { readStudemts, writeStudemts } = require("../models/students");
 const { normalizeStudentPhone, normalizeWhatsappNumber } = require("../services/whatsapp");
+const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
+const { buildStudentDetailChangeDecisionWhatsappMessage } = require("../services/whatsappMessages");
 
 const APPROVER_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 
@@ -218,6 +220,7 @@ async function handle(req, res, url) {
       }
 
       let updatedStudent = null;
+      let detailChangeWhatsapp = null;
       if (decision === "approved") {
         const studemts = await readStudemts();
         const idx = studemts.findIndex((s) => String(s.id || "") === result.data.studentId);
@@ -241,7 +244,30 @@ async function handle(req, res, url) {
         });
       }
 
-      sendJson(res, 200, { ok: true, data: result.data, student: updatedStudent });
+      const studemtsForNotify = await readStudemts();
+      const studentForNotify = studemtsForNotify.find((s) => String(s.id || "") === result.data.studentId);
+      if (studentForNotify) {
+        const changedFields = collectChangedDetailFields(result.data);
+        const message = buildStudentDetailChangeDecisionWhatsappMessage({
+          studentName: String(studentForNotify.name || "").trim(),
+          decision,
+          reviewNote,
+          changedFields,
+        });
+        detailChangeWhatsapp = await deliverStudentNotificationWhatsapp({
+          student: studentForNotify,
+          studentId: result.data.studentId,
+          content: message,
+          preferredSenderIds: [
+            String(studentForNotify.inquiryCounselorId || "").trim(),
+            String(studentForNotify.counselor || "").trim(),
+            reviewerUserId,
+          ],
+          persistToChat: true,
+        });
+      }
+
+      sendJson(res, 200, { ok: true, data: result.data, student: updatedStudent, detailChangeWhatsapp });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
     }

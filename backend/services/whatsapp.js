@@ -1274,6 +1274,7 @@ module.exports = {
   findStudentByWhatsappFrom,
   persistIncomingWhatsappMessage,
   deliverCounselorMessageToStudentWhatsapp,
+  persistOutgoingStudentChatMessage,
   resolveCounselor,
   resolveWhatsappMessenger,
   resolveWhatsappIntegrationContext,

@@ -3,6 +3,7 @@ const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readChats, writeChats } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
 const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
+const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const { storeChatAttachmentDataUrl } = require("../services/uploads");
 
 function normalizeId(value) {
@@ -126,13 +127,26 @@ async function handle(req, res, url) {
       }
       let whatsappDelivery = null;
       if (content || attachment) {
-        whatsappDelivery = await deliverCounselorMessageToStudentWhatsapp({
-          senderId,
-          receiverId,
-          content,
-          attachment,
-          persistToChat: false,
-        });
+        const students = await readStudemts();
+        const student = students.find((item) => String(item.id || "") === receiverId);
+        if (student) {
+          whatsappDelivery = await deliverStudentNotificationWhatsapp({
+            student,
+            studentId: receiverId,
+            content,
+            attachment,
+            preferredSenderIds: [senderId],
+            persistToChat: false,
+          });
+        } else {
+          whatsappDelivery = await deliverCounselorMessageToStudentWhatsapp({
+            senderId,
+            receiverId,
+            content,
+            attachment,
+            persistToChat: false,
+          });
+        }
       }
       const chats = await readChats();
       const chat = {

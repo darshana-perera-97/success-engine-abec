@@ -371,8 +371,6 @@ async function handle(req, res, url) {
           const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
           if (!student) {
             whatsappDelivery = { attempted: false, status: "skipped", reason: "Student record not found." };
-          } else if (!counselorId || counselorId === "Unassigned") {
-            whatsappDelivery = { attempted: false, status: "skipped", reason: "Student has no assigned counselor." };
           } else {
             const messageText = buildInvoiceWhatsappMessage({
               studentName: String(student.name || "").trim(),
@@ -389,6 +387,7 @@ async function handle(req, res, url) {
               generatedReceiptUrl: invoice.generatedReceiptUrl,
             });
             whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
+              student,
               senderId: counselorId,
               receiverId: studentId,
               messageText,
@@ -530,10 +529,6 @@ async function handle(req, res, url) {
         return true;
       }
       const counselorId = String(student?.inquiryCounselorId || student?.counselor || "").trim();
-      if (!counselorId || counselorId === "Unassigned") {
-        sendJson(res, 400, { ok: false, error: "Student has no assigned counselor for WhatsApp sending." });
-        return true;
-      }
       let paymentAccount = invoice.paymentAccount || null;
       if (!paymentAccount && invoice.paymentAccountId) {
         const accounts = await readPaymentAccounts();
@@ -554,6 +549,7 @@ async function handle(req, res, url) {
         generatedReceiptUrl: invoice.generatedReceiptUrl,
       });
       const whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
+        student,
         senderId: counselorId,
         receiverId: String(invoice.studentId || "").trim(),
         messageText,

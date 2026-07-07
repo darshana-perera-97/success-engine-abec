@@ -5,7 +5,16 @@ const { readStudemts, writeStudemts } = require("../models/students");
 const { readActivities, writeActivities } = require("../models/activities");
 const { readAppointments, writeAppointments } = require("../models/appointments");
 const { appendPortalChatMessage } = require("../models/chats");
-const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("./whatsapp");
+const {
+  deliverCounselorMessageToStudentWhatsapp,
+  persistOutgoingStudentChatMessage,
+  ADMIN_WHATSAPP_USER_ID,
+} = require("./whatsapp");
+const {
+  findBranchWhatsappMessengerUser,
+  resolveBranchForStudent,
+  isBranchWhatsappEnabled,
+} = require("./branchWhatsapp");
 const {
   buildMeetingReminderWhatsappMessage,
   buildInquiryCallScheduledWhatsappMessage,
@@ -34,7 +43,103 @@ function aggregateWhatsappDeliveryResults(results) {
   };
 }
 
+function addStudentWhatsappSenderCandidate(candidates, seen, rawId) {
+  const id = String(rawId || "").trim();
+  if (!id || id.toLowerCase() === "unassigned" || seen.has(id)) return;
+  seen.add(id);
+  candidates.push(id);
+}
+
+/** Counselor, inquiry counselor, counselor history, branch messenger, then admin. */
+async function collectStudentWhatsappSenderCandidates(student, preferredSenderIds = []) {
+  const candidates = [];
+  const seen = new Set();
+  const preferred = Array.isArray(preferredSenderIds) ? preferredSenderIds : [preferredSenderIds];
+  for (const id of preferred) addStudentWhatsappSenderCandidate(candidates, seen, id);
+  if (student && typeof student === "object") {
+    addStudentWhatsappSenderCandidate(candidates, seen, student.inquiryCounselorId);
+    addStudentWhatsappSenderCandidate(candidates, seen, student.counselor);
+    const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
+    for (const id of history) addStudentWhatsappSenderCandidate(candidates, seen, id);
+  }
+  if (student && (await isBranchWhatsappEnabled())) {
+    const branch = await resolveBranchForStudent(student);
+    if (branch) {
+      const messenger = await findBranchWhatsappMessengerUser(branch);
+      addStudentWhatsappSenderCandidate(candidates, seen, messenger?.id);
+    }
+  }
+  addStudentWhatsappSenderCandidate(candidates, seen, ADMIN_WHATSAPP_USER_ID);
+  return candidates;
+}
+
+/**
+ * Try multiple WhatsApp senders (counselor → branch messenger → admin) until one succeeds.
+ * Also mirrors the message in portal chat when delivery succeeds or all senders fail.
+ */
+async function deliverStudentNotificationWhatsapp({
+  student = null,
+  studentId = "",
+  content = "",
+  attachment = null,
+  preferredSenderIds = [],
+  persistToChat = true,
+}) {
+  const receiverId = String(studentId || student?.id || "").trim();
+  const messageText = String(content || "").trim();
+  const hasAttachment = Boolean(attachment && typeof attachment === "object" && attachment.url);
+  if (!receiverId) {
+    return { attempted: false, status: "skipped", reason: "Student receiver id is missing." };
+  }
+  if (!messageText && !hasAttachment) {
+    return { attempted: false, status: "skipped", reason: "Message text or attachment is required." };
+  }
+
+  const candidates = await collectStudentWhatsappSenderCandidates(student, preferredSenderIds);
+  if (!candidates.length) {
+    return { attempted: false, status: "skipped", reason: "No WhatsApp sender available for this student." };
+  }
+
+  const parts = [];
+  let winningSenderId = "";
+  for (const senderId of candidates) {
+    const result = await deliverCounselorMessageToStudentWhatsapp({
+      senderId,
+      receiverId,
+      content: messageText,
+      attachment,
+      persistToChat: false,
+    });
+    parts.push({ senderId, ...result });
+    if (result.status === "sent") {
+      winningSenderId = senderId;
+      break;
+    }
+  }
+
+  const aggregated = aggregateWhatsappDeliveryResults(parts);
+  const chatContent =
+    messageText || (hasAttachment ? `Sent an attachment (${attachment.name || "file"}).` : "");
+  if (persistToChat && chatContent) {
+    const chatSenderId = winningSenderId || candidates[0];
+    const winningPart = parts.find((part) => part.senderId === winningSenderId);
+    await persistOutgoingStudentChatMessage({
+      senderId: chatSenderId,
+      receiverId,
+      content: chatContent,
+      attachment: hasAttachment ? attachment : null,
+      whatsappDelivery: winningPart || aggregated,
+    });
+  }
+
+  if (winningSenderId) {
+    return { ...aggregated, senderId: winningSenderId };
+  }
+  return aggregated;
+}
+
 async function deliverInvoicePackageToStudentWhatsapp({
+  student = null,
   senderId,
   receiverId,
   messageText,
@@ -45,21 +150,25 @@ async function deliverInvoicePackageToStudentWhatsapp({
   const text = String(messageText || "").trim();
   if (text) {
     results.push(
-      await deliverCounselorMessageToStudentWhatsapp({
-        senderId,
-        receiverId,
+      await deliverStudentNotificationWhatsapp({
+        student,
+        studentId: receiverId,
         content: text,
         attachment: null,
+        preferredSenderIds: [senderId],
+        persistToChat: false,
       })
     );
   }
   if (receiptAttachment?.url) {
     results.push(
-      await deliverCounselorMessageToStudentWhatsapp({
-        senderId,
-        receiverId,
+      await deliverStudentNotificationWhatsapp({
+        student,
+        studentId: receiverId,
         content: "",
         attachment: receiptAttachment,
+        preferredSenderIds: [senderId],
+        persistToChat: false,
       })
     );
   }
@@ -71,15 +180,27 @@ async function deliverInvoicePackageToStudentWhatsapp({
     fileUrl !== receiptUrl
   ) {
     results.push(
-      await deliverCounselorMessageToStudentWhatsapp({
-        senderId,
-        receiverId,
+      await deliverStudentNotificationWhatsapp({
+        student,
+        studentId: receiverId,
         content: "",
         attachment: invoiceFileAttachment,
+        preferredSenderIds: [senderId],
+        persistToChat: false,
       })
     );
   }
-  return aggregateWhatsappDeliveryResults(results);
+  const aggregated = aggregateWhatsappDeliveryResults(results);
+  if (text && aggregated.status === "sent") {
+    await persistOutgoingStudentChatMessage({
+      senderId: results.find((part) => part.senderId)?.senderId || String(senderId || "").trim(),
+      receiverId: String(receiverId || "").trim(),
+      content: text,
+      attachment: null,
+      whatsappDelivery: aggregated,
+    });
+  }
+  return aggregated;
 }
 
 /** Counselor, inquiry counselor, and anyone in counselorHistory for this student. */
@@ -119,39 +240,17 @@ async function deliverInvoiceDecisionWhatsappToStudent({ student, counselorIds, 
   if (!studentId || !String(message || "").trim()) {
     return { attempted: false, status: "skipped", reason: "Missing student or message." };
   }
-  const ordered = [...counselorIds];
   const primary = pickInvoiceWhatsappSenderId(student, counselorIds);
-  if (primary) {
-    const idx = ordered.indexOf(primary);
-    if (idx > 0) {
-      ordered.splice(idx, 1);
-      ordered.unshift(primary);
-    } else if (idx < 0) {
-      ordered.unshift(primary);
-    }
-  }
-  const parts = [];
-  for (const senderId of ordered) {
-    const sender = await resolveCounselor(senderId);
-    if (!sender) continue;
-    const result = await deliverCounselorMessageToStudentWhatsapp({
-      senderId,
-      receiverId: studentId,
-      content: message,
-    });
-    parts.push({ senderId, ...result });
-    if (result.status === "sent") {
-      return { ...aggregateWhatsappDeliveryResults(parts), senderId };
-    }
-  }
-  if (!parts.length) {
-    return {
-      attempted: false,
-      status: "skipped",
-      reason: "No counselor WhatsApp account available for this student.",
-    };
-  }
-  return { ...aggregateWhatsappDeliveryResults(parts), senderId: parts[0]?.senderId || "" };
+  const preferredSenderIds = primary
+    ? [primary, ...counselorIds.filter((id) => id !== primary)]
+    : counselorIds;
+  return deliverStudentNotificationWhatsapp({
+    student,
+    studentId,
+    content: message,
+    preferredSenderIds,
+    persistToChat: true,
+  });
 }
 
 async function appendFinanceActivityForInvoiceDecision({
@@ -245,35 +344,19 @@ async function notifyInvoicePaymentDecision({
     };
   }
 
-  if (studentMessage && managingCounselorIds.length) {
-    const whatsapp = await deliverInvoiceDecisionWhatsappToStudent({
+  if (studentMessage) {
+    const whatsapp = await deliverStudentNotificationWhatsapp({
       student,
-      counselorIds: managingCounselorIds,
-      message: studentMessage,
+      studentId: String(student.id || ""),
+      content: studentMessage,
+      preferredSenderIds: managingCounselorIds,
+      persistToChat: true,
     });
     invoiceWhatsappNotification = {
       invoiceId: invoice.id,
       decision,
       whatsapp,
     };
-  } else if (studentMessage) {
-    invoiceWhatsappNotification = {
-      invoiceId: invoice.id,
-      decision,
-      whatsapp: {
-        attempted: false,
-        status: "skipped",
-        reason: "Student has no assigned counselor for WhatsApp.",
-      },
-    };
-  }
-
-  if (studentMessage && portalSenderId && !managingCounselorIds.length) {
-    studentPortalChat = await appendPortalChatMessage({
-      senderId: portalSenderId,
-      receiverId: String(student.id || ""),
-      content: studentMessage,
-    });
   }
 
   if (counselorMessage && portalSenderId) {
@@ -327,9 +410,9 @@ async function processMeetingReminders() {
     if (isWithinMeetingReminderWindow(apt, now) && !apt.studentMeetingReminderWhatsappDelivery?.sentAt) {
       try {
         const student = students.find((item) => String(item.id || "") === String(apt.studentId || ""));
-        const result = await deliverCounselorMessageToStudentWhatsapp({
-          senderId: String(apt.counselorId || "").trim(),
-          receiverId: String(apt.studentId || "").trim(),
+        const result = await deliverStudentNotificationWhatsapp({
+          student,
+          studentId: String(apt.studentId || "").trim(),
           content: buildMeetingReminderWhatsappMessage({
             studentName: student?.name || "",
             title: apt.title || "Session",
@@ -338,6 +421,8 @@ async function processMeetingReminders() {
             meetingPlatform: apt.meetingPlatform || "",
             meetingLink: apt.meetingLink || "",
           }),
+          preferredSenderIds: [String(apt.counselorId || "").trim()],
+          persistToChat: true,
         });
         next = {
           ...next,
@@ -429,10 +514,6 @@ async function notifyInquiryCallScheduled({ student, studentId, previousSchedule
   if (!scheduledAt) {
     return { attempted: false, status: "skipped", reason: "No scheduled call time." };
   }
-  const senderId = pickInquiryCallWhatsappSenderId(student);
-  if (!senderId) {
-    return { attempted: false, status: "skipped", reason: "Student has no assigned counselor for WhatsApp." };
-  }
   const previous = String(previousScheduledAt || "").trim();
   const isReschedule = Boolean(previous && previous !== scheduledAt);
   const scheduledLabel = formatInquiryScheduledCallLabelForWhatsapp(scheduledAt);
@@ -442,14 +523,16 @@ async function notifyInquiryCallScheduled({ student, studentId, previousSchedule
     isReschedule,
   });
   try {
-    const result = await deliverCounselorMessageToStudentWhatsapp({
-      senderId,
-      receiverId: String(studentId || student?.id || "").trim(),
+    const result = await deliverStudentNotificationWhatsapp({
+      student,
+      studentId: String(studentId || student?.id || "").trim(),
       content: message,
+      preferredSenderIds: [pickInquiryCallWhatsappSenderId(student)],
+      persistToChat: true,
     });
     logEvent("student", "inquiry call schedule sent to student via whatsapp", {
       studentId: String(studentId || student?.id || "").trim(),
-      counselorId: senderId,
+      counselorId: result?.senderId || pickInquiryCallWhatsappSenderId(student),
       status: result?.status || "unknown",
       isReschedule,
     });
@@ -484,61 +567,48 @@ async function processInquiryScheduledCallReminders() {
     const reminderForAt = String(reminderDelivery?.scheduledAt || "").trim();
     const alreadySentForThisSchedule = Boolean(reminderDelivery?.sentAt && reminderForAt === scheduledAt);
     if (isWithinInquiryCallReminderWindow(schedMs, now) && !alreadySentForThisSchedule) {
-      const senderId = pickInquiryCallWhatsappSenderId(student);
       const studentId = String(student?.id || "").trim();
-      if (!senderId) {
+      try {
+        const scheduledLabel = formatInquiryScheduledCallLabelForWhatsapp(scheduledAt);
+        const result = await deliverStudentNotificationWhatsapp({
+          student,
+          studentId,
+          content: buildInquiryCallReminderWhatsappMessage({
+            studentName: String(student?.name || "").trim(),
+            scheduledLabel,
+          }),
+          preferredSenderIds: [pickInquiryCallWhatsappSenderId(student)],
+          persistToChat: true,
+        });
         next = {
           ...next,
           inquiryScheduledCallReminderWhatsappDelivery: {
-            attempted: false,
-            status: "skipped",
-            reason: "Student has no assigned counselor for WhatsApp.",
+            attempted: Boolean(result?.attempted),
+            status: String(result?.status || "skipped"),
+            reason: String(result?.reason || ""),
             scheduledAt,
             sentAt: new Date().toISOString(),
           },
         };
         changed = true;
-      } else {
-        try {
-          const scheduledLabel = formatInquiryScheduledCallLabelForWhatsapp(scheduledAt);
-          const result = await deliverCounselorMessageToStudentWhatsapp({
-            senderId,
-            receiverId: studentId,
-            content: buildInquiryCallReminderWhatsappMessage({
-              studentName: String(student?.name || "").trim(),
-              scheduledLabel,
-            }),
-          });
-          next = {
-            ...next,
-            inquiryScheduledCallReminderWhatsappDelivery: {
-              attempted: Boolean(result?.attempted),
-              status: String(result?.status || "skipped"),
-              reason: String(result?.reason || ""),
-              scheduledAt,
-              sentAt: new Date().toISOString(),
-            },
-          };
-          changed = true;
-          logEvent("student", "inquiry call reminder sent to student via whatsapp", {
-            studentId,
-            counselorId: senderId,
-            status: next.inquiryScheduledCallReminderWhatsappDelivery.status,
-          });
-        } catch (error) {
-          next = {
-            ...next,
-            inquiryScheduledCallReminderWhatsappDelivery: {
-              attempted: true,
-              status: "failed",
-              reason: String(error?.message || "Failed to send WhatsApp inquiry call reminder."),
-              scheduledAt,
-              sentAt: new Date().toISOString(),
-            },
-          };
-          changed = true;
-          console.error("Inquiry call reminder WhatsApp send failed:", error);
-        }
+        logEvent("student", "inquiry call reminder sent to student via whatsapp", {
+          studentId,
+          counselorId: result?.senderId || pickInquiryCallWhatsappSenderId(student),
+          status: next.inquiryScheduledCallReminderWhatsappDelivery.status,
+        });
+      } catch (error) {
+        next = {
+          ...next,
+          inquiryScheduledCallReminderWhatsappDelivery: {
+            attempted: true,
+            status: "failed",
+            reason: String(error?.message || "Failed to send WhatsApp inquiry call reminder."),
+            scheduledAt,
+            sentAt: new Date().toISOString(),
+          },
+        };
+        changed = true;
+        console.error("Inquiry call reminder WhatsApp send failed:", error);
       }
     }
     nextStudents.push(next);
@@ -550,6 +620,8 @@ async function processInquiryScheduledCallReminders() {
 
 module.exports = {
   aggregateWhatsappDeliveryResults,
+  collectStudentWhatsappSenderCandidates,
+  deliverStudentNotificationWhatsapp,
   deliverInvoicePackageToStudentWhatsapp,
   collectManagingCounselorIdsForStudent,
   pickInvoiceWhatsappSenderId,

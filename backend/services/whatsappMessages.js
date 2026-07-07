@@ -292,6 +292,41 @@ function buildUniversityOfferWhatsappMessage({ studentName, fileName, offerStatu
   return lines.join("\n");
 }
 
+function buildStudentDetailChangeDecisionWhatsappMessage({
+  studentName,
+  decision,
+  reviewNote,
+  changedFields = [],
+}) {
+  const fieldsLabel =
+    changedFields.length > 0 ? changedFields.map((f) => String(f || "").trim()).filter(Boolean).join(", ") : "";
+  if (decision === "approved") {
+    const lines = [
+      `${COMPANY_NAME} — Profile update approved`,
+      "",
+      `Hi ${studentName || "Student"},`,
+      "",
+      "Your request to update your student profile details has been approved.",
+      fieldsLabel ? `Updated: ${fieldsLabel}` : "",
+      "",
+      "Sign in to your student portal to review your profile.",
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
+  const lines = [
+    `${COMPANY_NAME} — Profile update declined`,
+    "",
+    `Hi ${studentName || "Student"},`,
+    "",
+    "Your request to update your student profile details could not be approved.",
+    fieldsLabel ? `Requested changes: ${fieldsLabel}` : "",
+    reviewNote ? `Note: ${reviewNote}` : "",
+    "",
+    "Please sign in to the student portal or contact your counselor if you have questions.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function buildCounselorInvoiceDecisionPortalMessage({
   studentName,
   invoiceId,
@@ -341,5 +376,6 @@ module.exports = {
   buildDocumentDecisionWhatsappMessage,
   buildDocumentUploadWhatsappMessage,
   buildUniversityOfferWhatsappMessage,
+  buildStudentDetailChangeDecisionWhatsappMessage,
   buildCounselorInvoiceDecisionPortalMessage,
 };
