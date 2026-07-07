@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readChats, writeChats } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
-const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor } = require("../services/whatsapp");
+const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor, syncWhatsappIncomingToChats } = require("../services/whatsapp");
 const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const { storeChatAttachmentDataUrl } = require("../services/uploads");
 
@@ -13,6 +13,7 @@ function normalizeId(value) {
 async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/chats") {
     try {
+      await syncWhatsappIncomingToChats();
       const userId = String(url.searchParams.get("userId") || "").trim();
       const normalizedUserId = normalizeId(userId);
       const shouldMarkRead = url.searchParams.get("markRead") !== "0";
@@ -128,16 +129,23 @@ async function handle(req, res, url) {
       let whatsappDelivery = null;
       if (content || attachment) {
         const students = await readStudemts();
-        const student = students.find((item) => String(item.id || "") === receiverId);
-        if (student) {
+        const receiverStudent = students.find((item) => String(item.id || "") === receiverId);
+        const senderStudent = students.find((item) => String(item.id || "") === senderId);
+        if (receiverStudent) {
           whatsappDelivery = await deliverStudentNotificationWhatsapp({
-            student,
+            student: receiverStudent,
             studentId: receiverId,
             content,
             attachment,
             preferredSenderIds: [senderId],
             persistToChat: false,
           });
+        } else if (senderStudent) {
+          whatsappDelivery = {
+            attempted: false,
+            status: "skipped",
+            reason: "Student portal message; stored in conversation history.",
+          };
         } else {
           whatsappDelivery = await deliverCounselorMessageToStudentWhatsapp({
             senderId,
