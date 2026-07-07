@@ -11,8 +11,8 @@ const {
   ADMIN_WHATSAPP_USER_ID,
 } = require("./whatsapp");
 const {
-  findBranchWhatsappMessengerUser,
   resolveBranchForStudent,
+  resolveStudentBranchWhatsappSenderId,
   isBranchWhatsappEnabled,
 } = require("./branchWhatsapp");
 const {
@@ -50,8 +50,13 @@ function addStudentWhatsappSenderCandidate(candidates, seen, rawId) {
   candidates.push(id);
 }
 
-/** Counselor, inquiry counselor, counselor history, branch messenger, then admin. */
+/** Personal mode: counselor → branch messenger → admin. Branch mode: student's branch account only. */
 async function collectStudentWhatsappSenderCandidates(student, preferredSenderIds = []) {
+  if (student && (await isBranchWhatsappEnabled())) {
+    const branchSenderId = await resolveStudentBranchWhatsappSenderId(student);
+    return branchSenderId ? [branchSenderId] : [];
+  }
+
   const candidates = [];
   const seen = new Set();
   const preferred = Array.isArray(preferredSenderIds) ? preferredSenderIds : [preferredSenderIds];
@@ -62,19 +67,20 @@ async function collectStudentWhatsappSenderCandidates(student, preferredSenderId
     const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
     for (const id of history) addStudentWhatsappSenderCandidate(candidates, seen, id);
   }
-  if (student && (await isBranchWhatsappEnabled())) {
-    const branch = await resolveBranchForStudent(student);
-    if (branch) {
-      const messenger = await findBranchWhatsappMessengerUser(branch);
-      addStudentWhatsappSenderCandidate(candidates, seen, messenger?.id);
-    }
-  }
   addStudentWhatsappSenderCandidate(candidates, seen, ADMIN_WHATSAPP_USER_ID);
   return candidates;
 }
 
+async function branchWhatsappUnavailableReason(student) {
+  const branch = await resolveBranchForStudent(student);
+  if (!branch) {
+    return "Student branch is not set or does not match a configured branch office.";
+  }
+  return "No WhatsApp account is connected for this student's branch.";
+}
+
 /**
- * Try multiple WhatsApp senders (counselor → branch messenger → admin) until one succeeds.
+ * Deliver a student WhatsApp notification. In branch mode, always uses the branch-linked account.
  * Also mirrors the message in portal chat when delivery succeeds or all senders fail.
  */
 async function deliverStudentNotificationWhatsapp({
@@ -97,6 +103,13 @@ async function deliverStudentNotificationWhatsapp({
 
   const candidates = await collectStudentWhatsappSenderCandidates(student, preferredSenderIds);
   if (!candidates.length) {
+    if (student && (await isBranchWhatsappEnabled())) {
+      return {
+        attempted: false,
+        status: "skipped",
+        reason: await branchWhatsappUnavailableReason(student),
+      };
+    }
     return { attempted: false, status: "skipped", reason: "No WhatsApp sender available for this student." };
   }
 

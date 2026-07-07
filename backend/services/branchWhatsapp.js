@@ -144,6 +144,15 @@ async function resolveBranchForStudent(student) {
   return resolveBranchFromLabel(label);
 }
 
+/** Branch-linked WhatsApp sender for a student when branch mode is enabled. */
+async function resolveStudentBranchWhatsappSenderId(student) {
+  if (!(await isBranchWhatsappEnabled()) || !student) return null;
+  const studentBranch = await resolveBranchForStudent(student);
+  if (!studentBranch) return null;
+  const messenger = await findBranchWhatsappMessengerUser(studentBranch);
+  return messenger?.id ? String(messenger.id).trim() : null;
+}
+
 async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
   const actor = await resolveUserRecord(actorUserId);
   if (!actor) return null;
@@ -151,10 +160,12 @@ async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
     return String(actor.id || "").trim() || null;
   }
 
-  const studentBranch = student ? await resolveBranchForStudent(student) : null;
-  if (studentBranch) {
-    const messenger = await findBranchWhatsappMessengerUser(studentBranch);
-    if (messenger?.id) return String(messenger.id);
+  // Branch mode: all student WhatsApp goes through the student's branch account.
+  if (student) {
+    const branchSenderId = await resolveStudentBranchWhatsappSenderId(student);
+    if (branchSenderId) return branchSenderId;
+    const studentBranch = await resolveBranchForStudent(student);
+    if (!studentBranch) return null;
     const actorBranch = await resolveBranchForUser(actor);
     const actorId = String(actor.id || "").trim();
     if (
@@ -173,11 +184,13 @@ async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
   }
   const branch = await resolveBranchForUser(actor);
   if (!branch) {
-    return isBranchWhatsappManagerRole(actor.role) ? String(actor.id || "").trim() || null : null;
+    return isBranchWhatsappManagerRole(actor.role) && isWhatsappSessionConnected(String(actor.id || "").trim())
+      ? String(actor.id || "").trim() || null
+      : null;
   }
   const messenger = await findBranchWhatsappMessengerUser(branch);
   if (messenger?.id) return String(messenger.id);
-  if (isBranchWhatsappManagerRole(actor.role)) {
+  if (isBranchWhatsappManagerRole(actor.role) && isWhatsappSessionConnected(String(actor.id || "").trim())) {
     return String(actor.id || "").trim() || null;
   }
   return null;
@@ -352,6 +365,7 @@ module.exports = {
   resolveUserRecord,
   resolveBranchForUser,
   resolveBranchForStudent,
+  resolveStudentBranchWhatsappSenderId,
   findBranchWhatsappMessengerUser,
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,
