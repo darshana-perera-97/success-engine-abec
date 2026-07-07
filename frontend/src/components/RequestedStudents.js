@@ -20,6 +20,8 @@ import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { parseReqStudentsImportFile } from "../utils/reqStudentsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 import { formatIntakeLabel } from "../utils/intakeFields";
+import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 function formatSubmittedAt(iso) {
   if (!iso) return "—";
@@ -147,6 +149,7 @@ export function RequestedStudents({
   userRole = "Admin",
   scopeBranch = null,
   branchCountriesLimited = false,
+  branchWhatsappEnabled = false,
   onAddFromRequest
 }) {
   const [rows, setRows] = useState([]);
@@ -155,6 +158,7 @@ export function RequestedStudents({
 
   const [pipelineRow, setPipelineRow] = useState(null);
   const [primaryCounselorId, setPrimaryCounselorId] = useState("");
+  const [branchWhatsappMessengerUserId, setBranchWhatsappMessengerUserId] = useState("");
   const [viewAccessCounselorIds, setViewAccessCounselorIds] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [counselorRows, setCounselorRows] = useState([]);
@@ -325,6 +329,7 @@ export function RequestedStudents({
   const closeModal = () => {
     setPipelineRow(null);
     setPrimaryCounselorId("");
+    setBranchWhatsappMessengerUserId("");
     setViewAccessCounselorIds([]);
     setModalError("");
     setModalSaving(false);
@@ -474,6 +479,10 @@ export function RequestedStudents({
       setModalError("Choose a primary counselor for this student.");
       return;
     }
+    if (branchWhatsappEnabled && !String(branchWhatsappMessengerUserId || "").trim()) {
+      setModalError("Choose a primary WhatsApp account for this student.");
+      return;
+    }
     const viewAccess = Array.from(
       new Set(viewAccessCounselorIds.map((id) => String(id || "").trim()).filter(Boolean))
     ).filter((id) => id !== counselorId);
@@ -482,7 +491,8 @@ export function RequestedStudents({
     const result = await onAddFromRequest(pipelineRow, {
       counselorId,
       viewAccessCounselorIds: viewAccess,
-      priority: pipelinePriority
+      priority: pipelinePriority,
+      branchWhatsappMessengerUserId: branchWhatsappEnabled ? branchWhatsappMessengerUserId : "",
     });
     setModalSaving(false);
     if (!result?.ok) {
@@ -957,6 +967,25 @@ export function RequestedStudents({
                 )}
               </div>
 
+              {branchWhatsappEnabled ? (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Primary WhatsApp account
+                  </label>
+                  <p className="mb-2 text-xs text-slate-500">
+                    Choose which branch WhatsApp number will message this student.
+                  </p>
+                  <BranchWhatsappAccountSelect
+                    branchLabel={resolveStudentBranchLabel(pipelineRow, scopeBranch)}
+                    value={branchWhatsappMessengerUserId}
+                    onChange={setBranchWhatsappMessengerUserId}
+                    required
+                    disabled={modalSaving}
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+              ) : null}
+
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                   View access
@@ -1016,7 +1045,7 @@ export function RequestedStudents({
                 </Button>
                 <Button
                   type="submit"
-                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !primaryCounselorId}
+                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !primaryCounselorId || (branchWhatsappEnabled && !branchWhatsappMessengerUserId)}
                   isLoading={modalSaving}
                 >
                   Add student

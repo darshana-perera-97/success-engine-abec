@@ -13,6 +13,8 @@ import {
   validateInquiryFormRequired
 } from "./InquiryIntakeForm";
 import { canActAsPrimaryCounselorPortalRole } from "../roles";
+import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 function resolveCounselorId(userRole, currentUser, counselorOptions) {
   if (!canActAsPrimaryCounselorPortalRole(userRole)) return "";
@@ -55,7 +57,8 @@ const AddStudentModal = ({
   userRole,
   currentUser,
   counselorOptions = [],
-  scopeBranch = null
+  scopeBranch = null,
+  branchWhatsappEnabled = false
 }) => {
   const [branchRecords, setBranchRecords] = useState([]);
   const [globalCountries, setGlobalCountries] = useState([]);
@@ -66,6 +69,7 @@ const AddStudentModal = ({
   const [formError, setFormError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [assignedCounselorId, setAssignedCounselorId] = useState("");
+  const [branchWhatsappMessengerUserId, setBranchWhatsappMessengerUserId] = useState("");
   const [step, setStep] = useState(1);
   const wasOpenRef = useRef(false);
 
@@ -113,6 +117,7 @@ const AddStudentModal = ({
     setFormError("");
     setForm(emptyInquiryForm({ countries, offices }));
     setAssignedCounselorId("");
+    setBranchWhatsappMessengerUserId("");
     setStep(1);
   }, [isOpen, countries, offices]);
 
@@ -170,6 +175,10 @@ const AddStudentModal = ({
       setFormError("Please select a counselor to assign this lead.");
       return;
     }
+    if (branchWhatsappEnabled && showAssignStep && !String(branchWhatsappMessengerUserId || "").trim()) {
+      setFormError("Please select a primary WhatsApp account for this student.");
+      return;
+    }
 
     const random = Math.random().toString(36).slice(-5);
     const password = `Stu@${new Date().getFullYear()}${random}`;
@@ -193,6 +202,9 @@ const AddStudentModal = ({
       priority: fields.priority,
       counselor: counselorId,
       counselorName: selectedCounselor?.name || "",
+      ...(branchWhatsappEnabled && branchWhatsappMessengerUserId
+        ? { branchWhatsappMessengerUserId }
+        : {}),
       notes: "Newly added via CRM.",
       city: fields.city,
       currentEducationLevel: fields.currentEducationLevel,
@@ -357,6 +369,23 @@ const AddStudentModal = ({
                   </select>
                 )}
               </div>
+              {branchWhatsappEnabled ? (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Primary WhatsApp account
+                  </label>
+                  <p className="mb-2 text-xs text-slate-500">
+                    Choose which branch WhatsApp number will message this student.
+                  </p>
+                  <BranchWhatsappAccountSelect
+                    branchLabel={resolveStudentBranchLabel({ branch: form.nearestOffice, nearestOffice: form.nearestOffice }, scopeBranch)}
+                    value={branchWhatsappMessengerUserId}
+                    onChange={setBranchWhatsappMessengerUserId}
+                    required
+                    disabled={isSaving}
+                  />
+                </div>
+              ) : null}
               {formError ? (
                 <p className="text-sm text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
                   {formError}
@@ -383,7 +412,11 @@ const AddStudentModal = ({
                 <Button
                   type="submit"
                   isLoading={isSaving}
-                  disabled={assignableCounselors.length === 0 || !assignedCounselorId}
+                  disabled={
+                    assignableCounselors.length === 0 ||
+                    !assignedCounselorId ||
+                    (branchWhatsappEnabled && !branchWhatsappMessengerUserId)
+                  }
                 >
                   Add Student
                 </Button>

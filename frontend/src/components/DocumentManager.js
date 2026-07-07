@@ -39,7 +39,13 @@ function isDeletableDocumentStatus(status) {
   return status === "Rejected" || status === "Verified";
 }
 function canStaffUploadOfferLetters(userRole) {
-  return isCounselorEquivalentPortalRole(userRole) || userRole === "Manager" || userRole === "Admin";
+  const roleNorm = String(userRole || "").trim().toLowerCase();
+  return (
+    isCounselorEquivalentPortalRole(userRole) ||
+    roleNorm === "manager" ||
+    roleNorm === "admin" ||
+    roleNorm === "country coordinator"
+  );
 }
 
 function DocumentRequirementBadge({ required }) {
@@ -535,7 +541,7 @@ const DocumentManager = ({
                 /* @__PURE__ */ jsx("a", { ...documentDownloadProps(letter.url, letter.name), title: "Download", className: "p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900", children: /* @__PURE__ */ jsx(Download, { size: 16 }) })
               ] })
             ] })
-          ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, managers, and admins can upload them." }) })
+          ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, country coordinators, managers, and admins can upload them." }) })
         ] });
       }
       const groupRequired = category.items.filter((item) => item.required !== false);

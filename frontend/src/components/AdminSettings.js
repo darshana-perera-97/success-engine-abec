@@ -367,7 +367,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         }),
         /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Use one WhatsApp account per branch" }),
-          "When enabled, only the Manager or Team Lead of each branch can connect WhatsApp (one account per branch). They can reply to students in Inbox (not read-only ghost mode) using the branch account. Other staff see the connected branch account and its status in the navbar. When disabled, each user connects their own WhatsApp as today."
+          "When enabled, each branch Manager and Team Lead can connect their own WhatsApp under Integrations. When assigning a student, staff choose which branch WhatsApp account messages that student. Counselors see the branch account status in the navbar but cannot connect WhatsApp. When disabled, each user connects their own WhatsApp as today."
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {

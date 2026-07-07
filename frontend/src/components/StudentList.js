@@ -8,6 +8,8 @@ import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isSt
 import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, getAssignedCounselorIds, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
+import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
 import { dt } from "./DataTable";
@@ -92,7 +94,8 @@ const StudentList = ({
   currentUser,
   authenticatedUser,
   counselorIdentitySet = null,
-  scopeBranch = null
+  scopeBranch = null,
+  branchWhatsappEnabled = false
 }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
@@ -101,6 +104,7 @@ const StudentList = ({
   const [accountCounselors, setAccountCounselors] = useState([]);
   const [assigningStudentId, setAssigningStudentId] = useState(null);
   const [managerTargetCounselorId, setManagerTargetCounselorId] = useState("");
+  const [managerTargetWhatsappUserId, setManagerTargetWhatsappUserId] = useState("");
   const [managerAssignMode, setManagerAssignMode] = useState("reassign");
   const [counselorMetaReady, setCounselorMetaReady] = useState(false);
   const [sortPrefs, setSortPrefs] = useState(() => loadSortPrefs());
@@ -269,24 +273,33 @@ const StudentList = ({
     if (!onAddStudent) return { ok: false, error: "Add student is not configured." };
     return onAddStudent(newStudent);
   };
-  const assignStudentToCounselor = (student, counselorId) => {
+  const assignStudentToCounselor = (student, counselorId, branchWhatsappMessengerUserId = "") => {
     if (!counselorId) return;
     const counselor = counselorOptions.find((item) => String(item.id || "") === String(counselorId || ""));
     const counselorName = String(counselor?.name || "").trim();
     if (onAssignStudentCounselor) {
-      onAssignStudentCounselor(student, counselorId, counselorName);
+      onAssignStudentCounselor(student, counselorId, counselorName, branchWhatsappMessengerUserId);
       return;
     }
     if (!onUpdateStudent) return;
-    onUpdateStudent({ ...student, counselor: counselorId, counselorName: counselorName || student.counselorName || "" });
+    onUpdateStudent({
+      ...student,
+      counselor: counselorId,
+      counselorName: counselorName || student.counselorName || "",
+      ...(branchWhatsappMessengerUserId
+        ? { branchWhatsappMessengerUserId }
+        : {}),
+    });
   };
   const openCounselorManageMenu = (student) => {
     setAssigningStudentId(student.id);
     setManagerTargetCounselorId("");
+    setManagerTargetWhatsappUserId(String(student?.branchWhatsappMessengerUserId || "").trim());
     setManagerAssignMode("reassign");
   };
   const confirmCounselorAssign = (student) => {
     if (!managerTargetCounselorId) return;
+    if (branchWhatsappEnabled && !managerTargetWhatsappUserId) return;
     if (managerAssignMode === "secondary") {
       if (onAddSecondaryStudentCounselor) {
         onAddSecondaryStudentCounselor(student, managerTargetCounselorId);
@@ -295,10 +308,11 @@ const StudentList = ({
         if (patch) onUpdateStudent({ ...student, ...patch });
       }
     } else {
-      assignStudentToCounselor(student, managerTargetCounselorId);
+      assignStudentToCounselor(student, managerTargetCounselorId, managerTargetWhatsappUserId);
     }
     setAssigningStudentId(null);
     setManagerTargetCounselorId("");
+    setManagerTargetWhatsappUserId("");
     setManagerAssignMode("reassign");
   };
   const removeCounselorFromStudent = async (student) => {
@@ -319,6 +333,7 @@ const StudentList = ({
     if (result?.ok === false) return;
     setAssigningStudentId(null);
     setManagerTargetCounselorId("");
+    setManagerTargetWhatsappUserId("");
   };
   const getStatusColor = (status) => {
     switch (status) {
@@ -581,7 +596,8 @@ const StudentList = ({
         userRole,
         currentUser,
         counselorOptions,
-        scopeBranch
+        scopeBranch,
+        branchWhatsappEnabled
       }
     ),
     assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
@@ -635,13 +651,25 @@ const StudentList = ({
             }
           )
         ] }) : null,
+        branchWhatsappEnabled && managerAssignMode !== "secondary" ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: "Primary WhatsApp account" }),
+          /* @__PURE__ */ jsx(
+            BranchWhatsappAccountSelect,
+            {
+              branchLabel: resolveStudentBranchLabel(assigningStudent, scopeBranch),
+              value: managerTargetWhatsappUserId,
+              onChange: setManagerTargetWhatsappUserId,
+              required: true
+            }
+          )
+        ] }) : null,
         /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-2", children: [
           /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", onClick: () => setAssigningStudentId(null), children: "Cancel" }),
           !isUnassignedCounselor(assigningStudent.counselor) && canManageCounselors && !wouldStudentHaveNoCounselorsAfterRemoval(assigningStudent, assigningStudent.counselor) ? /* @__PURE__ */ jsxs(Button, { type: "button", variant: "ghost", className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50", onClick: () => removeCounselorFromStudent(assigningStudent), children: [
             /* @__PURE__ */ jsx(X, { size: 14, className: "mr-1.5" }),
             "Remove"
           ] }) : null,
-          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId, onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : managerAssignMode === "secondary" ? "Add secondary" : "Reassign" }) : null
+          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId || (branchWhatsappEnabled && managerAssignMode !== "secondary" && !managerTargetWhatsappUserId), onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : managerAssignMode === "secondary" ? "Add secondary" : "Reassign" }) : null
         ] })
       ] })
     ] }) }) : null

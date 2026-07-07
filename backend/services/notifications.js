@@ -76,6 +76,10 @@ async function branchWhatsappUnavailableReason(student) {
   if (!branch) {
     return "Student branch is not set or does not match a configured branch office.";
   }
+  const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
+  if (assignedId) {
+    return "The WhatsApp account assigned to this student is not connected.";
+  }
   return "No WhatsApp account is connected for this student's branch.";
 }
 

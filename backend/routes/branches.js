@@ -11,8 +11,7 @@ const { readInvoices } = require("../models/invoices");
 const { readStudemts } = require("../models/students");
 const { readUsers, splitAdminRecord } = require("../models/users");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
-const { findBranchWhatsappMessengerUser, isBranchWhatsappEnabled } = require("../services/branchWhatsapp");
-const { snapshotWhatsappState } = require("../services/whatsapp");
+const { isBranchWhatsappEnabled, listBranchWhatsappAccounts, validateStudentBranchWhatsappMessengerUserId } = require("../services/branchWhatsapp");
 
 const financeSummaryCache = new Map();
 
@@ -322,24 +321,20 @@ async function handle(req, res, url) {
       const rows = await Promise.all(
         filtered.map(async (branch) => {
           const name = String(branch?.location || "").trim();
-          const messenger = await findBranchWhatsappMessengerUser(branch);
-          const messengerUserId = messenger ? String(messenger.id || "").trim() : "";
-          const messengerName = messenger
-            ? String(messenger.username || messenger.email || "").trim()
-            : "";
-
-          let status = "disconnected";
-          let whatsappName = "";
-          let whatsappNumber = "";
-          let connectedAt = "";
-
-          if (messengerUserId) {
-            const state = snapshotWhatsappState(messengerUserId);
-            status = String(state?.status || "disconnected");
-            whatsappName = String(state?.whatsappName || "").trim();
-            whatsappNumber = String(state?.whatsappNumber || "").trim();
-            connectedAt = String(state?.connectedAt || "").trim();
-          }
+          const accounts = await listBranchWhatsappAccounts(branch);
+          const connectedAccounts = accounts.filter((row) => row.connected);
+          const primaryAccount =
+            connectedAccounts.find((row) => row.isPrimary) ||
+            connectedAccounts[0] ||
+            accounts.find((row) => row.isPrimary) ||
+            accounts[0] ||
+            null;
+          const messengerUserId = String(primaryAccount?.userId || "").trim();
+          const messengerName = String(primaryAccount?.name || "").trim();
+          const status = String(primaryAccount?.status || "disconnected");
+          const whatsappName = String(primaryAccount?.whatsappName || "").trim();
+          const whatsappNumber = String(primaryAccount?.whatsappNumber || "").trim();
+          const connectedAt = String(primaryAccount?.connectedAt || "").trim();
 
           return {
             name,
@@ -349,6 +344,9 @@ async function handle(req, res, url) {
             whatsappName,
             whatsappNumber,
             connectedAt,
+            accountCount: accounts.length,
+            connectedAccountCount: connectedAccounts.length,
+            accounts,
           };
         })
       );

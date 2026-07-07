@@ -38,7 +38,14 @@ function buildAppointmentLinkWhatsappMessage({ studentName, title, date, time, m
   return lines.join("\n");
 }
 
-function buildCounselorAssignmentWhatsappMessage({ studentName, counselorName, counselorEmail, counselorPhone, counselorBranch }) {
+function buildCounselorAssignmentWhatsappMessage({
+  studentName,
+  counselorName,
+  counselorEmail,
+  counselorPhone,
+  counselorWhatsapp,
+  counselorBranch,
+}) {
   const lines = [
     `${COMPANY_NAME} — New Counselor Assigned`,
     "",
@@ -50,6 +57,7 @@ function buildCounselorAssignmentWhatsappMessage({ studentName, counselorName, c
     `Name: ${counselorName || ""}`,
     counselorEmail ? `Email: ${counselorEmail}` : "",
     counselorPhone ? `Phone: ${counselorPhone}` : "",
+    counselorWhatsapp ? `WhatsApp: ${counselorWhatsapp}` : "",
     counselorBranch ? `Branch: ${counselorBranch}` : "",
     "",
     "Feel free to reach out to your counselor for any questions or support.",

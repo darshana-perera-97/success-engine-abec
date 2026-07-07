@@ -207,45 +207,12 @@ async function resolveWhatsappMessenger(userId) {
   return resolveCounselor(userId);
 }
 
-async function findBranchWhatsappSessionConflict(actorUserId, branch) {
-  if (!branch?.id) return null;
-  const actorId = String(actorUserId || "").trim();
-  const users = await readUsers();
-  for (const user of users) {
-    const userId = String(user.id || "").trim();
-    if (!userId || userId === actorId) continue;
-    if (!isBranchWhatsappManagerRole(user.role)) continue;
-    const userBranch = await resolveBranchForUser(user);
-    if (!userBranch || String(userBranch.id || "") !== String(branch.id || "")) continue;
-    const sessionState = snapshotWhatsappState(userId);
-    if (BRANCH_WHATSAPP_ACTIVE_STATUSES.has(String(sessionState.status || ""))) {
-      return user;
-    }
-  }
-  return null;
-}
-
 async function enrichBranchWhatsappIntegrationContext(userId, context) {
-  if (context.mode !== "branch" || context.canManage !== true) return context;
-  const actor = await resolveUserRecord(userId);
-  if (!actor) return context;
-  const branch = await resolveBranchForUser(actor);
-  const conflict = await findBranchWhatsappSessionConflict(userId, branch);
-  if (!conflict) return context;
-  const conflictId = String(conflict.id || "").trim();
-  const conflictName = String(conflict.username || conflict.email || "").trim();
-  return {
-    ...context,
-    canManage: false,
-    messengerUserId: conflictId,
-    messengerName: conflictName,
-    statusUserId: conflictId,
-  };
+  return context;
 }
 
 async function resolveWhatsappIntegrationContextForUser(userId) {
-  const context = await resolveWhatsappIntegrationContext(userId);
-  return enrichBranchWhatsappIntegrationContext(userId, context);
+  return resolveWhatsappIntegrationContext(userId);
 }
 
 async function prepareBranchWhatsappConnect(userId) {
@@ -263,18 +230,8 @@ async function prepareBranchWhatsappConnect(userId) {
   if (!branch?.id) {
     return { ok: true };
   }
-  const conflict = await findBranchWhatsappSessionConflict(userId, branch);
-  if (conflict) {
-    const conflictName = String(conflict.username || conflict.email || "").trim();
-    return {
-      ok: false,
-      error: conflictName
-        ? `Another Manager or Team Lead (${conflictName}) is already connecting WhatsApp for this branch.`
-        : "Another Manager or Team Lead is already connecting WhatsApp for this branch.",
-    };
-  }
-  const messenger = await findBranchWhatsappMessengerUser(branch);
-  if (!messenger || !isWhatsappSessionConnected(String(messenger.id || ""))) {
+  const storedId = String(branch?.whatsappMessengerUserId || "").trim();
+  if (!storedId) {
     await setBranchWhatsappMessenger(branch.id, userId);
   }
   return { ok: true, branch };

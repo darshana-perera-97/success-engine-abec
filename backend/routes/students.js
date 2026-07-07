@@ -48,6 +48,11 @@ const {
   promoteRemainingCounselorToPrimary,
   applyCounselorTransferHistory,
 } = require("../services/studentCounselors");
+const {
+  validateStudentBranchWhatsappMessengerUserId,
+  setBranchWhatsappMessenger,
+  resolveBranchForStudent,
+} = require("../services/branchWhatsapp");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
   storeImageDataUrl,
@@ -432,6 +437,22 @@ async function handle(req, res, url) {
       if (counselorHistory.length > 0) {
         student.counselorHistory = counselorHistory;
       }
+      const branchWhatsappMessengerUserId = String(body.branchWhatsappMessengerUserId || "").trim();
+      if (branchWhatsappMessengerUserId) {
+        const whatsappAssignmentError = await validateStudentBranchWhatsappMessengerUserId(
+          student,
+          branchWhatsappMessengerUserId
+        );
+        if (whatsappAssignmentError) {
+          sendJson(res, 400, { ok: false, error: whatsappAssignmentError });
+          return true;
+        }
+        student.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
+        const studentBranch = await resolveBranchForStudent(student);
+        if (studentBranch?.id) {
+          await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
+        }
+      }
       const updated = [...studemts, student];
       await writeStudemts(updated);
       sendJson(res, 201, { ok: true, data: publicStudentRecord(req, student) });
@@ -514,6 +535,26 @@ async function handle(req, res, url) {
         sendJson(res, 400, { ok: false, error: counselorAssignmentError });
         return true;
       }
+      if (Object.prototype.hasOwnProperty.call(body, "branchWhatsappMessengerUserId")) {
+        const branchWhatsappMessengerUserId = String(body.branchWhatsappMessengerUserId || "").trim();
+        if (branchWhatsappMessengerUserId) {
+          const whatsappAssignmentError = await validateStudentBranchWhatsappMessengerUserId(
+            merged,
+            branchWhatsappMessengerUserId
+          );
+          if (whatsappAssignmentError) {
+            sendJson(res, 400, { ok: false, error: whatsappAssignmentError });
+            return true;
+          }
+          merged.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
+          const studentBranch = await resolveBranchForStudent(merged);
+          if (studentBranch?.id) {
+            await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
+          }
+        } else {
+          delete merged.branchWhatsappMessengerUserId;
+        }
+      }
       const nextCounselor = String(merged?.counselor || "").trim();
       const nextCounselorNorm = nextCounselor.toLowerCase();
       const prevCounselorNorm = previousCounselor.toLowerCase();
@@ -572,13 +613,17 @@ async function handle(req, res, url) {
               counselorName: String(newCounselorUser.username || "").trim(),
               counselorEmail: normalizeEmail(newCounselorUser.email),
               counselorPhone: String(newCounselorUser.phone || "").trim(),
+              counselorWhatsapp: String(newCounselorUser.whatsappNumber || newCounselorUser.phone || "").trim(),
               counselorBranch: String(newCounselorUser.branch || "").trim(),
             });
             const result = await deliverStudentNotificationWhatsapp({
               student: merged,
               studentId,
               content: message,
-              preferredSenderIds: [nextCounselor],
+              preferredSenderIds: [
+                String(merged.branchWhatsappMessengerUserId || "").trim(),
+                nextCounselor,
+              ].filter(Boolean),
               persistToChat: true,
             });
             counselorAssignmentWhatsapp = {

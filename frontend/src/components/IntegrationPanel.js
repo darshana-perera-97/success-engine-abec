@@ -137,8 +137,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
   const branchLabel = String(context.branchLabel || currentUser?.branch || "").trim();
   const messengerName = String(context.messengerName || "").trim();
   const isBranchManager = isBranchWhatsappManagerRole(currentUser?.role);
-  const branchManagedByOther =
-    branchMode && isBranchManager && !canManage && Boolean(messengerName);
 
   const refreshStatus = async () => {
     if (!userId || !showPersonalConnection) return;
@@ -257,7 +255,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
             <div>
               <h2 className="text-2xl font-bold text-slate-900">Branch WhatsApp Accounts</h2>
               <p className="text-sm text-slate-500 mt-1">
-                Each branch uses one WhatsApp account connected by its Manager or Team Lead. Status updates
+                Each branch can have multiple WhatsApp accounts linked by its Managers and Team Leads. Status updates
                 automatically.
               </p>
             </div>
@@ -267,7 +265,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 const status = String(row?.status || "");
                 return status === "connected" || status === "authenticated";
               }).length}{" "}
-              of {branchAccounts.length} connected
+              connected across {branchAccounts.length} branch{branchAccounts.length === 1 ? "" : "es"}
             </div>
           </div>
           <div className="mt-5">
@@ -283,7 +281,9 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {branchAccounts.map((row) => {
-                  const hasMessenger = Boolean(row?.messengerUserId);
+                  const accounts = Array.isArray(row?.accounts) ? row.accounts : [];
+                  const connectedCount = accounts.filter((account) => account.connected).length;
+                  const hasMessenger = connectedCount > 0 || Boolean(row?.messengerUserId);
                   const status = row?.status || "disconnected";
                   const isLive = status === "connected" || status === "authenticated";
                   return (
@@ -303,34 +303,59 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                           className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full bg-slate-50 border border-slate-100 ${branchWhatsappStatusTextClass(status, hasMessenger)}`}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${branchWhatsappStatusDotClass(status, hasMessenger)}`} />
-                          {branchWhatsappStatusLabel(status, hasMessenger)}
+                          {connectedCount > 0 ? `${connectedCount} linked` : branchWhatsappStatusLabel(status, hasMessenger)}
                         </span>
                       </div>
                       <div className="space-y-3 pl-1">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Connected by</p>
-                          <p className="text-sm font-medium text-slate-700 mt-0.5 truncate">
-                            {row.messengerName || "No Manager or Team Lead linked"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">WhatsApp</p>
-                          {isLive && row.whatsappNumber ? (
-                            <>
-                              <p className="text-sm font-semibold text-slate-900 mt-0.5 truncate">
-                                {row.whatsappName || "WhatsApp User"}
-                              </p>
-                              <p className="text-xs text-slate-500 mt-0.5 truncate">{row.whatsappNumber}</p>
-                            </>
-                          ) : (
-                            <p className="text-sm text-slate-400 mt-0.5">
-                              {hasMessenger ? "Not connected yet" : "Awaiting branch setup"}
+                        {accounts.length > 0 ? (
+                          <div className="space-y-2">
+                            {accounts.map((account) => (
+                              <div key={account.userId} className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
+                                <p className="text-sm font-medium text-slate-800 truncate">
+                                  {account.name || "Manager / Team Lead"}
+                                  {account.isPrimary ? " · default" : ""}
+                                </p>
+                                {account.connected && account.whatsappNumber ? (
+                                  <>
+                                    <p className="text-xs font-semibold text-slate-900 mt-0.5 truncate">
+                                      {account.whatsappName || "WhatsApp User"}
+                                    </p>
+                                    <p className="text-xs text-slate-500 truncate">{account.whatsappNumber}</p>
+                                  </>
+                                ) : (
+                                  <p className="text-xs text-slate-400 mt-0.5">Not connected</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Connected by</p>
+                            <p className="text-sm font-medium text-slate-700 mt-0.5 truncate">
+                              {row.messengerName || "No Manager or Team Lead linked"}
                             </p>
-                          )}
-                        </div>
+                          </div>
+                        )}
+                        {!accounts.length ? (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">WhatsApp</p>
+                            {isLive && row.whatsappNumber ? (
+                              <>
+                                <p className="text-sm font-semibold text-slate-900 mt-0.5 truncate">
+                                  {row.whatsappName || "WhatsApp User"}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-0.5 truncate">{row.whatsappNumber}</p>
+                              </>
+                            ) : (
+                              <p className="text-sm text-slate-400 mt-0.5">
+                                {hasMessenger ? "Not connected yet" : "Awaiting branch setup"}
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
                         {row.connectedAt ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Connected at</p>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Default connected at</p>
                             <p className="text-xs text-slate-500 mt-0.5">
                               {new Date(row.connectedAt).toLocaleString()}
                             </p>
@@ -359,7 +384,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 ? "Connect your own WhatsApp for Omni-Channel messaging as Admin."
                 : branchMode
                   ? canManage
-                    ? "Connect the shared WhatsApp account for your branch. All branch staff will send messages from this number."
+                    ? "Connect your branch WhatsApp account. Multiple Managers and Team Leads in the same branch can each link their own number."
                     : "View the branch WhatsApp account used for student messaging."
                   : "Connect your WhatsApp to manage counselor conversations from a single workspace."}
             </p>
@@ -372,12 +397,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                     · Connected by <span className="font-semibold text-slate-700">{messengerName}</span>
                   </>
                 ) : null}
-              </p>
-            ) : null}
-            {branchManagedByOther ? (
-              <p className="text-xs text-amber-700 mt-2">
-                WhatsApp for this branch is managed by {messengerName}. Only they can connect or disconnect the
-                branch account.
               </p>
             ) : null}
           </div>
@@ -493,11 +512,9 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 <p className="text-sm text-slate-500 px-4 text-center">
                   {canShowQrCode
                     ? "Click connect to generate a QR code, then scan it in WhatsApp mobile app."
-                    : branchManagedByOther
-                      ? `Branch WhatsApp is managed by ${messengerName}.`
-                      : isCounselorViewer
-                        ? "Branch WhatsApp is not connected yet. Ask your Manager or Team Lead to connect it."
-                        : "Branch WhatsApp is not connected yet."}
+                    : isCounselorViewer
+                      ? "Branch WhatsApp is not connected yet. Ask your Manager or Team Lead to connect it."
+                      : "Branch WhatsApp is not connected yet."}
                 </p>
                 {canShowQrCode ? (
                   <button
