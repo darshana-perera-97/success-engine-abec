@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, MapPin } from "lucide-react";
 import {
   connectWhatsapp,
   disconnectWhatsapp,
+  getBranchWhatsappConnectivity,
   getWhatsappStatus,
   regenerateWhatsappQr,
 } from "../authApi";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { isBranchWhatsappManagerRole, isBranchWhatsappViewerRole } from "../roles";
+import { POLL_MS } from "../runtimeConfig";
 
 function IntegrationSpinner({ title, description }) {
   return (
@@ -29,6 +31,46 @@ const STATUS_COPY = {
   error: "Connection Error",
 };
 
+const BRANCH_STATUS_COPY = {
+  disconnected: "Disconnected",
+  connecting: "Connecting",
+  awaiting_qr_scan: "Awaiting QR",
+  authenticated: "Linking",
+  connected: "Connected",
+  auth_failed: "Auth failed",
+  error: "Error",
+};
+
+function branchWhatsappStatusLabel(status, hasMessenger) {
+  if (!hasMessenger) return "Not connected";
+  const key = String(status || "disconnected");
+  return BRANCH_STATUS_COPY[key] || key;
+}
+
+function branchWhatsappStatusTextClass(status, hasMessenger) {
+  if (!hasMessenger) return "text-slate-500";
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "text-emerald-600";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600";
+  return "text-rose-600";
+}
+
+function branchWhatsappStatusDotClass(status, hasMessenger) {
+  if (!hasMessenger) return "bg-slate-300";
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "bg-emerald-500";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  return "bg-rose-500";
+}
+
+function branchWhatsappAccentClass(status, hasMessenger) {
+  if (!hasMessenger) return "bg-slate-200";
+  const s = String(status || "").trim();
+  if (s === "connected" || s === "authenticated") return "bg-emerald-500";
+  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  return "bg-rose-400";
+}
+
 const defaultContext = {
   mode: "personal",
   branchWhatsappEnabled: false,
@@ -39,14 +81,20 @@ const defaultContext = {
   messengerName: "",
 };
 
-export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false }) {
+export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, adminChatEnabled = false }) {
   const [state, setState] = useState(null);
   const [context, setContext] = useState(defaultContext);
   const [loading, setLoading] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [branchAccounts, setBranchAccounts] = useState([]);
+  const [branchAccountsLoading, setBranchAccountsLoading] = useState(false);
   const statusFailureCountRef = useRef(0);
   const userId = String(currentUser?.id || "").trim();
-  const branchMode = context.mode === "branch" || branchWhatsappEnabled === true;
+  const isAdmin = String(currentUser?.role || "").trim() === "Admin";
+  const showAdminBranchOverview = isAdmin && branchWhatsappEnabled === true;
+  const showPersonalConnection = !showAdminBranchOverview || adminChatEnabled === true;
+  const branchMode =
+    showPersonalConnection && (context.mode === "branch" || branchWhatsappEnabled === true);
   const isCounselorViewer =
     branchWhatsappEnabled === true && isBranchWhatsappViewerRole(currentUser?.role);
   const canManage =
@@ -93,7 +141,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
     branchMode && isBranchManager && !canManage && Boolean(messengerName);
 
   const refreshStatus = async () => {
-    if (!userId) return;
+    if (!userId || !showPersonalConnection) return;
     const response = await getWhatsappStatus(userId);
     if (!response.ok) {
       statusFailureCountRef.current += 1;
@@ -110,7 +158,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
 
   useEffect(() => {
     let stop = false;
-    if (!userId) return;
+    if (!userId || !showPersonalConnection) return undefined;
     const run = async () => {
       if (stop) return;
       await refreshStatus();
@@ -121,7 +169,36 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
       stop = true;
       clearInterval(timer);
     };
-  }, [userId]);
+  }, [userId, showPersonalConnection]);
+
+  useEffect(() => {
+    if (!showAdminBranchOverview) {
+      setBranchAccounts([]);
+      return undefined;
+    }
+    let cancelled = false;
+    let initialLoad = true;
+    const loadBranchAccounts = async () => {
+      if (initialLoad) setBranchAccountsLoading(true);
+      const result = await getBranchWhatsappConnectivity("");
+      if (cancelled) return;
+      if (initialLoad) {
+        initialLoad = false;
+        setBranchAccountsLoading(false);
+      }
+      if (!result.ok || !result.data?.enabled) {
+        setBranchAccounts([]);
+        return;
+      }
+      setBranchAccounts(result.data.branches || []);
+    };
+    loadBranchAccounts();
+    const timer = setInterval(loadBranchAccounts, POLL_MS.whatsapp);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [showAdminBranchOverview]);
 
   const handleConnect = async () => {
     if (!userId || !canManage) return;
@@ -174,16 +251,117 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {showAdminBranchOverview ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Branch WhatsApp Accounts</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Each branch uses one WhatsApp account connected by its Manager or Team Lead. Status updates
+                automatically.
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              {branchAccounts.filter((row) => {
+                const status = String(row?.status || "");
+                return status === "connected" || status === "authenticated";
+              }).length}{" "}
+              of {branchAccounts.length} connected
+            </div>
+          </div>
+          <div className="mt-5">
+            {branchAccountsLoading && branchAccounts.length === 0 ? (
+              <div className="py-10 flex justify-center">
+                <IntegrationSpinner title="Loading branch accounts" />
+              </div>
+            ) : branchAccounts.length === 0 ? (
+              <p className="py-8 text-sm text-slate-500 text-center rounded-xl border border-dashed border-slate-200 bg-slate-50">
+                No branches found. Add branches under Branch Analytics, then Managers or Team Leads can connect
+                WhatsApp.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {branchAccounts.map((row) => {
+                  const hasMessenger = Boolean(row?.messengerUserId);
+                  const status = row?.status || "disconnected";
+                  const isLive = status === "connected" || status === "authenticated";
+                  return (
+                    <div
+                      key={row.name}
+                      className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:border-emerald-200 transition-colors"
+                    >
+                      <div
+                        className={`absolute top-0 left-0 w-1 h-full ${branchWhatsappAccentClass(status, hasMessenger)}`}
+                      />
+                      <div className="flex items-start justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <MapPin size={16} className="text-slate-400 shrink-0" />
+                          <span className="font-semibold text-slate-900 truncate">{row.name}</span>
+                        </div>
+                        <span
+                          className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-full bg-slate-50 border border-slate-100 ${branchWhatsappStatusTextClass(status, hasMessenger)}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${branchWhatsappStatusDotClass(status, hasMessenger)}`} />
+                          {branchWhatsappStatusLabel(status, hasMessenger)}
+                        </span>
+                      </div>
+                      <div className="space-y-3 pl-1">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Connected by</p>
+                          <p className="text-sm font-medium text-slate-700 mt-0.5 truncate">
+                            {row.messengerName || "No Manager or Team Lead linked"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">WhatsApp</p>
+                          {isLive && row.whatsappNumber ? (
+                            <>
+                              <p className="text-sm font-semibold text-slate-900 mt-0.5 truncate">
+                                {row.whatsappName || "WhatsApp User"}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-0.5 truncate">{row.whatsappNumber}</p>
+                            </>
+                          ) : (
+                            <p className="text-sm text-slate-400 mt-0.5">
+                              {hasMessenger ? "Not connected yet" : "Awaiting branch setup"}
+                            </p>
+                          )}
+                        </div>
+                        {row.connectedAt ? (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Connected at</p>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {new Date(row.connectedAt).toLocaleString()}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {showPersonalConnection ? (
+      <>
       <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">WhatsApp Integration</h2>
+            <h2 className="text-2xl font-bold text-slate-900">
+              {showAdminBranchOverview ? "Admin WhatsApp" : "WhatsApp Integration"}
+            </h2>
             <p className="text-sm text-slate-500 mt-1">
-              {branchMode
-                ? canManage
-                  ? "Connect the shared WhatsApp account for your branch. All branch staff will send messages from this number."
-                  : "View the branch WhatsApp account used for student messaging."
-                : "Connect your WhatsApp to manage counselor conversations from a single workspace."}
+              {showAdminBranchOverview
+                ? "Connect your own WhatsApp for Omni-Channel messaging as Admin."
+                : branchMode
+                  ? canManage
+                    ? "Connect the shared WhatsApp account for your branch. All branch staff will send messages from this number."
+                    : "View the branch WhatsApp account used for student messaging."
+                  : "Connect your WhatsApp to manage counselor conversations from a single workspace."}
             </p>
             {branchMode && branchLabel ? (
               <p className="text-xs text-slate-500 mt-2">
@@ -370,6 +548,8 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
           </div>
         </div>
       </div>
+      </>
+      ) : null}
     </div>
   );
 }

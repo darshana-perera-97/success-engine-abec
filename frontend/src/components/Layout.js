@@ -325,6 +325,16 @@ const Layout = ({
         if (adminChatEnabled) {
           return withStaffMessagingNav(adminNavItems);
         }
+        if (branchWhatsappEnabled) {
+          const integrationItem = { id: "integration", label: "Integrations", icon: /* @__PURE__ */ jsx(Plug, { size: 20 }) };
+          const messagesIndex = adminNavItems.findIndex((item) => item.id === "messages");
+          if (messagesIndex >= 0) {
+            const next = [...adminNavItems];
+            next.splice(messagesIndex, 0, integrationItem);
+            return next;
+          }
+          return [...adminNavItems, integrationItem];
+        }
         return adminNavItems;
       }
     }

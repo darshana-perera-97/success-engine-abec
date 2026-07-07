@@ -2462,7 +2462,7 @@ function App({ initialView = "dashboard" }) {
   const renderContent = () => {
     if (currentView === "integration") {
       if (canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)) {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled });
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled });
       }
     }
     if (currentView === "messages") {
@@ -2606,7 +2606,7 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (isWhatsappIntegrationRole(currentRole) && currentView === "integration") {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled });
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled });
       }
       if (currentView === "branch") {
         const coordBranch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
@@ -2787,7 +2787,7 @@ function App({ initialView = "dashboard" }) {
       }
       if (currentView === "integration") {
         return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
-          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled })
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled })
           : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       }
       return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
@@ -2903,7 +2903,7 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(DocMapping, { userRole: currentRole });
       case "integration":
         return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
-          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled })
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled })
           : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       case "web-forms":
         return /* @__PURE__ */ jsx(WebForms, {});

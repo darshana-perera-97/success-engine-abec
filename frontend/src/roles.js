@@ -105,5 +105,6 @@ export function canAccessWhatsappIntegration(role, adminChatEnabled = false, bra
   if (isWhatsappIntegrationRole(role)) return true;
   if (isStaffOmniChannelMessenger(role, adminChatEnabled)) return true;
   if (branchWhatsappEnabled === true && isBranchWhatsappManagerRole(role)) return true;
+  if (branchWhatsappEnabled === true && String(role || "").trim() === "Admin") return true;
   return false;
 }
