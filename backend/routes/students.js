@@ -51,6 +51,7 @@ const {
 const {
   validateStudentBranchWhatsappMessengerUserId,
   setBranchWhatsappMessenger,
+  isBranchWhatsappAccountForStudentBranch,
   resolveBranchForStudent,
 } = require("../services/branchWhatsapp");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
@@ -449,7 +450,10 @@ async function handle(req, res, url) {
         }
         student.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
         const studentBranch = await resolveBranchForStudent(student);
-        if (studentBranch?.id) {
+        if (
+          studentBranch?.id &&
+          (await isBranchWhatsappAccountForStudentBranch(student, branchWhatsappMessengerUserId))
+        ) {
           await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
         }
       }
@@ -548,7 +552,10 @@ async function handle(req, res, url) {
           }
           merged.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
           const studentBranch = await resolveBranchForStudent(merged);
-          if (studentBranch?.id) {
+          if (
+            studentBranch?.id &&
+            (await isBranchWhatsappAccountForStudentBranch(merged, branchWhatsappMessengerUserId))
+          ) {
             await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
           }
         } else {

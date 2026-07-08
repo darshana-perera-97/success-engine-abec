@@ -192,15 +192,16 @@ async function resolveBranchForStudent(student) {
 /** Branch-linked WhatsApp sender for a student when branch mode is enabled. */
 async function resolveStudentBranchWhatsappSenderId(student) {
   if (!(await isBranchWhatsappEnabled()) || !student) return null;
-  const studentBranch = await resolveBranchForStudent(student);
-  if (!studentBranch) return null;
 
+  // Honor the account explicitly assigned to the student, even when it belongs
+  // to a different branch than the student (any connected account is allowed).
   const assignedId = String(student.branchWhatsappMessengerUserId || "").trim();
   if (assignedId && isWhatsappSessionConnected(assignedId)) {
-    if (await isBranchWhatsappAccountForStudentBranch(student, assignedId)) {
-      return assignedId;
-    }
+    return assignedId;
   }
+
+  const studentBranch = await resolveBranchForStudent(student);
+  if (!studentBranch) return null;
 
   const messenger = await findBranchWhatsappMessengerUser(studentBranch);
   return messenger?.id ? String(messenger.id).trim() : null;
@@ -211,22 +212,14 @@ async function validateStudentBranchWhatsappMessengerUserId(student, userId) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return null;
 
-  const studentBranch = await resolveBranchForStudent(student);
-  if (!studentBranch) {
-    return "Student branch is required to assign a branch WhatsApp account.";
-  }
-
   const users = await readUsers();
   const user = users.find((row) => String(row.id || "") === cleanUserId);
   if (!user || !isBranchWhatsappManagerRole(user.role)) {
     return "Selected WhatsApp account must belong to a Manager or Team Lead.";
   }
 
-  const userBranch = await resolveBranchForUser(user);
-  if (!userBranch || String(userBranch.id || "") !== String(studentBranch.id || "")) {
-    return "Selected WhatsApp account does not belong to this student's branch.";
-  }
-
+  // Any connected Manager/Team Lead WhatsApp account may be assigned to a
+  // student, regardless of which branch the account belongs to.
   return null;
 }
 
@@ -439,6 +432,7 @@ module.exports = {
   findBranchWhatsappMessengerUser,
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,
+  isBranchWhatsappAccountForStudentBranch,
   validateStudentBranchWhatsappMessengerUserId,
   resolveEffectiveWhatsappSenderId,
   resolveWhatsappIntegrationContext,
