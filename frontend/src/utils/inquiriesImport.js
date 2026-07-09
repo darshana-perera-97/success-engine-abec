@@ -88,10 +88,10 @@ function resolveEmail(rawEmail, conversationId, name) {
   return buildPlaceholderEmail(conversationId, name);
 }
 
-function resolvePhone(rawPhone, rawWhatsapp) {
-  const phone = isEmptyCell(rawPhone) ? "" : cellText(rawPhone);
+function resolvePhone(rawWhatsapp, rawPhone) {
   const whatsapp = isEmptyCell(rawWhatsapp) ? "" : cellText(rawWhatsapp);
-  return normalizePhone(phone, whatsapp);
+  const phone = isEmptyCell(rawPhone) ? "" : cellText(rawPhone);
+  return normalizePhone(whatsapp, phone);
 }
 
 export function isInquiriesExportHeaders(headers) {
@@ -112,8 +112,8 @@ export function mapInquiriesExportRow(rawRow) {
 
   const conversationId = cellText(row.conversation_id);
   const name = cellText(row.name);
-  const phone = resolvePhone(row.phone, row.whatsapp_number);
-  const whatsappNumber = isEmptyCell(row.whatsapp_number) ? phone : normalizePhone(row.whatsapp_number);
+  const phone = resolvePhone(row.whatsapp_number, row.phone);
+  const whatsappNumber = phone;
   const sourceLabel = cellText(row.source);
   const countryToVisit = formatCountry(row.preferred_study_destination) || "UAE";
   const currentEducationLevel = isEmptyCell(row.current_qualification)

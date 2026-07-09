@@ -12,7 +12,13 @@ const {
   countryIsInList,
 } = require("../models/branches");
 const { readCountries, writeCountries } = require("../models/countries");
-const { readReqStudents, appendReqStudent, appendReqStudentsBulk, removeReqStudentById } = require("../models/reqStudents");
+const {
+  readReqStudents,
+  appendReqStudent,
+  appendReqStudentsBulk,
+  removeReqStudentById,
+  updateReqStudentById,
+} = require("../models/reqStudents");
 const { readPaymentAccounts, writePaymentAccounts, normalizePaymentAccount } = require("../models/paymentAccounts");
 const { readUniversityPrograms, writeUniversityPrograms } = require("../models/universityPrograms");
 const { getWebFormById } = require("../models/webForms");
@@ -321,6 +327,137 @@ async function handle(req, res, url) {
       sendJson(res, 200, { ok: true, data: filtered, branchCountriesEnabled });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load requested students." });
+    }
+    return true;
+  }
+
+  if (req.method === "PUT" && url.pathname.startsWith("/api/req-students/")) {
+    try {
+      const requestId = decodeURIComponent(url.pathname.replace("/api/req-students/", "").trim()).replace(/\/+$/, "");
+      if (!requestId || requestId === "bulk") {
+        sendJson(res, 400, { ok: false, error: "Request id is required." });
+        return true;
+      }
+      const body = await parseBody(req);
+      const name = String(body.name || "").trim();
+      const email = normalizeEmail(body.email);
+      const phoneInput = String(body.phone || "").trim();
+      const whatsappInput = String(body.whatsappNumber || phoneInput || "").trim();
+      const phone = normalizeStudentPhone(phoneInput);
+      const whatsappNumber = normalizeWhatsappNumber(whatsappInput) || phone;
+      const countryToVisitRaw = String(body.countryToVisit || "").trim();
+      const city = String(body.city || "").trim();
+      const nearestOfficeRaw = String(body.nearestOffice || "").trim();
+      const livingStatus = String(body.livingStatus || "").trim();
+      const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim() || "No";
+      const currentEducationLevel = String(body.currentEducationLevel || "").trim();
+      const intendedProgram = String(body.intendedProgram || "").trim();
+      const message = String(body.message || "").trim();
+      const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
+      if (!intakeValidation.ok) {
+        sendJson(res, 400, intakeValidation);
+        return true;
+      }
+
+      if (!name || !phoneInput) {
+        sendJson(res, 400, { ok: false, error: "Name and phone are required." });
+        return true;
+      }
+      if (!phone) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Enter a valid phone number (e.g. +94771234567, 0771234567, 771234567, or +14155552671).",
+        });
+        return true;
+      }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(res, 400, { ok: false, error: "Please enter a valid email address." });
+        return true;
+      }
+
+      const allowedLivingStatuses = new Set(["Married", "Single", ""]);
+      if (livingStatus && !allowedLivingStatuses.has(livingStatus)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Please choose a valid living status (Married or Single).",
+        });
+        return true;
+      }
+      const allowedYesNo = new Set(["Yes", "No"]);
+      if (!allowedYesNo.has(visaRejectionAnyCountry)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "Please choose Yes or No for visa rejection history.",
+        });
+        return true;
+      }
+
+      let nearestOffice = nearestOfficeRaw || null;
+      const branchesList = await readBranches();
+      const branchLocations = branchesList
+        .map((b) => String(b?.location || "").trim())
+        .filter(Boolean);
+      if (nearestOffice && branchLocations.length) {
+        const matched =
+          branchLocations.find((loc) => loc.toLowerCase() === nearestOffice.toLowerCase()) ||
+          branchLocations.find((loc) => {
+            const key = nearestOffice.toLowerCase();
+            const normalizedLoc = loc.toLowerCase();
+            return normalizedLoc.includes(key) || key.includes(normalizedLoc);
+          });
+        if (matched) nearestOffice = matched;
+      }
+
+      let countryToVisit = countryToVisitRaw || null;
+      if (countryToVisitRaw) {
+        const systemData = await readSystemData();
+        const branchCountriesEnabled = systemData.branchCountriesEnabled === true;
+        const globalCountries = await readCountries();
+        const countriesList = nearestOfficeRaw
+          ? await resolveCountriesForBranchLocation(nearestOfficeRaw, globalCountries, branchCountriesEnabled)
+          : globalCountries;
+        const matchedCountry = countriesList.find(
+          (c) => String(c).trim().toLowerCase() === countryToVisitRaw.toLowerCase()
+        );
+        if (!matchedCountry) {
+          sendJson(res, 400, {
+            ok: false,
+            error: nearestOfficeRaw
+              ? "Please choose a valid country to visit for the selected office."
+              : "Please choose a valid country to visit from the list.",
+          });
+          return true;
+        }
+        countryToVisit = String(matchedCountry).trim();
+      }
+
+      const result = await updateReqStudentById(requestId, {
+        name,
+        email,
+        phone,
+        whatsappNumber,
+        countryToVisit,
+        city: city || null,
+        nearestOffice,
+        livingStatus: livingStatus || null,
+        visaRejectionAnyCountry,
+        currentEducationLevel: currentEducationLevel || null,
+        intendedProgram: intendedProgram || null,
+        intakeMonth: intakeValidation.intakeMonth,
+        intakeYear: intakeValidation.intakeYear,
+        message: message || null,
+      });
+      if (!result.ok) {
+        sendJson(res, 404, { ok: false, error: result.error || "Request not found." });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, data: result.data });
+    } catch (e) {
+      if (e && e.message === "Invalid JSON") {
+        sendJson(res, 400, { ok: false, error: "Invalid request body." });
+        return true;
+      }
+      sendJson(res, 500, { ok: false, error: "Failed to update request." });
     }
     return true;
   }

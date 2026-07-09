@@ -37,6 +37,28 @@ async function removeReqStudentById(requestId) {
   });
 }
 
+async function updateReqStudentById(requestId, patch) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  return withFileLock(REQ_STUDENTS_FILE, async () => {
+    const list = await readReqStudents();
+    const index = list.findIndex((entry) => String(entry.id || "") === id);
+    if (index < 0) {
+      return { ok: false, error: "Request not found." };
+    }
+    const current = list[index];
+    const updated = {
+      ...current,
+      ...patch,
+      id: current.id,
+      submittedAt: current.submittedAt,
+    };
+    list[index] = updated;
+    await atomicWriteFile(REQ_STUDENTS_FILE, JSON.stringify(list, null, 2));
+    return { ok: true, data: updated };
+  });
+}
+
 async function appendReqStudentsBulk(entries) {
   const incoming = Array.isArray(entries) ? entries : [];
   if (!incoming.length) {
@@ -115,4 +137,5 @@ module.exports = {
   appendReqStudent,
   appendReqStudentsBulk,
   removeReqStudentById,
+  updateReqStudentById,
 };

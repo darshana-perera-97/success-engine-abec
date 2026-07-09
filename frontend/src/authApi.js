@@ -456,6 +456,28 @@ export async function bulkImportReqStudents(entries) {
   }
 }
 
+/** Update one requested-student row in backend/data/req-students.json */
+export async function updateReqStudent(requestId, fields) {
+  const id = String(requestId || "").trim();
+  if (!id) {
+    return { ok: false, error: "Request id is required." };
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/req-students/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to update request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
 /** Remove one interest-form row from backend/data/req-students.json (e.g. after onboarding to pipeline). */
 export async function deleteReqStudent(requestId) {
   const id = String(requestId || "").trim();

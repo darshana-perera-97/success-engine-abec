@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Eye, FileUp, Info, RefreshCw, Trash2, UserPlus, X } from "lucide-react";
+import { ClipboardList, Eye, FileUp, Info, Pencil, RefreshCw, Trash2, UserPlus, X } from "lucide-react";
 import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getCountries, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import {
@@ -21,6 +21,7 @@ import { parseReqStudentsImportFile } from "../utils/reqStudentsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 import { formatIntakeLabel } from "../utils/intakeFields";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import { EditRequestedStudentModal } from "./EditRequestedStudentModal";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 function formatSubmittedAt(iso) {
@@ -64,6 +65,10 @@ function isManagerOrTeamLeadRole(role) {
 }
 
 function canImportMetaLeads(role) {
+  return role === "Admin" || role === "Manager";
+}
+
+function canEditRequestedStudent(role) {
   return role === "Admin" || role === "Manager";
 }
 
@@ -165,6 +170,7 @@ export function RequestedStudents({
   const [modalError, setModalError] = useState("");
   const [modalSaving, setModalSaving] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
+  const [editRow, setEditRow] = useState(null);
   const [pipelinePriority, setPipelinePriority] = useState("Medium");
   const counselorFetchSeq = useRef(0);
   const importInputRef = useRef(null);
@@ -472,6 +478,15 @@ export function RequestedStudents({
     setRows((prev) => prev.filter((entry) => String(entry.id || "") !== id));
   };
 
+  const handleEditSaved = (updated) => {
+    const id = String(updated?.id || "").trim();
+    if (!id) return;
+    setRows((prev) =>
+      prev.map((entry) => (String(entry.id || "") === id ? { ...entry, ...updated } : entry))
+    );
+    setDetailRow((prev) => (prev && String(prev.id || "") === id ? { ...prev, ...updated } : prev));
+  };
+
   const handleAddToPipeline = async (e) => {
     e.preventDefault();
     if (!pipelineRow || !onAddFromRequest) return;
@@ -671,6 +686,18 @@ export function RequestedStudents({
                           <Eye size={14} />
                           View more
                         </Button>
+                        {canEditRequestedStudent(userRole) ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="inline-flex items-center gap-1 text-slate-600"
+                            onClick={() => setEditRow(row)}
+                          >
+                            <Pencil size={14} />
+                            Edit
+                          </Button>
+                        ) : null}
                         {onAddFromRequest ? (
                           <Button
                             type="button"
@@ -754,6 +781,21 @@ export function RequestedStudents({
               <Button type="button" variant="secondary" onClick={() => setDetailRow(null)}>
                 Close
               </Button>
+              {canEditRequestedStudent(userRole) ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="inline-flex items-center gap-1.5"
+                  onClick={() => {
+                    const r = detailRow;
+                    setDetailRow(null);
+                    setEditRow(r);
+                  }}
+                >
+                  <Pencil size={14} />
+                  Edit
+                </Button>
+              ) : null}
               {onAddFromRequest ? (
                 <Button
                   type="button"
@@ -771,6 +813,15 @@ export function RequestedStudents({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {editRow ? (
+        <EditRequestedStudentModal
+          row={editRow}
+          branchCountriesEnabled={branchCountriesEnabled}
+          onClose={() => setEditRow(null)}
+          onSaved={handleEditSaved}
+        />
       ) : null}
 
       {importPreviewOpen ? (
