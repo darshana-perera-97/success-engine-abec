@@ -419,6 +419,7 @@ export function RequestedStudents({
       name: row.name,
       email: row.email,
       phone: row.phone,
+      whatsappNumber: row.whatsappNumber || row.phone || null,
       countryToVisit: row.countryToVisit,
       city: row.city,
       nearestOffice: row.nearestOffice,

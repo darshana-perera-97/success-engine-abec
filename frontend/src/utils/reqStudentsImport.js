@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { normalizeHeader } from "./importShared";
 import { mapMetaLeadRow } from "./metaLeadsImport";
 import { isNexGenTeamProgressHeaders, mapNexGenTeamProgressRows } from "./nexgenTeamProgressImport";
+import { isInquiriesExportHeaders, mapInquiriesExportRows } from "./inquiriesImport";
 
 const SUPPORTED_EXTENSIONS = [".xls", ".xlsx", ".csv"];
 
@@ -73,10 +74,24 @@ export async function parseReqStudentsImportFile(file, { branchLocations = [] } 
       };
     }
 
+    if (isInquiriesExportHeaders(normalizedHeaders)) {
+      const rows = mapInquiriesExportRows(rawRows);
+      if (!rows.length) {
+        return { ok: false, error: "No valid inquiries with a name or phone number were found." };
+      }
+      return {
+        ok: true,
+        data: rows,
+        fileName: file.name,
+        format: "inquiries-export",
+        formatLabel: "Inquiries export"
+      };
+    }
+
     return {
       ok: false,
       error:
-        "This file format is not recognized. Upload a Meta leads export or NexGen Team Progress sheet."
+        "This file format is not recognized. Upload a Meta leads export, NexGen Team Progress sheet, or inquiries CSV export."
     };
   } catch {
     return { ok: false, error: "Could not read the spreadsheet. Check the file format and try again." };

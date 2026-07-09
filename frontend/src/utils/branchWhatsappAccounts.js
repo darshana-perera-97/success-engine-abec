@@ -79,3 +79,23 @@ export function pickDefaultBranchWhatsappAccountId(accounts, currentValue = "") 
   const primary = connected.find((row) => row.isPrimary) || connected[0] || accounts[0];
   return String(primary?.userId || "").trim();
 }
+
+export function resolveStudentBranchWhatsappAccount(accounts, student) {
+  const rows = Array.isArray(accounts) ? accounts : [];
+  const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
+  if (assignedId) {
+    const match = rows.find((row) => String(row?.userId || "") === assignedId);
+    if (match) return match;
+  }
+  const connected = rows.filter((row) => row.connected);
+  return connected.find((row) => row.isPrimary) || connected[0] || rows[0] || null;
+}
+
+export function formatWhatsappContactCardTitle(account) {
+  const whatsappName = String(account?.whatsappName || "").trim();
+  if (whatsappName) return whatsappName;
+  const staffName = String(account?.name || "").trim();
+  if (staffName) return staffName;
+  if (account?.connected) return "Connected account";
+  return "No WhatsApp account";
+}

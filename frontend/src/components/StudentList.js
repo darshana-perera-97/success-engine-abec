@@ -431,7 +431,7 @@ const StudentList = ({
             "input",
             {
               type: "text",
-              placeholder: "Search...",
+              placeholder: "Search name, ID, email…",
               value: filterText,
               onChange: (e) => setFilterText(e.target.value),
               className: "pl-3 pr-8 py-2 text-sm border border-gray-200 rounded-md focus:ring-2 focus:ring-slate-100 focus:border-slate-300 w-64 transition-all"

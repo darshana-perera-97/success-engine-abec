@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Eye, FileText, RefreshCw } from "lucide-react";
-import { getCountryChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getIntakeChangeRequests, getRefundRequests } from "../authApi";
+import { getCountryChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getIntakeChangeRequests, getBranchChangeRequests, getBranchWhatsappMessengerChangeRequests, getRefundRequests } from "../authApi";
 import { Button } from "./Button";
 import {
   DataTable,
@@ -42,16 +42,18 @@ export function MyRequests({
     }
     setLoading(true);
     setError("");
-    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult] = await Promise.all([
+    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult] = await Promise.all([
       getCountryChangeRequests({ requestedBy: requesterId }),
       getStudentDetailChangeRequests({ requestedBy: requesterId }),
       getInvoiceWaveOffRequests({ requestedBy: requesterId }),
       getStudentRemovalRequests({ requestedBy: requesterId }),
       getIntakeChangeRequests({ requestedBy: requesterId }),
       getRefundRequests({ requestedBy: requesterId }),
+      getBranchChangeRequests({ requestedBy: requesterId }),
+      getBranchWhatsappMessengerChangeRequests({ requestedBy: requesterId }),
     ]);
-    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok) {
-      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || "Failed to load requests.");
+    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok) {
+      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || "Failed to load requests.");
       setRows([]);
     } else {
       setRows(
@@ -61,7 +63,9 @@ export function MyRequests({
           waveOffResult.ok ? waveOffResult.data : [],
           removalResult.ok ? removalResult.data : [],
           intakeResult.ok ? intakeResult.data : [],
-          refundResult.ok ? refundResult.data : []
+          refundResult.ok ? refundResult.data : [],
+          branchResult.ok ? branchResult.data : [],
+          whatsappContactResult.ok ? whatsappContactResult.data : []
         )
       );
     }
@@ -82,7 +86,7 @@ export function MyRequests({
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">My Requests</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Country, intake, student detail, removal, refund, and invoice wave-off requests you have submitted.
+              Country, intake, branch, WhatsApp contact, student detail, removal, refund, and invoice wave-off requests you have submitted.
             </p>
           </div>
         </div>

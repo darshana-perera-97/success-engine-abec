@@ -6,12 +6,16 @@ import {
   decideInvoiceWaveOff,
   decideStudentRemovalRequest,
   decideIntakeChangeRequest,
+  decideBranchChangeRequest,
+  decideBranchWhatsappMessengerChangeRequest,
   decideRefundRequest,
   getCountryChangeRequests,
   getStudentDetailChangeRequests,
   getInvoiceWaveOffRequests,
   getStudentRemovalRequests,
   getIntakeChangeRequests,
+  getBranchChangeRequests,
+  getBranchWhatsappMessengerChangeRequests,
   getRefundRequests,
 } from "../authApi";
 import { Button } from "./Button";
@@ -36,14 +40,31 @@ import {
   requestStatusBadgeClass,
   requestStatusLabel,
 } from "../utils/studentDetailChangeRequests";
+import { isStudentContactStaffAccountRole } from "../roles";
+import { branchesMatch } from "../pipeline";
 
 function canReviewTeamRequests(role) {
   return role === "Admin" || role === "Manager" || role === "Team Lead";
 }
 
+function buildBranchCounselorOptions(employees, branch) {
+  const target = String(branch || "").trim();
+  if (!target) return [];
+  return (Array.isArray(employees) ? employees : [])
+    .filter((employee) => isStudentContactStaffAccountRole(employee?.role || employee?.position))
+    .filter((employee) => branchesMatch(employee?.branch || employee?.office, target))
+    .map((employee) => ({
+      id: String(employee.id || "").trim(),
+      name: String(employee.name || employee.username || employee.email || employee.id || "").trim(),
+      role: String(employee.role || employee.position || "").trim(),
+    }))
+    .filter((option) => option.id);
+}
+
 export function TeamRequests({
   userRole = "Admin",
   currentUser = null,
+  employees = [],
   onSelectStudent,
   onUpdateStudent,
   onUpdateInvoice,
@@ -66,16 +87,18 @@ export function TeamRequests({
     setLoading(true);
     setError("");
     const params = filter === "pending" ? { pendingOnly: true } : {};
-    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult] = await Promise.all([
+    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult] = await Promise.all([
       getCountryChangeRequests(params),
       getStudentDetailChangeRequests(params),
       getInvoiceWaveOffRequests(params),
       getStudentRemovalRequests(params),
       getIntakeChangeRequests(params),
       getRefundRequests(params),
+      getBranchChangeRequests(params),
+      getBranchWhatsappMessengerChangeRequests(params),
     ]);
-    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok) {
-      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || "Failed to load team requests.");
+    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok) {
+      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || "Failed to load team requests.");
       setRows([]);
     } else {
       setRows(
@@ -85,7 +108,9 @@ export function TeamRequests({
           waveOffResult.ok ? waveOffResult.data : [],
           removalResult.ok ? removalResult.data : [],
           intakeResult.ok ? intakeResult.data : [],
-          refundResult.ok ? refundResult.data : []
+          refundResult.ok ? refundResult.data : [],
+          branchResult.ok ? branchResult.data : [],
+          whatsappContactResult.ok ? whatsappContactResult.data : []
         )
       );
     }
@@ -96,7 +121,7 @@ export function TeamRequests({
     loadRows();
   }, [loadRows]);
 
-  const handleDecide = async (row, decision, reviewNote = "") => {
+  const handleDecide = async (row, decision, reviewNote = "", extra = {}) => {
     if (!canReview || !row?.id) return;
     const busyKey = `${row.requestType}-${row.id}`;
     setBusyId(busyKey);
@@ -106,6 +131,12 @@ export function TeamRequests({
       reviewedByName: reviewerName,
       reviewedByRole: userRole,
       reviewNote,
+      ...(row.requestType === "branch-change" && decision === "approved"
+        ? {
+            approvedCounselorId: extra.approvedCounselorId || "",
+            approvedCounselorName: extra.approvedCounselorName || "",
+          }
+        : {}),
     };
     const result =
       row.requestType === "student-details"
@@ -114,10 +145,14 @@ export function TeamRequests({
           ? await decideStudentRemovalRequest(row.id, reviewerPayload)
         : row.requestType === "intake-change"
           ? await decideIntakeChangeRequest(row.id, reviewerPayload)
+        : row.requestType === "branch-change"
+          ? await decideBranchChangeRequest(row.id, reviewerPayload)
         : row.requestType === "invoice-wave-off"
           ? await decideInvoiceWaveOff(row.invoiceId || row.id, reviewerPayload)
         : row.requestType === "refund"
           ? await decideRefundRequest(row.id, reviewerPayload)
+        : row.requestType === "whatsapp-contact-change"
+          ? await decideBranchWhatsappMessengerChangeRequest(row.id, reviewerPayload)
           : await decideCountryChangeRequest(row.id, reviewerPayload);
     setBusyId("");
     if (!result.ok) {
@@ -142,10 +177,14 @@ export function TeamRequests({
           ? "student removal"
         : row.requestType === "intake-change"
           ? "intake change"
+        : row.requestType === "branch-change"
+          ? "branch change"
         : row.requestType === "invoice-wave-off"
           ? "invoice wave-off"
         : row.requestType === "refund"
           ? "refund"
+        : row.requestType === "whatsapp-contact-change"
+          ? "WhatsApp contact change"
           : "country change";
     onAddActivity?.({
       user: userRole,
@@ -193,7 +232,7 @@ export function TeamRequests({
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Team Requests</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Review and approve country, intake, student detail, removal, refund, and invoice wave-off requests from your team.
+              Review and approve country, branch, WhatsApp contact, intake, student detail, removal, refund, and invoice wave-off requests from your team.
             </p>
           </div>
         </div>
@@ -292,7 +331,13 @@ export function TeamRequests({
           onSelectStudent={onSelectStudent}
           canReview={detailRow.status === "pending"}
           isBusy={busyId === `${detailRow.requestType}-${detailRow.id}`}
-          onApprove={() => handleDecide(detailRow, "approved")}
+          requireCounselorSelection={detailRow.requestType === "branch-change"}
+          counselorOptions={
+            detailRow.requestType === "branch-change"
+              ? buildBranchCounselorOptions(employees, detailRow.requestedBranch)
+              : []
+          }
+          onApprove={(extra) => handleDecide(detailRow, "approved", "", extra || {})}
           onReject={(note) => handleDecide(detailRow, "rejected", note)}
         />
       ) : null}

@@ -38,6 +38,8 @@ export function formatRequestTypeLabel(row) {
   if (row?.requestType === "student-removal") return "Student removal";
   if (row?.requestType === "invoice-wave-off") return "Invoice wave-off";
   if (row?.requestType === "intake-change") return "Intake change";
+  if (row?.requestType === "branch-change") return "Branch change";
+  if (row?.requestType === "whatsapp-contact-change") return "WhatsApp contact";
   if (row?.requestType === "refund") return "Refund";
   return "Country change";
 }
@@ -48,7 +50,9 @@ export function mergeRequestRows(
   waveOffRows = [],
   removalRows = [],
   intakeRows = [],
-  refundRows = []
+  refundRows = [],
+  branchRows = [],
+  whatsappContactRows = []
 ) {
   const taggedCountry = (countryRows || []).map((row) => ({
     ...row,
@@ -74,6 +78,14 @@ export function mergeRequestRows(
     ...row,
     requestType: "refund",
   }));
+  const taggedBranch = (branchRows || []).map((row) => ({
+    ...row,
+    requestType: "branch-change",
+  }));
+  const taggedWhatsappContact = (whatsappContactRows || []).map((row) => ({
+    ...row,
+    requestType: "whatsapp-contact-change",
+  }));
   return [
     ...taggedCountry,
     ...taggedDetail,
@@ -81,6 +93,8 @@ export function mergeRequestRows(
     ...taggedRemoval,
     ...taggedIntake,
     ...taggedRefund,
+    ...taggedBranch,
+    ...taggedWhatsappContact,
   ].sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
 }
 
@@ -174,6 +188,10 @@ export function buildRequestDetailRows(row, { showRequestedBy = false } = {}) {
     });
   }
 
+  if (row.requestType === "branch-change" && row.status === "approved" && row.approvedCounselorName) {
+    rows.push({ label: "New counselor", value: row.approvedCounselorName });
+  }
+
   if (row.refundNote) {
     rows.push({
       label: "Refund note",
@@ -209,6 +227,14 @@ export function formatRequestChangeSummary(row) {
   if (row?.requestType === "intake-change") {
     const current = formatIntakeLabel(row.currentIntakeMonth, row.currentIntakeYear) || "—";
     const requested = formatIntakeLabel(row.requestedIntakeMonth, row.requestedIntakeYear) || "—";
+    return `${current} → ${requested}`;
+  }
+  if (row?.requestType === "branch-change") {
+    return `${row.currentBranch || "—"} → ${row.requestedBranch || "—"}`;
+  }
+  if (row?.requestType === "whatsapp-contact-change") {
+    const current = row.currentWhatsappName || row.currentMessengerName || "—";
+    const requested = row.requestedWhatsappName || row.requestedMessengerName || "—";
     return `${current} → ${requested}`;
   }
   if (row?.requestType === "refund") {

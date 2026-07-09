@@ -18,20 +18,42 @@ export function RequestDetailModal({
   onApprove,
   onReject,
   isBusy = false,
+  counselorOptions = [],
+  requireCounselorSelection = false,
 }) {
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectNote, setRejectNote] = useState("");
+  const [selectedCounselorId, setSelectedCounselorId] = useState("");
 
   if (!row) return null;
 
   const isPending = row.status === "pending";
   const detailRows = buildRequestDetailRows(row, { showRequestedBy });
   const showReviewActions = canReview && isPending && (onApprove || onReject);
+  const needsCounselor = requireCounselorSelection && showReviewActions;
+  const noCounselorsAvailable = needsCounselor && counselorOptions.length === 0;
+  const approveDisabled = isBusy || (needsCounselor && !selectedCounselorId);
 
   const handleClose = () => {
     setRejectMode(false);
     setRejectNote("");
+    setSelectedCounselorId("");
     onClose?.();
+  };
+
+  const handleApproveConfirm = () => {
+    if (needsCounselor) {
+      if (!selectedCounselorId) return;
+      const picked = counselorOptions.find(
+        (c) => String(c.id || "") === String(selectedCounselorId)
+      );
+      onApprove?.({
+        approvedCounselorId: selectedCounselorId,
+        approvedCounselorName: picked?.name || "",
+      });
+      return;
+    }
+    onApprove?.();
   };
 
   const handleRejectConfirm = () => {
@@ -120,6 +142,35 @@ export function RequestDetailModal({
             })}
           </dl>
 
+          {needsCounselor && !rejectMode ? (
+            <div className="mt-4 space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-700">
+                  Assign counselor in {row.requestedBranch || "the new branch"}
+                </span>
+                <select
+                  value={selectedCounselorId}
+                  onChange={(e) => setSelectedCounselorId(e.target.value)}
+                  disabled={isBusy || noCounselorsAvailable}
+                  className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                  <option value="">
+                    {noCounselorsAvailable ? "No counselors available in this branch" : "Select a counselor…"}
+                  </option>
+                  {counselorOptions.map((counselor) => (
+                    <option key={counselor.id} value={counselor.id}>
+                      {counselor.name}
+                      {counselor.role ? ` · ${counselor.role}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-[11px] text-slate-500">
+                Approving moves the student to this branch and hands them over to the selected counselor.
+              </p>
+            </div>
+          ) : null}
+
           {rejectMode ? (
             <div className="mt-4 space-y-2 rounded-lg border border-rose-100 bg-rose-50/50 p-3">
               <p className="text-sm text-slate-700">
@@ -167,8 +218,8 @@ export function RequestDetailModal({
                     size="sm"
                     variant="outline"
                     className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                    disabled={isBusy}
-                    onClick={() => onApprove?.()}
+                    disabled={approveDisabled}
+                    onClick={handleApproveConfirm}
                   >
                     <Check size={14} className="mr-1" />
                     Approve

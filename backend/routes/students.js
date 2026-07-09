@@ -221,7 +221,8 @@ async function handle(req, res, url) {
           const name = String(s.name || "").toLowerCase();
           const id = String(s.id || "").toLowerCase();
           const ctry = String(s.country || "").toLowerCase();
-          return name.includes(q) || id.includes(q) || ctry.includes(q);
+          const email = String(s.email || "").toLowerCase();
+          return name.includes(q) || id.includes(q) || ctry.includes(q) || email.includes(q);
         });
       }
 

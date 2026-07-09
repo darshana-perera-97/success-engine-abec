@@ -1939,6 +1939,125 @@ export async function decideIntakeChangeRequest(requestId, payload) {
   }
 }
 
+export async function getBranchChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/branch-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load branch change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createBranchChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/branch-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit branch change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideBranchChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/branch-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review branch change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getBranchWhatsappMessengerChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/branch-whatsapp-messenger-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load WhatsApp contact change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createBranchWhatsappMessengerChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/branch-whatsapp-messenger-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit WhatsApp contact change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideBranchWhatsappMessengerChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/branch-whatsapp-messenger-change-requests/${encodeURIComponent(id)}/decide`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review WhatsApp contact change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
 export async function getStudentDetailChangeRequests(params = {}) {
   try {
     const search = new URLSearchParams();

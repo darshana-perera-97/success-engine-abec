@@ -73,12 +73,18 @@ import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
-import { getInvoicesByStudentId, getUniversityPrograms, getCountries, createCountryChangeRequest, getCountryChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, sendStudentLoginDetails } from "../authApi";
+import { getInvoicesByStudentId, getUniversityPrograms, getCountries, getBranches, createCountryChangeRequest, getCountryChangeRequests, createBranchChangeRequest, getBranchChangeRequests, createBranchWhatsappMessengerChangeRequest, getBranchWhatsappMessengerChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, sendStudentLoginDetails } from "../authApi";
 import { IntakeFields } from "./IntakeFields";
 import { formatStudentIntake, intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { EditStudentDetailsRequestModal } from "./EditStudentDetailsRequestModal";
 import { RemoveStudentRequestModal } from "./RemoveStudentRequestModal";
+import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import {
+  formatWhatsappContactCardTitle,
+  loadBranchWhatsappAccounts,
+  resolveStudentBranchWhatsappAccount,
+} from "../utils/branchWhatsappAccounts";
 import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch, buildCounselorTransferHistory, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import {
   canActAsPrimaryCounselorPortalRole,
@@ -238,6 +244,9 @@ const KeyDetails = ({
   onEditContact,
   canSetBudget = false,
   onSetBudget,
+  canRequestBranchChange = false,
+  onRequestBranchChange,
+  branchChangePending = false,
   canRequestCountryChange = false,
   onRequestCountryChange,
   countryChangePending = false,
@@ -246,11 +255,17 @@ const KeyDetails = ({
   intakeChangePending = false,
   canManageCourses = false,
   onAddCourses,
-  onRemoveCourse
+  onRemoveCourse,
+  showWhatsappContact = false,
+  whatsappContactAccount = null,
+  whatsappContactLoading = false,
+  canRequestWhatsappContactChange = false,
+  onRequestWhatsappContactChange,
+  whatsappContactChangePending = false
 }) => {
   const budgetUnset = !hasStudentAnnualBudget(student);
   const details = [
-    { icon: MapPin, label: "Branch", value: student.branch || "—" },
+    { icon: MapPin, label: "Branch", value: student.branch || "—", isBranch: true },
     {
       icon: Globe,
       label: "Country",
@@ -282,6 +297,7 @@ const KeyDetails = ({
     ] }),
     /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => {
       const isAnnualBudget = item.label === "Annual budget";
+      const isBranch = item.isBranch === true;
       const isCountry = item.isCountry === true;
       const isIntake = item.isIntake === true;
       return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
@@ -293,6 +309,13 @@ const KeyDetails = ({
             canSetBudget && budgetUnset && onSetBudget && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onSetBudget, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Set Annual budget"
+            ] })
+          ] }) : isBranch ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+            branchChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
+            canRequestBranchChange && onRequestBranchChange && !branchChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestBranchChange, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              "Change branch"
             ] })
           ] }) : isCountry ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
             /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
@@ -312,6 +335,33 @@ const KeyDetails = ({
         ] })
       ] }, item.label);
     }) }),
+    showWhatsappContact ? /* @__PURE__ */ jsxs("div", { className: "pt-4 mt-1 border-t border-gray-100", children: [
+      /* @__PURE__ */ jsxs("div", { className: "mb-2 flex items-center justify-between gap-2", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Primary WhatsApp contact" }),
+        whatsappContactChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+      ] }),
+      whatsappContactLoading ? /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500", children: [
+        /* @__PURE__ */ jsx(Loader2, { size: 14, className: "animate-spin shrink-0" }),
+        "Loading WhatsApp account…"
+      ] }) : /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white p-3 shadow-sm", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
+          /* @__PURE__ */ jsx("div", { className: "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700", children: /* @__PURE__ */ jsx(MessageSquare, { size: 15, strokeWidth: 1.75 }) }),
+          /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", children: formatWhatsappContactCardTitle(whatsappContactAccount) }),
+            whatsappContactAccount?.name ? /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-600 mt-0.5 truncate", children: [
+              "Staff: ",
+              whatsappContactAccount.name
+            ] }) : null,
+            whatsappContactAccount?.whatsappNumber ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-0.5 truncate", children: whatsappContactAccount.whatsappNumber }) : null,
+            !whatsappContactAccount?.connected ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-amber-700 mt-1", children: "Account is not connected right now." }) : null
+          ] })
+        ] }),
+        canRequestWhatsappContactChange && onRequestWhatsappContactChange && !whatsappContactChangePending ? /* @__PURE__ */ jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] w-full", onClick: onRequestWhatsappContactChange, children: [
+          /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+          "Change WhatsApp account"
+        ] }) }) : null
+      ] })
+    ] }) : null,
     /* @__PURE__ */ jsxs("div", { className: "pt-4 mt-1 border-t border-gray-100", children: [
       /* @__PURE__ */ jsxs("div", { className: "mb-3 flex items-center justify-between gap-2", children: [
         /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Courses" }),
@@ -961,7 +1011,8 @@ const StudentProfile = ({
   onStudentMovedToRequests,
   onSelectStudent,
   onCompleteStudentIntakeTask,
-  counselorIdentitySet = null
+  counselorIdentitySet = null,
+  branchWhatsappEnabled = false
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
@@ -991,6 +1042,25 @@ const StudentProfile = ({
   });
   const [countryOptions, setCountryOptions] = useState([]);
   const [countryChangePending, setCountryChangePending] = useState(false);
+  const [branchDialog, setBranchDialog] = useState({
+    open: false,
+    branch: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [branchOptions, setBranchOptions] = useState([]);
+  const [branchChangePending, setBranchChangePending] = useState(false);
+  const [whatsappContactAccount, setWhatsappContactAccount] = useState(null);
+  const [whatsappContactLoading, setWhatsappContactLoading] = useState(false);
+  const [whatsappContactChangePending, setWhatsappContactChangePending] = useState(false);
+  const [whatsappContactDialog, setWhatsappContactDialog] = useState({
+    open: false,
+    messengerUserId: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
   const [intakeDialog, setIntakeDialog] = useState({
     open: false,
     intakeMonth: "",
@@ -1390,6 +1460,9 @@ const StudentProfile = ({
   const canManagerEditContact = userRole === "Manager";
   const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
   const canRequestCountryChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestBranchChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestWhatsappContactChange =
+    branchWhatsappEnabled === true && userRole !== "Student" && userRole !== "Accountant";
   const canRequestIntakeChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestStudentDetailChange = userRole !== "Student" && userRole !== "Accountant";
   const profileIntakeOptions = useIntakeOptionsForCountry(localStudent?.country);
@@ -1489,6 +1562,41 @@ const StudentProfile = ({
     const result = await getCountryChangeRequests({ studentId, pendingOnly: true });
     setCountryChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
   }, [localStudent?.id]);
+  const refreshBranchChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setBranchChangePending(false);
+      return;
+    }
+    const result = await getBranchChangeRequests({ studentId, pendingOnly: true });
+    setBranchChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
+  const refreshWhatsappContactChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId || !branchWhatsappEnabled) {
+      setWhatsappContactChangePending(false);
+      return;
+    }
+    const result = await getBranchWhatsappMessengerChangeRequests({ studentId, pendingOnly: true });
+    setWhatsappContactChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [branchWhatsappEnabled, localStudent?.id]);
+  const refreshWhatsappContactAccount = useCallback(async () => {
+    if (!branchWhatsappEnabled) {
+      setWhatsappContactAccount(null);
+      setWhatsappContactLoading(false);
+      return;
+    }
+    const branchLabel = String(localStudent?.branch || "").trim();
+    if (!branchLabel) {
+      setWhatsappContactAccount(null);
+      setWhatsappContactLoading(false);
+      return;
+    }
+    setWhatsappContactLoading(true);
+    const accounts = await loadBranchWhatsappAccounts(branchLabel);
+    setWhatsappContactAccount(resolveStudentBranchWhatsappAccount(accounts, localStudent));
+    setWhatsappContactLoading(false);
+  }, [branchWhatsappEnabled, localStudent]);
   const refreshDetailChangePending = useCallback(async () => {
     const studentId = String(localStudent?.id || "").trim();
     if (!studentId) {
@@ -1518,10 +1626,15 @@ const StudentProfile = ({
   }, [localStudent?.id]);
   useEffect(() => {
     refreshCountryChangePending();
+    refreshBranchChangePending();
+    refreshWhatsappContactChangePending();
     refreshIntakeChangePending();
     refreshDetailChangePending();
     refreshRemovalPending();
-  }, [refreshCountryChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending]);
+  }, [refreshCountryChangePending, refreshBranchChangePending, refreshWhatsappContactChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending]);
+  useEffect(() => {
+    refreshWhatsappContactAccount();
+  }, [refreshWhatsappContactAccount]);
   const openCountryDialog = async () => {
     if (!canRequestCountryChange || countryChangePending) return;
     const branch = String(localStudent.branch || currentUser?.branch || "").trim();
@@ -1591,6 +1704,161 @@ const StudentProfile = ({
     );
     setCountryChangePending(true);
     closeCountryDialog();
+  };
+  const openBranchDialog = async () => {
+    if (!canRequestBranchChange || branchChangePending) return;
+    const branchesRes = await getBranches();
+    const options = branchesRes.ok && Array.isArray(branchesRes.data)
+      ? Array.from(new Set(branchesRes.data.map((b) => String(b?.location || "").trim()).filter(Boolean)))
+      : [];
+    const currentBranch = String(localStudent.branch || "").trim().toLowerCase();
+    const filtered = options.filter((b) => String(b || "").trim().toLowerCase() !== currentBranch);
+    setBranchOptions(filtered);
+    setBranchDialog({
+      open: true,
+      branch: filtered[0] || "",
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeBranchDialog = () => {
+    setBranchDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitBranchChange = async () => {
+    if (!canRequestBranchChange || branchChangePending) return;
+    const requestedBranch = String(branchDialog.branch || "").trim();
+    const reason = String(branchDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!requestedBranch) {
+      setBranchDialog((prev) => ({ ...prev, error: "Select a branch." }));
+      return;
+    }
+    if (!reason) {
+      setBranchDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setBranchDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setBranchDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createBranchChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedBranch,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setBranchDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested branch change",
+      target: `${localStudent.name} (${localStudent.branch || "—"} → ${requestedBranch})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      `Branch change to ${requestedBranch} is pending approval.`,
+      "success"
+    );
+    setBranchChangePending(true);
+    closeBranchDialog();
+  };
+  const openWhatsappContactDialog = async () => {
+    if (!canRequestWhatsappContactChange || whatsappContactChangePending) return;
+    const branchLabel = String(localStudent.branch || "").trim();
+    const accounts = await loadBranchWhatsappAccounts(branchLabel);
+    const currentId = String(localStudent.branchWhatsappMessengerUserId || whatsappContactAccount?.userId || "").trim();
+    const alternatives = accounts.filter((row) => {
+      const userId = String(row?.userId || "").trim();
+      return userId && userId !== currentId && row.connected;
+    });
+    if (!alternatives.length) {
+      onNotify?.(
+        "No alternative accounts",
+        "There are no other connected WhatsApp accounts available for this branch.",
+        "warning"
+      );
+      return;
+    }
+    setWhatsappContactDialog({
+      open: true,
+      messengerUserId: String(alternatives[0]?.userId || "").trim(),
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeWhatsappContactDialog = () => {
+    setWhatsappContactDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitWhatsappContactChange = async () => {
+    if (!canRequestWhatsappContactChange || whatsappContactChangePending) return;
+    const requestedMessengerUserId = String(whatsappContactDialog.messengerUserId || "").trim();
+    const reason = String(whatsappContactDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!requestedMessengerUserId) {
+      setWhatsappContactDialog((prev) => ({ ...prev, error: "Select a WhatsApp account." }));
+      return;
+    }
+    if (!reason) {
+      setWhatsappContactDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setWhatsappContactDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setWhatsappContactDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createBranchWhatsappMessengerChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedMessengerUserId,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setWhatsappContactDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    const currentLabel = formatWhatsappContactCardTitle(whatsappContactAccount);
+    const requestedLabel =
+      result.data?.requestedWhatsappName ||
+      result.data?.requestedMessengerName ||
+      requestedMessengerUserId;
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested WhatsApp contact change",
+      target: `${localStudent.name} (${currentLabel} → ${requestedLabel})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      "WhatsApp contact change is pending approval.",
+      "success"
+    );
+    setWhatsappContactChangePending(true);
+    closeWhatsappContactDialog();
   };
   const openIntakeDialog = () => {
     if (!canRequestIntakeChange || intakeChangePending) return;
@@ -2689,7 +2957,7 @@ const StudentProfile = ({
               currentUser,
               counselorIdentitySet
             }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
               student: localStudent,
@@ -2819,6 +3087,67 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeBudgetDialog, children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveAnnualBudget, disabled: !String(budgetDialog.budget || "").trim() || !(Number(String(budgetDialog.budget || "").replace(/[^\d.]/g, "")) > 0), children: "Save budget" })
+          ] })
+        ] }) }),
+        branchDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeBranchDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request branch change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeBranchDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current branch: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: localStudent.branch || "—" })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "New branch" }),
+              /* @__PURE__ */ jsxs("select", { value: branchDialog.branch, onChange: (e) => setBranchDialog((prev) => ({ ...prev, branch: e.target.value, error: "" })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", disabled: branchOptions.length === 0, children: [
+                branchOptions.length === 0 ? /* @__PURE__ */ jsx("option", { value: "", children: "No branches configured" }) : null,
+                branchOptions.map((branch) => /* @__PURE__ */ jsx("option", { value: branch, children: branch }, branch))
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: branchDialog.reason, onChange: (e) => setBranchDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's branch should change…" })
+            ] }),
+            branchDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: branchDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The branch updates after a Manager, Team Lead, or Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeBranchDialog, disabled: branchDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitBranchChange, disabled: branchDialog.saving || !String(branchDialog.branch || "").trim() || !String(branchDialog.reason || "").trim(), children: branchDialog.saving ? "Submitting…" : "Submit request" })
+          ] })
+        ] }) }),
+        whatsappContactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeWhatsappContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request WhatsApp contact change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeWhatsappContactDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current account: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatWhatsappContactCardTitle(whatsappContactAccount) })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "New WhatsApp account" }),
+              /* @__PURE__ */ jsx(BranchWhatsappAccountSelect, {
+                branchLabel: localStudent.branch,
+                value: whatsappContactDialog.messengerUserId,
+                onChange: (value) => setWhatsappContactDialog((prev) => ({ ...prev, messengerUserId: value, error: "" })),
+                disabled: whatsappContactDialog.saving,
+                required: true
+              })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: whatsappContactDialog.reason, onChange: (e) => setWhatsappContactDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's WhatsApp contact account should change…" })
+            ] }),
+            whatsappContactDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: whatsappContactDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The WhatsApp contact updates after a Manager, Team Lead, or Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeWhatsappContactDialog, disabled: whatsappContactDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitWhatsappContactChange, disabled: whatsappContactDialog.saving || !String(whatsappContactDialog.messengerUserId || "").trim() || !String(whatsappContactDialog.reason || "").trim(), children: whatsappContactDialog.saving ? "Submitting…" : "Submit request" })
           ] })
         ] }) }),
         countryDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCountryDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
