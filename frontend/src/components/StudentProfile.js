@@ -38,6 +38,7 @@ import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowM
 import { BUDGET_CURRENCIES } from "./InquiryIntakeForm";
 import { FinancialCalculator } from "./FinancialCalculator";
 import { FinanceModule } from "./FinanceModule";
+import { StudentApplications } from "./StudentApplications";
 import { VisaPilot } from "./VisaPilot";
 
 import { StudentProfileCounselorsRoster } from "./StudentProfileCounselorsRoster";
@@ -1211,7 +1212,7 @@ const StudentProfile = ({
   useEffect(() => {
     setOpenInvoiceCreatePending(false);
     const raw = String(searchParams.get("tab") || "").trim().toLowerCase();
-    const allowed = new Set(["pipeline", "resume", "show-money", "ledger"]);
+    const allowed = new Set(["pipeline", "resume", "show-money", "ledger", "applications"]);
     if (raw === "visa-pilot" && visaPilotUnlocked) {
       setActiveTab("visa-pilot");
       return;
@@ -1224,7 +1225,7 @@ const StudentProfile = ({
   }, [student?.id]);
   useEffect(() => {
     const raw = String(searchParams.get("tab") || "").trim().toLowerCase();
-    const allowed = new Set(["pipeline", "resume", "show-money", "ledger"]);
+    const allowed = new Set(["pipeline", "resume", "show-money", "ledger", "applications"]);
     if (raw === "visa-pilot" && visaPilotUnlocked) {
       setActiveTab("visa-pilot");
       return;
@@ -2661,6 +2662,12 @@ const StudentProfile = ({
           openCreateInvoice: openInvoiceCreatePending,
           onOpenCreateInvoiceConsumed: handleOpenCreateInvoiceConsumed
         });
+      case "applications":
+        return /* @__PURE__ */ jsx(StudentApplications, {
+          student: localStudent,
+          userRole,
+          onUpdateStudent: handleUpdateStudentLocal
+        });
       case "resume":
         return /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-slate-100 bg-slate-50/50 -mx-1 px-1 py-3 sm:mx-0 sm:px-0", children: /* @__PURE__ */ jsx(AIResumeBuilder, {
           embedMode: true,
@@ -2942,7 +2949,8 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx(TabButton, { icon: FileText, label: "Resume", activeTab, tabName: "resume", onClick: handleProfileTabChange }),
               /* @__PURE__ */ jsx(TabButton, { icon: DollarSign, label: "Show Money", activeTab, tabName: "show-money", onClick: handleProfileTabChange }),
               visaPilotUnlocked && /* @__PURE__ */ jsx(TabButton, { icon: Plane, label: "Visa", activeTab, tabName: "visa-pilot", onClick: handleProfileTabChange }),
-              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Ledger & Payments", activeTab, tabName: "ledger", onClick: handleProfileTabChange })
+              /* @__PURE__ */ jsx(TabButton, { icon: Banknote, label: "Payments", activeTab, tabName: "ledger", onClick: handleProfileTabChange }),
+              /* @__PURE__ */ jsx(TabButton, { icon: GraduationCap, label: "Applications", activeTab, tabName: "applications", onClick: handleProfileTabChange })
             ] }) }),
             /* @__PURE__ */ jsx("div", { className: "p-6 bg-white border-l border-r border-b border-gray-200 rounded-b-xl flex-1 min-w-0 overflow-y-auto overflow-x-hidden", children: renderContent() })
           ] }),

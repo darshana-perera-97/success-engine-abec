@@ -375,12 +375,13 @@ const AddStudentModal = ({
                     Primary WhatsApp account
                   </label>
                   <p className="mb-2 text-xs text-slate-500">
-                    Choose which branch WhatsApp number will message this student.
+                    Choose which connected WhatsApp number will message this student.
                   </p>
                   <BranchWhatsappAccountSelect
                     branchLabel={resolveStudentBranchLabel({ branch: form.nearestOffice, nearestOffice: form.nearestOffice }, scopeBranch)}
                     value={branchWhatsappMessengerUserId}
                     onChange={setBranchWhatsappMessengerUserId}
+                    allowAnyAccount
                     required
                     disabled={isSaving}
                   />

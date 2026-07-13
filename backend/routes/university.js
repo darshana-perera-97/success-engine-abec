@@ -24,6 +24,7 @@ const { readUniversityPrograms, writeUniversityPrograms } = require("../models/u
 const { getWebFormById } = require("../models/webForms");
 const { readSystemData } = require("../models/systemData");
 const { validateIntakeFields } = require("../lib/intakeUtils");
+const { resolvePreferredCoursesAndProgram } = require("../lib/preferredCourses");
 const { normalizeStudentPhone, normalizeWhatsappNumber } = require("../services/whatsapp");
 
 function normalizeEmail(value) {
@@ -101,7 +102,7 @@ async function handle(req, res, url) {
       const city = String(body.city || "").trim();
       const nearestOfficeRaw = String(body.nearestOffice || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
-      const intendedProgram = String(body.intendedProgram || "").trim();
+      const { preferredCourses, intendedProgram } = resolvePreferredCoursesAndProgram(body);
       const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
       if (!intakeValidation.ok) {
         sendJson(res, 400, intakeValidation);
@@ -217,6 +218,7 @@ async function handle(req, res, url) {
         visaRejectionAnyCountry: visaRejection,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
+        preferredCourses,
         intakeMonth: intakeValidation.intakeMonth,
         intakeYear: intakeValidation.intakeYear,
         message: message || null,
@@ -351,7 +353,7 @@ async function handle(req, res, url) {
       const livingStatus = String(body.livingStatus || "").trim();
       const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim() || "No";
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
-      const intendedProgram = String(body.intendedProgram || "").trim();
+      const { preferredCourses, intendedProgram } = resolvePreferredCoursesAndProgram(body);
       const message = String(body.message || "").trim();
       const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
       if (!intakeValidation.ok) {
@@ -443,6 +445,7 @@ async function handle(req, res, url) {
         visaRejectionAnyCountry,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
+        preferredCourses,
         intakeMonth: intakeValidation.intakeMonth,
         intakeYear: intakeValidation.intakeYear,
         message: message || null,

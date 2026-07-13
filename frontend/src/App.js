@@ -67,7 +67,8 @@ import {
   studentMatchesCounselorIdentitySet,
   branchesMatch
 } from "./pipeline";
-import { normalizeInquirySource } from "./utils/inquirySource";
+import { normalizeInquirySource } from "./utils/inquirySource"
+import { normalizePreferredCourses, summarizePreferredCourses } from "./utils/preferredCourses";
 import { buildCounselorReassignPatch, buildAddSecondaryCounselorPatch } from "./studentContactHelpers";
 import {
   loadDismissedNotificationKeys,
@@ -1353,7 +1354,7 @@ function App({ initialView = "dashboard" }) {
     qs.set("student", sid);
     if (focus) qs.set("task", focus);
     const profileTab = String(options?.profileTab || "").trim().toLowerCase();
-    const allowedProfileTabs = new Set(["pipeline", "resume", "show-money", "visa-pilot", "ledger"]);
+    const allowedProfileTabs = new Set(["pipeline", "resume", "show-money", "visa-pilot", "ledger", "applications"]);
     if (profileTab && allowedProfileTabs.has(profileTab)) {
       qs.set("tab", profileTab);
     }
@@ -1917,7 +1918,10 @@ function App({ initialView = "dashboard" }) {
       livingStatus: String(requestRow.livingStatus || "").trim(),
       visaRejectionAnyCountry: String(requestRow.visaRejectionAnyCountry || "No").trim(),
       currentEducationLevel: String(requestRow.currentEducationLevel || "").trim(),
-      intendedProgram: String(requestRow.intendedProgram || "").trim(),
+      preferredCourses: normalizePreferredCourses(requestRow.preferredCourses),
+      intendedProgram:
+        summarizePreferredCourses(requestRow.preferredCourses) ||
+        String(requestRow.intendedProgram || "").trim(),
       intakeMonth: String(requestRow.intakeMonth || "").trim() || null,
       intakeYear: String(requestRow.intakeYear || "").trim() || null,
       message: String(requestRow.message || "").trim(),

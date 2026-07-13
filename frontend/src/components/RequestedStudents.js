@@ -20,6 +20,7 @@ import { resolveCountriesForOffice } from "../utils/branchCountries";
 import { parseReqStudentsImportFile } from "../utils/reqStudentsImport";
 import { formatRequestedStudentSource } from "../utils/requestedStudentSource";
 import { formatIntakeLabel } from "../utils/intakeFields";
+import { formatCourseLabel, normalizePreferredCourses } from "../utils/preferredCourses";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import { EditRequestedStudentModal } from "./EditRequestedStudentModal";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
@@ -91,6 +92,7 @@ const DETAIL_FIELD_ORDER = [
   ["livingStatus", "Living status"],
   ["visaRejectionAnyCountry", "Visa rejection (any country)"],
   ["currentEducationLevel", "Current education"],
+  ["preferredCourses", "Courses & universities"],
   ["intendedProgram", "Intended program"],
   ["intakeMonth", "Intake month"],
   ["intakeYear", "Intake year"],
@@ -122,6 +124,14 @@ function buildFullDetailRows(row) {
     }
     if (key === "source") {
       display = formatRequestedStudentSource(row);
+    }
+    if (key === "preferredCourses") {
+      const courses = normalizePreferredCourses(raw);
+      display = courses.length ? courses.map(formatCourseLabel).join("; ") : "—";
+    }
+    if (key === "intendedProgram") {
+      const courses = normalizePreferredCourses(row.preferredCourses);
+      if (courses.length) continue;
     }
     out.push({ label, value: display });
   }
@@ -652,8 +662,8 @@ export function RequestedStudents({
                   <DataTableTh>Name</DataTableTh>
                   <DataTableTh>Country</DataTableTh>
                   <DataTableTh>Phone</DataTableTh>
-                  <DataTableTh>Office</DataTableTh>
                   <DataTableTh>Source</DataTableTh>
+                  <DataTableTh>Added</DataTableTh>
                   <DataTableTh align="right">Actions</DataTableTh>
                 </tr>
               </DataTableHead>
@@ -667,12 +677,14 @@ export function RequestedStudents({
                       {row.countryToVisit || "—"}
                     </DataTableTd>
                     <DataTableTd className="whitespace-nowrap">{row.phone || "—"}</DataTableTd>
-                    <DataTableTd className="whitespace-nowrap">{row.nearestOffice || "—"}</DataTableTd>
                     <DataTableTd
                       className="max-w-[180px] truncate"
                       title={formatRequestedStudentSource(row)}
                     >
                       {formatRequestedStudentSource(row)}
+                    </DataTableTd>
+                    <DataTableTd className="whitespace-nowrap text-slate-500" title={row.submittedAt || ""}>
+                      {formatSubmittedAt(row.submittedAt)}
                     </DataTableTd>
                     <DataTableTd variant="actions">
                       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -861,7 +873,6 @@ export function RequestedStudents({
                     <tr>
                       <th className={dt.thCompact}>Name</th>
                       <th className={dt.thCompact}>Phone</th>
-                      <th className={dt.thCompact}>Office</th>
                       <th className={dt.thCompact}>Country</th>
                       <th className={dt.thCompact}>Education</th>
                       <th className={dt.thCompact}>Intake</th>
@@ -873,7 +884,6 @@ export function RequestedStudents({
                       <tr key={row.importKey} className={`align-top ${dt.row}`}>
                         <td className={`${dt.tdCompact} font-medium text-slate-900`}>{row.name || "—"}</td>
                         <td className={`${dt.tdCompact} whitespace-nowrap`}>{row.phone || "—"}</td>
-                        <td className={dt.tdCompact}>{row.nearestOffice || "—"}</td>
                         <td className={dt.tdCompact}>{row.countryToVisit || "—"}</td>
                         <td className={dt.tdCompact}>{row.currentEducationLevel || "—"}</td>
                         <td className={dt.tdCompact}>{formatIntakeLabel(row.intakeMonth, row.intakeYear) || "—"}</td>
@@ -954,7 +964,6 @@ export function RequestedStudents({
                 </p>
                 <p className="mt-1 text-xs text-slate-600">
                   {pipelineRow.countryToVisit || "—"}
-                  {pipelineRow.nearestOffice ? ` · Office: ${pipelineRow.nearestOffice}` : ""}
                 </p>
               </div>
 

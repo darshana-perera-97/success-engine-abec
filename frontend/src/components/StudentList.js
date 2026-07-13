@@ -54,6 +54,21 @@ function studentTimeMs(student) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function formatStudentAddedDate(student) {
+  const raw = student?.joinedDate || student?.createdAt || "";
+  if (!raw) return "—";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return String(raw);
+  try {
+    return parsed.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    });
+  } catch {
+    return parsed.toLocaleDateString();
+  }
+}
+
 function StageSlaCell({ student, now }) {
   const display = useMemo(
     () => getCurrentStageSlaDisplay(student, { now, resolveCountryConfig: resolveCountryDocConfig }),
@@ -513,12 +528,12 @@ const StudentList = ({
     /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
       /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
-          /* @__PURE__ */ jsx("th", { className: `${dt.th} w-[120px]`, children: "ID" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Student Name" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Country" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Branch" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Pipeline Stage" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Counselor" }),
+          /* @__PURE__ */ jsx("th", { className: `${dt.th} whitespace-nowrap`, children: "Added" }),
           /* @__PURE__ */ jsx("th", { className: dt.thRight, children: "Next Stage" })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { className: dt.body, children: (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.map((student) => /* @__PURE__ */ jsxs(
@@ -527,7 +542,6 @@ const StudentList = ({
             onClick: () => onSelectStudent(student),
             className: dt.rowInteractive,
             children: [
-              /* @__PURE__ */ jsx("td", { className: "px-6 py-3 font-mono text-xs text-slate-400", children: student.id }),
               /* @__PURE__ */ jsxs("td", { className: "px-6 py-3 font-medium text-slate-900", children: [
                 student.name,
                 student.priority === "High" && /* @__PURE__ */ jsx("span", { className: "ml-2 inline-block w-2 h-2 rounded-full bg-rose-500", title: "High Priority" })
@@ -566,6 +580,7 @@ const StudentList = ({
                   ) : /* @__PURE__ */ jsx("span", { children: getCounselor(student.counselor)?.name || student.counselor })
                 ] })
               ] }),
+              /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-500 text-xs whitespace-nowrap", children: formatStudentAddedDate(student) }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-right", children: /* @__PURE__ */ jsx(StageSlaCell, { student, now: stageSlaNow }) })
             ]
           },

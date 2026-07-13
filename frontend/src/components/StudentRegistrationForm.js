@@ -8,6 +8,8 @@ import { validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { Button } from "./Button";
 import { PhoneWhatsappFields } from "./PhoneWhatsappFields";
+import { CourseUniversityFields } from "./CourseUniversityFields";
+import { preferredCoursesFromRows, summarizePreferredCourses } from "../utils/preferredCourses";
 
 const EDUCATION_LEVELS = [
   "High school",
@@ -43,7 +45,7 @@ export function StudentRegistrationForm() {
     livingStatus: "",
     visaRejectionAnyCountry: "No",
     currentEducationLevel: "",
-    intendedProgram: "",
+    courseEntries: [],
     intakeMonth: "",
     intakeYear: "",
     message: ""
@@ -121,6 +123,7 @@ export function StudentRegistrationForm() {
       return;
     }
     setIsSaving(true);
+    const preferredCourses = preferredCoursesFromRows(form.courseEntries);
     const result = await submitStudentRegFormRequest({
       name: form.name.trim(),
       email,
@@ -132,7 +135,8 @@ export function StudentRegistrationForm() {
       livingStatus: form.livingStatus.trim(),
       visaRejectionAnyCountry: form.visaRejectionAnyCountry.trim(),
       currentEducationLevel: form.currentEducationLevel,
-      intendedProgram: form.intendedProgram.trim(),
+      preferredCourses,
+      intendedProgram: summarizePreferredCourses(preferredCourses),
       intakeMonth: intakeValidation.intakeMonth,
       intakeYear: intakeValidation.intakeYear,
       message: form.message.trim()
@@ -358,18 +362,10 @@ export function StudentRegistrationForm() {
             </select>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 mb-1.5">
-              Intended program of study
-            </label>
-            <input
-              type="text"
-              className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-              value={form.intendedProgram}
-              onChange={(e) => update("intendedProgram", e.target.value)}
-              placeholder="e.g. BSc Computer Science, MBA, A-levels"
-            />
-          </div>
+          <CourseUniversityFields
+            rows={form.courseEntries}
+            onChange={(courseEntries) => update("courseEntries", courseEntries)}
+          />
 
           <IntakeFields
             intakeMonth={form.intakeMonth}

@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readChats, writeChats } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
-const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor, syncWhatsappIncomingToChats } = require("../services/whatsapp");
+const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor, syncWhatsappIncomingToChats, isWhatsappGroupChatRecord } = require("../services/whatsapp");
 const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const { storeChatAttachmentDataUrl } = require("../services/uploads");
 
@@ -33,7 +33,7 @@ async function handle(req, res, url) {
           await writeChats(chatsAllNext);
         }
       }
-      let chatsForResponse = chatsAllNext;
+      let chatsForResponse = chatsAllNext.filter((chat) => !isWhatsappGroupChatRecord(chat));
       const counselor = userId ? await resolveCounselor(userId) : null;
       if (userId && counselor) {
         // Counselors can see the full conversation thread for any student they have handled

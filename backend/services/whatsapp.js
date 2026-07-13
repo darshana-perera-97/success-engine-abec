@@ -918,6 +918,31 @@ function isIgnoredWhatsappIncomingChatId(chatId) {
   return from === "status@broadcast";
 }
 
+/** True for WhatsApp group/broadcast traffic that must never enter Omni-Channel threads. */
+function isWhatsappGroupIncomingMessage(message) {
+  if (!message || typeof message !== "object") return false;
+  if (message.isGroup === true || message.isGroupMsg === true) return true;
+  // Check the raw chat id before getContact() rewrites group senders to personal @c.us IDs.
+  if (isIgnoredWhatsappIncomingChatId(message.from)) return true;
+  // whatsapp-web.js sets `author` only for messages sent inside a group.
+  if (String(message.author || "").trim()) return true;
+  const serializedId = String(message?.id?._serialized || "").trim();
+  if (serializedId.includes("@g.us")) return true;
+  return false;
+}
+
+function isWhatsappGroupChatRecord(chat) {
+  if (!chat || typeof chat !== "object") return false;
+  if (chat.isGroup === true) return true;
+  const chatId = String(chat?.whatsappDelivery?.chatId || "").trim();
+  if (chatId && (chatId.includes("@g.us") || chatId.includes("@newsletter") || chatId === "status@broadcast")) {
+    return true;
+  }
+  const messageId = String(chat.whatsappMessageId || "").trim();
+  if (messageId.includes("@g.us")) return true;
+  return false;
+}
+
 function resolveStudentPrimaryCounselorId(student, fallbackId = "") {
   if (!student || typeof student !== "object") return String(fallbackId || "").trim();
   const pick = (rawId) => {
@@ -1006,6 +1031,8 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     })();
   if (!incomingId) return;
   if (!message || message.fromMe === true) return;
+  // Must run before getContact() — that call maps group senders to personal JIDs.
+  if (isWhatsappGroupIncomingMessage(message)) return;
   const from = String(message.from || "");
   const resolvedThreadId = await resolveWhatsappThreadIdFromMessage(message);
   const fromChatId = resolvedThreadId || from;
@@ -1331,6 +1358,7 @@ module.exports = {
   findStudentByWhatsappFrom,
   persistIncomingWhatsappMessage,
   syncWhatsappIncomingToChats,
+  isWhatsappGroupChatRecord,
   resolveStudentPrimaryCounselorId,
   deliverCounselorMessageToStudentWhatsapp,
   persistOutgoingStudentChatMessage,

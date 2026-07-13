@@ -107,6 +107,7 @@ async function appendReqStudentsBulk(entries) {
         visaRejectionAnyCountry: raw.visaRejectionAnyCountry || "No",
         currentEducationLevel: raw.currentEducationLevel || null,
         intendedProgram: raw.intendedProgram || null,
+        preferredCourses: Array.isArray(raw.preferredCourses) ? raw.preferredCourses : [],
         intakeMonth: normalizeIntakeMonth(raw.intakeMonth) || null,
         intakeYear: normalizeIntakeYear(raw.intakeYear) || null,
         message: raw.message || null,

@@ -20,7 +20,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const textInputRef = useRef(null);
   const lastSignatureRef = useRef("");
+  const resizeTextInput = () => {
+    const el = textInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  };
   useEffect(() => {
     setLiveMessages(messages || []);
   }, [messages]);
@@ -213,9 +220,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (!inputText.trim() || !activeConversationId) return;
     const text = inputText;
     setInputText("");
+    if (textInputRef.current) textInputRef.current.style.height = "auto";
     const result = await onSendMessage(text, activeConversationId);
     if (!result?.ok) {
       setInputText(text);
+      requestAnimationFrame(resizeTextInput);
       return;
     }
     if (result.data) {
@@ -396,22 +405,44 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       /* @__PURE__ */ jsx("div", { className: "p-4 border-t border-indigo-100 bg-slate-100/80", children: isGhostMode ? /* @__PURE__ */ jsxs("div", { className: "bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-center gap-2 text-slate-500 text-sm", children: [
         /* @__PURE__ */ jsx(Lock, { size: 16 }),
         /* @__PURE__ */ jsx("span", { children: "Ghost Mode Active: Monitoring Only" })
-      ] }) : /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-center gap-2.5", children: [
+      ] }) : /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-end gap-2.5", children: [
         /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*", className: "hidden", onChange: handleAttachmentChange }),
           /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
         ] }),
         /* @__PURE__ */ jsx(
-          "input",
+          "textarea",
           {
-            type: "text",
+            ref: textInputRef,
             value: inputText,
-            onChange: (e) => setInputText(e.target.value),
+            onChange: (e) => {
+              setInputText(e.target.value);
+              resizeTextInput();
+            },
+            onKeyDown: (e) => {
+              if (e.key !== "Enter") return;
+              if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const el = e.target;
+                const start = el.selectionStart ?? inputText.length;
+                const end = el.selectionEnd ?? inputText.length;
+                const next = `${inputText.slice(0, start)}\n${inputText.slice(end)}`;
+                setInputText(next);
+                requestAnimationFrame(() => {
+                  el.selectionStart = el.selectionEnd = start + 1;
+                  resizeTextInput();
+                });
+                return;
+              }
+              e.preventDefault();
+              if (inputText.trim()) handleSend(e);
+            },
             placeholder: "Type a message...",
-            className: "flex-1 py-2.5 px-4 bg-white border border-gray-200 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm shadow-sm"
+            rows: 1,
+            className: "flex-1 py-2.5 px-4 bg-white border border-gray-200 rounded-[22px] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm shadow-sm resize-none max-h-32 overflow-y-auto leading-[1.4]"
           }
         ),
-        /* @__PURE__ */ jsx(Button, { type: "submit", className: "rounded-full w-10 h-10 p-0 flex items-center justify-center bg-[#0F172A] hover:bg-slate-800 border-none", disabled: !inputText.trim(), children: /* @__PURE__ */ jsx(Send, { size: 17, className: "ml-0.5" }) })
+        /* @__PURE__ */ jsx(Button, { type: "submit", className: "rounded-full w-10 h-10 p-0 flex items-center justify-center bg-[#0F172A] hover:bg-slate-800 border-none shrink-0", disabled: !inputText.trim(), children: /* @__PURE__ */ jsx(Send, { size: 17, className: "ml-0.5" }) })
       ] }) })
     ] })
   ] });

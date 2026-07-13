@@ -91,6 +91,7 @@ const {
 } = require("../lib/docMappingResolve");
 const { normalizeAccountDetailsStageId } = require("../models/docMapping");
 const { validateIntakeFields } = require("../lib/intakeUtils");
+const { resolvePreferredCoursesAndProgram } = require("../lib/preferredCourses");
 
 async function getBlockedEnrolledTransitionError(previousStudent, mergedStudent) {
   const prevStage = normalizePipelineStatus(previousStudent?.status);
@@ -333,7 +334,7 @@ async function handle(req, res, url) {
       const livingStatus = String(body.livingStatus || "").trim();
       const visaRejectionAnyCountry = String(body.visaRejectionAnyCountry || "").trim();
       const currentEducationLevel = String(body.currentEducationLevel || "").trim();
-      const intendedProgram = String(body.intendedProgram || "").trim();
+      const { preferredCourses, intendedProgram } = resolvePreferredCoursesAndProgram(body);
       const intakeValidation = validateIntakeFields(body.intakeMonth, body.intakeYear, { required: false });
       if (!intakeValidation.ok) {
         sendJson(res, 400, intakeValidation);
@@ -429,6 +430,7 @@ async function handle(req, res, url) {
         visaRejectionAnyCountry: visaRejectionAnyCountry || null,
         currentEducationLevel: currentEducationLevel || null,
         intendedProgram: intendedProgram || null,
+        preferredCourses,
         intakeMonth: intakeValidation.intakeMonth,
         intakeYear: intakeValidation.intakeYear,
         message: message || null,
