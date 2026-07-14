@@ -80,7 +80,7 @@ const CounselorDashboard = ({
       return;
     }
     const load = async () => {
-      const result = await getChats(uid);
+      const result = await getChats(uid, { markRead: false });
       if (cancelled || !result.ok) return;
       setChatMessages(result.data || []);
     };

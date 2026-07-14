@@ -2068,13 +2068,14 @@ function App({ initialView = "dashboard" }) {
     const completedAt = new Date().toISOString();
     handleUpdateTasks(pendingIntake.map((t) => ({ ...t, status: "Completed", completedAt })));
   };
-  const handleSendMessage = async (text, receiverId, attachment = null) => {
+  const handleSendMessage = async (text, receiverId, attachment = null, replyTo = null) => {
     const result = await sendChatMessage({
       senderId: currentUser.id,
       receiverId,
       content: text,
       platform: "portal",
-      attachment
+      attachment,
+      ...(replyTo ? { replyTo } : {})
     });
     if (!result.ok) {
       addNotification("Message failed", result.error || "Failed to send message.", "error");

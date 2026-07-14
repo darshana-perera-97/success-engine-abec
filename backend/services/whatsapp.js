@@ -15,7 +15,7 @@ const {
 const { readUsers } = require("../models/users");
 const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
-const { readChats, writeChats, appendPortalChatMessage } = require("../models/chats");
+const { readChats, writeChats, appendPortalChatMessage, normalizeReplyTo } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { isWhatsappIntegratedStaffRole } = require("./roles");
 const {
@@ -961,6 +961,82 @@ function buildWhatsappIncomingRowKey(rowId) {
   return id ? `incoming-row:${id}` : "";
 }
 
+function isNativeWhatsappMessageId(value) {
+  const id = String(value || "").trim();
+  if (!id) return false;
+  if (id.startsWith("incoming-row:") || id.startsWith("fallback:") || id.startsWith("WAQ-")) return false;
+  return id.includes("@") || id.includes("_");
+}
+
+function formatWhatsappReplyContent(content, replyTo) {
+  const text = String(content || "").trim();
+  const normalized = normalizeReplyTo(replyTo);
+  if (!normalized) return text;
+  const snippet =
+    String(normalized.content || "").trim() ||
+    (normalized.attachmentName ? String(normalized.attachmentName).trim() : "");
+  if (!snippet) return text;
+  const clipped = snippet.length > 220 ? `${snippet.slice(0, 220)}…` : snippet;
+  const quoted = clipped
+    .split(/\r?\n/)
+    .map((line) => `> ${line}`)
+    .join("\n");
+  return text ? `*Replying to:*\n${quoted}\n\n${text}` : `*Replying to:*\n${quoted}`;
+}
+
+async function resolveQuotedWhatsappMessageId(replyTo) {
+  const normalized = normalizeReplyTo(replyTo);
+  if (!normalized?.id) return "";
+  try {
+    const chats = await readChats();
+    const original = chats.find((chat) => String(chat.id || "").trim() === normalized.id);
+    const waId = String(original?.whatsappMessageId || "").trim();
+    return isNativeWhatsappMessageId(waId) ? waId : "";
+  } catch {
+    return "";
+  }
+}
+
+async function buildReplyToFromWhatsappQuotedMessage(message, { studentId = "", counselorId = "" } = {}) {
+  if (!message || message.hasQuotedMsg !== true || typeof message.getQuotedMessage !== "function") {
+    return null;
+  }
+  let quoted = null;
+  try {
+    quoted = await message.getQuotedMessage();
+  } catch {
+    quoted = null;
+  }
+  if (!quoted) return null;
+  const quotedWaId = String(quoted.id?._serialized || "").trim();
+  const quotedBody = String(quoted.body || "").trim();
+  const quotedAttachmentName =
+    quoted.hasMedia === true
+      ? String(quoted._data?.filename || quoted.type || "attachment").trim()
+      : "";
+  let matched = null;
+  if (quotedWaId) {
+    try {
+      const chats = await readChats();
+      matched =
+        chats.find((chat) => String(chat.whatsappMessageId || "").trim() === quotedWaId) || null;
+    } catch {
+      matched = null;
+    }
+  }
+  const senderId = matched
+    ? String(matched.senderId || "").trim()
+    : quoted.fromMe
+      ? String(counselorId || "").trim()
+      : String(studentId || "").trim();
+  return normalizeReplyTo({
+    id: matched?.id || (quotedWaId ? `WAQ-${quotedWaId.slice(-16)}` : `WAQ-${crypto.randomUUID().slice(0, 8)}`),
+    senderId,
+    content: String(matched?.content || quotedBody || "").trim(),
+    attachmentName: matched?.attachment?.name || quotedAttachmentName || "",
+  });
+}
+
 async function syncWhatsappIncomingToChats() {
   const incoming = await readWhatsappIncoming();
   if (!incoming.length) return 0;
@@ -994,6 +1070,8 @@ async function syncWhatsappIncomingToChats() {
     if (!content) continue;
     const receiverId = resolveStudentPrimaryCounselorId(student, String(row.counselorId || ""));
     if (!receiverId) continue;
+    const replyTo = normalizeReplyTo(row.replyTo);
+    const nativeWaId = String(row.whatsappMessageId || "").trim();
     toAdd.push({
       id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
       senderId: String(student.id),
@@ -1003,8 +1081,9 @@ async function syncWhatsappIncomingToChats() {
       read: false,
       platform: "whatsapp",
       attachment: null,
+      ...(replyTo ? { replyTo } : {}),
       whatsappIncomingId: String(row.id || "").trim(),
-      whatsappMessageId: incomingKey,
+      whatsappMessageId: isNativeWhatsappMessageId(nativeWaId) ? nativeWaId : incomingKey,
       whatsappDelivery: {
         attempted: true,
         status: "received",
@@ -1013,6 +1092,7 @@ async function syncWhatsappIncomingToChats() {
       },
     });
     existingKeys.add(incomingKey);
+    if (isNativeWhatsappMessageId(nativeWaId)) existingKeys.add(nativeWaId);
   }
   if (!toAdd.length) return 0;
   await writeChats([...chats, ...toAdd]);
@@ -1067,6 +1147,11 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   const normalizedContent =
     content || (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "");
   if (!normalizedContent && !attachment) return;
+  const receiverId = resolveStudentPrimaryCounselorId(student, counselorId);
+  const replyTo = await buildReplyToFromWhatsappQuotedMessage(message, {
+    studentId: String(student?.id || ""),
+    counselorId: String(receiverId || counselorId || ""),
+  });
   await appendWhatsappIncoming({
     id: `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
     counselorId: String(counselorId || ""),
@@ -1078,6 +1163,8 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
       : new Date().toISOString(),
     isGroup: false,
     mappedStudentId: String(student?.id || ""),
+    ...(replyTo ? { replyTo } : {}),
+    ...(incomingId ? { whatsappMessageId: incomingId } : {}),
   });
   if (!student || !student.id) return;
   const chats = await readChats();
@@ -1087,7 +1174,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   const chat = {
     id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
     senderId: String(student.id),
-    receiverId: resolveStudentPrimaryCounselorId(student, counselorId),
+    receiverId,
     content: normalizedContent,
     timestamp: message.timestamp
       ? new Date(Number(message.timestamp) * 1000).toISOString()
@@ -1095,6 +1182,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     read: false,
     platform: "whatsapp",
     attachment,
+    ...(replyTo ? { replyTo } : {}),
     whatsappMessageId: incomingId,
     whatsappDelivery: {
       attempted: true,
@@ -1112,6 +1200,7 @@ async function persistOutgoingStudentChatMessage({
   content,
   attachment = null,
   whatsappDelivery = null,
+  replyTo = null,
 }) {
   try {
     return await appendPortalChatMessage({
@@ -1121,6 +1210,7 @@ async function persistOutgoingStudentChatMessage({
       platform: "whatsapp",
       attachment,
       whatsappDelivery,
+      replyTo,
     });
   } catch (error) {
     logEvent("chat", "failed to persist outgoing student message", {
@@ -1138,6 +1228,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
   content,
   attachment = null,
   persistToChat = true,
+  replyTo = null,
 }) {
   const studentId = String(receiverId || "").trim();
   if (!studentId) {
@@ -1155,6 +1246,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
   }
 
   const messageText = String(content || "").trim();
+  const normalizedReplyTo = normalizeReplyTo(replyTo);
   const outgoingAttachment = attachment && typeof attachment === "object" ? attachment : null;
   const chatAttachment =
     outgoingAttachment && outgoingAttachment.url
@@ -1248,16 +1340,31 @@ async function deliverCounselorMessageToStudentWhatsapp({
         ) {
           deliveryResult = { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
         } else {
+          const quotedMessageId = await resolveQuotedWhatsappMessageId(normalizedReplyTo);
+          const whatsappBody = quotedMessageId
+            ? messageText
+            : formatWhatsappReplyContent(messageText, normalizedReplyTo);
+          const sendOptions = {};
+          if (quotedMessageId) sendOptions.quotedMessageId = quotedMessageId;
+          if (preparedMedia && whatsappBody) sendOptions.caption = whatsappBody;
+
           const performSend = async () => {
             const live = ensureWhatsappState(sender.id);
             if (!live.client || (live.status !== "connected" && live.status !== "authenticated")) {
               throw new Error("WhatsApp is not connected.");
             }
             if (preparedMedia) {
-              await live.client.sendMessage(waChatId, preparedMedia, messageText ? { caption: messageText } : {});
-            } else {
-              await live.client.sendMessage(waChatId, messageText);
+              return live.client.sendMessage(
+                waChatId,
+                preparedMedia,
+                Object.keys(sendOptions).length ? sendOptions : undefined
+              );
             }
+            return live.client.sendMessage(
+              waChatId,
+              whatsappBody || messageText,
+              Object.keys(sendOptions).length ? sendOptions : undefined
+            );
           };
 
           const logSent = () => {
@@ -1267,16 +1374,34 @@ async function deliverCounselorMessageToStudentWhatsapp({
                 to: receiverId,
                 chatId: waChatId,
                 mime: preparedMediaMime,
+                quoted: Boolean(quotedMessageId || normalizedReplyTo),
               });
             } else {
-              logEvent("whatsapp", "message sent", { from: sender.id, to: receiverId, chatId: waChatId });
+              logEvent("whatsapp", "message sent", {
+                from: sender.id,
+                to: receiverId,
+                chatId: waChatId,
+                quoted: Boolean(quotedMessageId || normalizedReplyTo),
+              });
             }
           };
 
+          const buildSentResult = (sentMsg) => {
+            const whatsappMessageId = String(sentMsg?.id?._serialized || "").trim();
+            return {
+              attempted: true,
+              status: "sent",
+              channel: "whatsapp",
+              chatId: waChatId,
+              ...(whatsappMessageId ? { whatsappMessageId } : {}),
+              ...(quotedMessageId ? { quotedMessageId } : {}),
+            };
+          };
+
           try {
-            await performSend();
+            const sentMsg = await performSend();
             logSent();
-            deliveryResult = { attempted: true, status: "sent", channel: "whatsapp", chatId: waChatId };
+            deliveryResult = buildSentResult(sentMsg);
           } catch (error) {
             if (isWhatsappPuppeteerStaleSessionError(error)) {
               logEvent("whatsapp", "stale session detected; restarting client", {
@@ -1286,9 +1411,9 @@ async function deliverCounselorMessageToStudentWhatsapp({
               });
               try {
                 await restartWhatsappBrowserSession(sender.id);
-                await performSend();
+                const sentMsg = await performSend();
                 logSent();
-                deliveryResult = { attempted: true, status: "sent", channel: "whatsapp", chatId: waChatId };
+                deliveryResult = buildSentResult(sentMsg);
               } catch (errorAfter) {
                 logEvent("whatsapp", "message send failed", {
                   from: sender.id,
@@ -1320,13 +1445,27 @@ async function deliverCounselorMessageToStudentWhatsapp({
   }
 
   if (persistToChat && chatSenderId && chatContent) {
-    await persistOutgoingStudentChatMessage({
+    const persisted = await persistOutgoingStudentChatMessage({
       senderId: chatSenderId,
       receiverId: studentId,
       content: chatContent,
       attachment: chatAttachment,
       whatsappDelivery: deliveryResult,
+      replyTo: normalizedReplyTo,
     });
+    if (persisted && deliveryResult.whatsappMessageId) {
+      try {
+        const chats = await readChats();
+        const next = chats.map((chat) =>
+          String(chat.id || "") === String(persisted.id || "")
+            ? { ...chat, whatsappMessageId: deliveryResult.whatsappMessageId }
+            : chat
+        );
+        await writeChats(next);
+      } catch {
+        // Best-effort link for future WhatsApp quotes.
+      }
+    }
   }
 
   return deliveryResult;

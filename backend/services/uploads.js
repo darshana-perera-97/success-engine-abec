@@ -39,22 +39,74 @@ function getDataUrlMime(dataUrl) {
   return mimeMatch ? String(mimeMatch[1] || "").toLowerCase() : "";
 }
 
+const MIME_TO_EXT = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+};
+
+const EXT_TO_MIME = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+const CHAT_ATTACHMENT_EXTS = new Set(Object.keys(EXT_TO_MIME));
+
 function extensionFromMime(mime) {
   if (!mime) return "";
-  const known = {
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    "image/webp": "webp",
-    "image/gif": "gif",
-    "application/pdf": "pdf",
-    "text/plain": "txt",
-    "application/msword": "doc",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "application/vnd.ms-excel": "xls",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-  };
-  return known[mime] || "";
+  return MIME_TO_EXT[String(mime).toLowerCase()] || "";
+}
+
+function mimeFromExtension(ext) {
+  if (!ext) return "";
+  return EXT_TO_MIME[String(ext).toLowerCase().replace(/^\./, "")] || "";
+}
+
+function extensionFromFileName(fileName) {
+  const ext = String(path.parse(String(fileName || "")).ext || "")
+    .toLowerCase()
+    .replace(/^\./, "");
+  return CHAT_ATTACHMENT_EXTS.has(ext) ? ext : "";
+}
+
+function resolveChatAttachmentMeta(dataUrl, originalName) {
+  const dataMime = getDataUrlMime(dataUrl);
+  let ext = extensionFromMime(dataMime);
+  let mime = dataMime;
+
+  // Browsers often send Office files as empty / octet-stream; fall back to filename.
+  if (!ext) {
+    ext = extensionFromFileName(originalName);
+    if (ext) mime = mimeFromExtension(ext);
+  }
+
+  if (!ext || !mime || mime === "application/octet-stream") {
+    const nameExt = extensionFromFileName(originalName);
+    if (nameExt) {
+      ext = nameExt;
+      mime = mimeFromExtension(nameExt);
+    }
+  }
+
+  if (!ext || !mime) return null;
+  return { mime, ext };
 }
 
 function sanitizeFileName(value) {
@@ -65,9 +117,9 @@ function sanitizeFileName(value) {
 }
 
 async function storeChatAttachmentDataUrl(dataUrl, originalName) {
-  const mime = getDataUrlMime(dataUrl);
-  const ext = extensionFromMime(mime);
-  if (!mime || !ext) return null;
+  const meta = resolveChatAttachmentMeta(dataUrl, originalName);
+  if (!meta) return null;
+  const { mime, ext } = meta;
   const base64 = String(dataUrl || "").split(",")[1] || "";
   if (!base64) return null;
   const buffer = Buffer.from(base64, "base64");

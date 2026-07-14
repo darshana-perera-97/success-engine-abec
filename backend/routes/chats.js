@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
-const { readChats, writeChats } = require("../models/chats");
+const { readChats, writeChats, normalizeReplyTo } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
 const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor, syncWhatsappIncomingToChats, isWhatsappGroupChatRecord } = require("../services/whatsapp");
 const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
@@ -15,19 +15,25 @@ async function handle(req, res, url) {
     try {
       await syncWhatsappIncomingToChats();
       const userId = String(url.searchParams.get("userId") || "").trim();
+      const peerId = String(url.searchParams.get("peerId") || "").trim();
       const normalizedUserId = normalizeId(userId);
+      const normalizedPeerId = normalizeId(peerId);
       const shouldMarkRead = url.searchParams.get("markRead") !== "0";
       const chatsAll = await readChats();
       let chatsAllNext = chatsAll;
       if (userId && shouldMarkRead) {
-        // Mark messages as read when the receiver opens their chat inbox.
+        // Mark messages as read when the receiver opens a conversation.
+        // If peerId is set, only mark unread messages from that peer (per-thread).
         let hasReadUpdates = false;
         chatsAllNext = chatsAll.map((chat) => {
-          if (normalizeId(chat.receiverId) === normalizedUserId && chat.read !== true) {
-            hasReadUpdates = true;
-            return { ...chat, read: true, readAt: new Date().toISOString() };
+          if (normalizeId(chat.receiverId) !== normalizedUserId || chat.read === true) {
+            return chat;
           }
-          return chat;
+          if (normalizedPeerId && normalizeId(chat.senderId) !== normalizedPeerId) {
+            return chat;
+          }
+          hasReadUpdates = true;
+          return { ...chat, read: true, readAt: new Date().toISOString() };
         });
         if (hasReadUpdates) {
           await writeChats(chatsAllNext);
@@ -101,6 +107,7 @@ async function handle(req, res, url) {
       const platform = String(body.platform || "portal").trim();
       const incomingAttachment =
         body.attachment && typeof body.attachment === "object" ? body.attachment : null;
+      const replyTo = normalizeReplyTo(body.replyTo);
       let attachment = null;
       if (incomingAttachment && incomingAttachment.dataUrl) {
         const stored = await storeChatAttachmentDataUrl(
@@ -108,7 +115,10 @@ async function handle(req, res, url) {
           String(incomingAttachment.name || "attachment")
         );
         if (!stored) {
-          sendJson(res, 400, { ok: false, error: "Unsupported file type for chat attachment." });
+          sendJson(res, 400, {
+            ok: false,
+            error: "Unsupported file type for chat attachment. Use PDF, Word (.doc, .docx), Excel (.xls, .xlsx), TXT, or an image.",
+          });
           return true;
         }
         if (stored.error) {
@@ -139,6 +149,7 @@ async function handle(req, res, url) {
             attachment,
             preferredSenderIds: [senderId],
             persistToChat: false,
+            replyTo,
           });
         } else if (senderStudent) {
           whatsappDelivery = {
@@ -153,10 +164,12 @@ async function handle(req, res, url) {
             content,
             attachment,
             persistToChat: false,
+            replyTo,
           });
         }
       }
       const chats = await readChats();
+      const sentWhatsappMessageId = String(whatsappDelivery?.whatsappMessageId || "").trim();
       const chat = {
         id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
         senderId,
@@ -166,6 +179,8 @@ async function handle(req, res, url) {
         read: false,
         platform: platform || "portal",
         attachment,
+        ...(replyTo ? { replyTo } : {}),
+        ...(sentWhatsappMessageId ? { whatsappMessageId: sentWhatsappMessageId } : {}),
         whatsappDelivery,
       };
       await writeChats([...chats, chat]);

@@ -19,6 +19,20 @@ async function writeChats(chats) {
   );
 }
 
+function normalizeReplyTo(replyTo) {
+  if (!replyTo || typeof replyTo !== "object") return null;
+  const id = String(replyTo.id || "").trim();
+  if (!id) return null;
+  const content = String(replyTo.content || "").trim();
+  const attachmentName = String(replyTo.attachmentName || replyTo.attachment?.name || "").trim();
+  return {
+    id,
+    senderId: String(replyTo.senderId || "").trim(),
+    content: content.slice(0, 280),
+    ...(attachmentName ? { attachmentName } : {}),
+  };
+}
+
 async function appendPortalChatMessage({
   senderId,
   receiverId,
@@ -26,6 +40,7 @@ async function appendPortalChatMessage({
   platform = "portal",
   attachment = null,
   whatsappDelivery = null,
+  replyTo = null,
 }) {
   const from = String(senderId || "").trim();
   const to = String(receiverId || "").trim();
@@ -41,6 +56,7 @@ async function appendPortalChatMessage({
       : null;
   if (!from || !to || (!text && !chatAttachment)) return null;
   const chats = await readChats();
+  const normalizedReplyTo = normalizeReplyTo(replyTo);
   const chat = {
     id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
     senderId: from,
@@ -50,6 +66,7 @@ async function appendPortalChatMessage({
     read: false,
     platform: platform || "portal",
     attachment: chatAttachment,
+    ...(normalizedReplyTo ? { replyTo: normalizedReplyTo } : {}),
     ...(whatsappDelivery ? { whatsappDelivery } : {}),
   };
   await writeChats([...chats, chat]);
@@ -60,4 +77,5 @@ module.exports = {
   readChats,
   writeChats,
   appendPortalChatMessage,
+  normalizeReplyTo,
 };

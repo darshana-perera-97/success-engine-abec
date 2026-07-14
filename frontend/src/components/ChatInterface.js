@@ -1,12 +1,35 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
-import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle } from "lucide-react";
+import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle, Reply, X } from "lucide-react";
 import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole, canSendStaffStudentMessages, isStudentMessagingStaffRole } from "../roles";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
+
+const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const formatMessageDateTime = (timestamp) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  const timeLabel = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const today = startOfDay(new Date());
+  const messageDay = startOfDay(date);
+  const dayDiff = Math.round((today.getTime() - messageDay.getTime()) / 86400000);
+  let dateLabel;
+  if (dayDiff === 0) dateLabel = "Today";
+  else if (dayDiff === 1) dateLabel = "Yesterday";
+  else {
+    dateLabel = date.toLocaleDateString([], {
+      day: "numeric",
+      month: "short",
+      year: today.getFullYear() === date.getFullYear() ? undefined : "numeric"
+    });
+  }
+  return `${dateLabel}, ${timeLabel}`;
+};
+
 const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
@@ -17,11 +40,17 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [accountNameById, setAccountNameById] = useState({});
   const [isChatsLoading, setIsChatsLoading] = useState(true);
   const [whatsappSyncStatus, setWhatsappSyncStatus] = useState("disconnected");
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [highlightMessageId, setHighlightMessageId] = useState(null);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const textInputRef = useRef(null);
   const lastSignatureRef = useRef("");
+  const highlightTimerRef = useRef(null);
+  const canSendAsStaffMessenger = canSendStaffStudentMessages(currentRole, adminChatEnabled, branchWhatsappEnabled);
+  const isGhostMode =
+    (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && !canSendAsStaffMessenger;
   const resizeTextInput = () => {
     const el = textInputRef.current;
     if (!el) return;
@@ -49,12 +78,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     let cancelled = false;
     const loadChats = async () => {
       const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
-      const result = await getChats(shouldLoadAll ? "" : currentUser?.id);
+      // Keep unread flags intact while browsing the inbox list; mark per-peer on open.
+      const result = await getChats(shouldLoadAll ? "" : currentUser?.id, { markRead: false });
       if (cancelled) return;
       setIsChatsLoading(false);
       if (!result.ok) return;
       const incoming = result.data || [];
-      const signature = `${incoming.length}:${incoming.map((m) => `${m.id}:${m.timestamp}`).join("|")}`;
+      const signature = `${incoming.length}:${incoming.map((m) => `${m.id}:${m.timestamp}:${m.read === true ? "1" : "0"}`).join("|")}`;
       if (signature === lastSignatureRef.current) return;
       lastSignatureRef.current = signature;
       setLiveMessages(incoming);
@@ -101,6 +131,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     setSelectedConversationId(peer);
   }, [initialChatPeerId, currentRole, currentUser, employees]);
   useEffect(() => {
+    setReplyingTo(null);
+    setHighlightMessageId(null);
+  }, [selectedConversationId]);
+  useEffect(() => () => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+  }, []);
+  useEffect(() => {
     if (selectedConversationId) return;
     if (!conversationList.length || !liveMessages.length) return;
     if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin") return;
@@ -113,26 +150,101 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
   }, [selectedConversationId, conversationList, liveMessages, currentRole]);
   const activeConversationId = selectedConversationId || conversationList[0]?.id;
+  useEffect(() => {
+    if (isGhostMode) return;
+    const peerId = String(activeConversationId || "").trim();
+    const myId = String(currentUser?.id || "").trim();
+    if (!peerId || !myId) return;
+    let cancelled = false;
+    const markPeerRead = async () => {
+      const result = await getChats(myId, { peerId });
+      if (cancelled || !result.ok) return;
+      const readAt = new Date().toISOString();
+      setLiveMessages((prev) => {
+        let changed = false;
+        const next = prev.map((m) => {
+          if (String(m.receiverId || "").trim() !== myId) return m;
+          if (String(m.senderId || "").trim() !== peerId) return m;
+          if (m.read === true) return m;
+          changed = true;
+          return { ...m, read: true, readAt };
+        });
+        if (changed) {
+          lastSignatureRef.current = `${next.length}:${next.map((m) => `${m.id}:${m.timestamp}:${m.read === true ? "1" : "0"}`).join("|")}`;
+        }
+        return changed ? next : prev;
+      });
+    };
+    markPeerRead();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId, currentUser?.id, isGhostMode]);
+  const MESSAGE_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+  const getMessageContentKey = (msg) => {
+    const content = String(msg?.content || "").trim().toLowerCase();
+    const attachmentKey = String(msg?.attachment?.url || msg?.attachment?.name || "").trim().toLowerCase();
+    return `${content}::${attachmentKey}`;
+  };
+  const dedupeConversationMessages = (msgs) => {
+    if (!Array.isArray(msgs) || msgs.length < 2) return msgs || [];
+    const seenIds = /* @__PURE__ */ new Set();
+    const seenWhatsappIds = /* @__PURE__ */ new Set();
+    const kept = [];
+    for (const msg of msgs) {
+      if (!msg) continue;
+      const id = String(msg.id || "").trim();
+      if (id) {
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+      }
+      const waId = String(msg.whatsappMessageId || "").trim();
+      if (waId) {
+        if (seenWhatsappIds.has(waId)) continue;
+        seenWhatsappIds.add(waId);
+      }
+      const senderId = String(msg.senderId || "").trim();
+      const contentKey = getMessageContentKey(msg);
+      const hasBody = contentKey !== "::";
+      const ts = new Date(msg.timestamp || 0).getTime();
+      if (hasBody && senderId) {
+        const isDuplicate = kept.some((prev) => {
+          if (String(prev.senderId || "").trim() !== senderId) return false;
+          if (getMessageContentKey(prev) !== contentKey) return false;
+          const prevTs = new Date(prev.timestamp || 0).getTime();
+          if (!Number.isFinite(ts) || !Number.isFinite(prevTs)) return true;
+          return Math.abs(ts - prevTs) <= MESSAGE_DEDUPE_WINDOW_MS;
+        });
+        if (isDuplicate) continue;
+      }
+      kept.push(msg);
+    }
+    return kept;
+  };
   const getActiveMessages = () => {
     if (!activeConversationId) return [];
     const otherUserId = activeConversationId;
     const myId = currentUser.id;
+    let filtered;
     if (currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin") {
       const selectedStudent = students.find((s) => s.id === otherUserId);
       if (!selectedStudent) return [];
-      return liveMessages.filter(
+      filtered = liveMessages.filter(
         (m) => m.senderId === selectedStudent.id || m.receiverId === selectedStudent.id
-      ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      );
     } else if (isStudentMessagingStaffRole(currentRole)) {
       // Counselors and country coordinators see the full student thread in one window.
-      return liveMessages.filter(
+      filtered = liveMessages.filter(
         (m) => m.senderId === otherUserId || m.receiverId === otherUserId
-      ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      );
     } else {
-      return liveMessages.filter(
+      filtered = liveMessages.filter(
         (m) => m.senderId === myId && m.receiverId === otherUserId || m.senderId === otherUserId && m.receiverId === myId
-      ).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      );
     }
+    return dedupeConversationMessages(
+      filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    );
   };
   const activeMessages = getActiveMessages();
   const activeUser = conversationList.find((u) => u.id === activeConversationId);
@@ -143,7 +255,6 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     }
     messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [activeConversationId, activeMessages.length, isTyping, isWaitingForReply]);
-  const canSendAsStaffMessenger = canSendStaffStudentMessages(currentRole, adminChatEnabled, branchWhatsappEnabled);
   const getRelevantCounselorId = () => {
     if (canSendAsStaffMessenger) {
       return String(currentUser?.id || "").trim();
@@ -215,15 +326,52 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (matchedEmployee?.name) return matchedEmployee.name;
     return normalizedId;
   };
+  const buildReplyToPayload = (msg) => {
+    if (!msg?.id) return null;
+    const content = String(msg.content || "").trim();
+    const attachmentName = String(msg.attachment?.name || "").trim();
+    return {
+      id: String(msg.id),
+      senderId: String(msg.senderId || "").trim(),
+      content: content.slice(0, 280),
+      ...(attachmentName ? { attachmentName } : {})
+    };
+  };
+  const getReplyPreviewText = (reply) => {
+    if (!reply) return "";
+    const content = String(reply.content || "").trim();
+    if (content) return content;
+    if (reply.attachmentName) return reply.attachmentName;
+    return "Attachment";
+  };
+  const startReplyToMessage = (msg) => {
+    const payload = buildReplyToPayload(msg);
+    if (!payload) return;
+    setReplyingTo(payload);
+    requestAnimationFrame(() => textInputRef.current?.focus());
+  };
+  const scrollToMessage = (messageId) => {
+    const id = String(messageId || "").trim();
+    if (!id) return;
+    const el = document.getElementById(`chat-msg-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightMessageId(id);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightMessageId(null), 1600);
+  };
   const handleSend = async (e) => {
     e.preventDefault();
     if (!inputText.trim() || !activeConversationId) return;
     const text = inputText;
+    const replyPayload = replyingTo;
     setInputText("");
+    setReplyingTo(null);
     if (textInputRef.current) textInputRef.current.style.height = "auto";
-    const result = await onSendMessage(text, activeConversationId);
+    const result = await onSendMessage(text, activeConversationId, null, replyPayload);
     if (!result?.ok) {
       setInputText(text);
+      setReplyingTo(replyPayload);
       requestAnimationFrame(resizeTextInput);
       return;
     }
@@ -242,6 +390,27 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       }, 3e3);
     }, 1500);
   };
+  const CHAT_ATTACHMENT_MIME_BY_EXT = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    pdf: "application/pdf",
+    txt: "text/plain",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  };
+  const resolveChatAttachmentMime = (file) => {
+    const name = String(file?.name || "");
+    const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+    const fromExt = CHAT_ATTACHMENT_MIME_BY_EXT[ext] || "";
+    const fromType = String(file?.type || "").toLowerCase();
+    if (fromType && fromType !== "application/octet-stream") return fromType;
+    return fromExt;
+  };
   const handlePickAttachment = () => {
     fileInputRef.current?.click();
   };
@@ -249,23 +418,36 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || !activeConversationId) return;
+    const mime = resolveChatAttachmentMime(file);
+    if (!mime) {
+      window.alert("Unsupported file type. Use PDF, Word (.doc, .docx), Excel (.xls, .xlsx), TXT, or an image.");
+      return;
+    }
     if (file.size > MAX_UPLOAD_BYTES) {
       window.alert(`Attachment must be under ${MAX_UPLOAD_LABEL}.`);
       return;
     }
     const reader = new FileReader();
-    const dataUrl = await new Promise((resolve) => {
+    const rawDataUrl = await new Promise((resolve) => {
       reader.onload = () => resolve(String(reader.result || ""));
       reader.onerror = () => resolve("");
       reader.readAsDataURL(file);
     });
-    if (!dataUrl) return;
+    if (!rawDataUrl) return;
+    // Normalize empty/octet-stream data URLs so the server can store Office files.
+    const dataUrl = rawDataUrl.replace(/^data:[^;]*;base64,/, `data:${mime};base64,`);
+    const replyPayload = replyingTo;
     const result = await onSendMessage("", activeConversationId, {
       name: file.name,
-      mime: file.type || "",
+      mime,
       size: file.size || 0,
       dataUrl
-    });
+    }, replyPayload);
+    if (!result?.ok) {
+      window.alert(result?.error || "Failed to upload attachment.");
+      return;
+    }
+    setReplyingTo(null);
     if (result?.data) {
       setLiveMessages((prev) => {
         if (prev.some((msg) => msg.id === result.data.id)) return prev;
@@ -273,8 +455,6 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       });
     }
   };
-  const isGhostMode =
-    (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && !canSendAsStaffMessenger;
   if (!isChatsLoading && conversationList.length === 0) {
     return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [
       /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mx-auto mb-4 text-slate-300" }),
@@ -312,6 +492,17 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         const lastMsg = relatedMsgs[0];
         const isSelected = activeConversationId === user.id;
+        const myId = String(currentUser?.id || "").trim();
+        const unreadCount = isGhostMode
+          ? relatedMsgs.filter((m) => {
+              if (m.read === true) return false;
+              if (String(m.senderId || "").trim() !== String(user.id || "").trim()) return false;
+              return String(m.receiverId || "").trim() !== String(user.id || "").trim();
+            }).length
+          : relatedMsgs.filter(
+              (m) => String(m.receiverId || "").trim() === myId && m.read !== true
+            ).length;
+        const hasUnread = unreadCount > 0;
         return /* @__PURE__ */ jsxs(
           "div",
           {
@@ -320,11 +511,17 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
                                     ${isSelected ? "bg-white border-l-4 border-l-indigo-600 shadow-sm" : "border-l-4 border-l-transparent text-slate-600"}
                                 `,
             children: [
-              /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start mb-1", children: [
-                /* @__PURE__ */ jsx("span", { className: `font-semibold text-sm ${isSelected ? "text-indigo-900" : "text-slate-900"}`, children: user.name }),
-                lastMsg && /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400", children: new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) })
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start mb-1 gap-2", children: [
+                /* @__PURE__ */ jsx("span", { className: `text-sm truncate ${isSelected ? "text-indigo-900 font-semibold" : hasUnread ? "text-slate-900 font-bold" : "text-slate-900 font-semibold"}`, children: user.name }),
+                lastMsg && /* @__PURE__ */ jsx("span", { className: `text-[10px] whitespace-nowrap shrink-0 ${hasUnread ? "text-indigo-600 font-semibold" : "text-slate-400"}`, children: formatMessageDateTime(lastMsg.timestamp) })
               ] }),
-              /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 truncate h-4", children: lastMsg ? lastMsg.content || lastMsg.attachment?.name || "Attachment" : /* @__PURE__ */ jsx("span", { className: "italic text-slate-400", children: "No messages yet" }) }),
+              /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                /* @__PURE__ */ jsx("p", { className: `text-xs truncate h-4 min-w-0 flex-1 ${hasUnread ? "text-slate-700 font-medium" : "text-slate-500"}`, children: lastMsg ? lastMsg.content || lastMsg.attachment?.name || "Attachment" : /* @__PURE__ */ jsx("span", { className: "italic text-slate-400", children: "No messages yet" }) }),
+                hasUnread ? /* @__PURE__ */ jsx("span", {
+                  className: "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-bold shrink-0",
+                  children: unreadCount > 99 ? "99+" : String(unreadCount)
+                }) : null
+              ] }),
               isGhostMode && "counselor" in user && /* @__PURE__ */ jsxs("div", { className: "mt-2 text-[10px] text-slate-400 flex items-center gap-1", children: [
                 /* @__PURE__ */ jsx("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
                 "Agent: ",
@@ -374,10 +571,27 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           } else {
             isMe = msg.senderId === currentUser.id;
           }
-          return /* @__PURE__ */ jsx("div", { className: `flex ${isMe ? "justify-end" : "justify-start"}`, children: /* @__PURE__ */ jsxs("div", { className: `max-w-[72%] min-w-[120px] rounded-[10px] px-2.5 pt-1.5 pb-1 shadow-sm relative ${isMe ? "bg-indigo-100 text-slate-900 rounded-tr-[8px] border border-indigo-200/60" : "bg-white text-slate-900 rounded-tl-[8px] border border-slate-200"}`, children: [
+          const isHighlighted = highlightMessageId === String(msg.id || "");
+          return /* @__PURE__ */ jsx("div", { id: `chat-msg-${msg.id}`, className: `flex ${isMe ? "justify-end" : "justify-start"} group/msg`, children: /* @__PURE__ */ jsxs("div", { className: `max-w-[72%] min-w-[120px] rounded-[10px] px-2.5 pt-1.5 pb-1 shadow-sm relative transition-shadow ${isMe ? "bg-indigo-100 text-slate-900 rounded-tr-[8px] border border-indigo-200/60" : "bg-white text-slate-900 rounded-tl-[8px] border border-slate-200"} ${isHighlighted ? "ring-2 ring-indigo-400 shadow-md" : ""}`, children: [
             /* @__PURE__ */ jsx("span", { className: `absolute top-2 ${isMe ? "-right-1.5 bg-indigo-100 border-r border-t border-indigo-200/60" : "-left-1.5 bg-white border-l border-t border-slate-200"} h-3 w-3 rotate-45` }),
+            !isGhostMode ? /* @__PURE__ */ jsx("button", {
+              type: "button",
+              title: "Reply",
+              onClick: () => startReplyToMessage(msg),
+              className: `absolute -top-2 ${isMe ? "-left-2" : "-right-2"} opacity-100 md:opacity-0 md:group-hover/msg:opacity-100 focus:opacity-100 p-1 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-200 shadow-sm transition-opacity z-10`,
+              children: /* @__PURE__ */ jsx(Reply, { size: 12 })
+            }) : null,
             /* @__PURE__ */ jsx("p", { className: `text-[10px] font-semibold mb-0.5 ${isMe ? "text-indigo-700" : "text-slate-500"}`, children: getSenderName(msg.senderId) }),
-            msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words pr-12", children: msg.content }) : null,
+            msg.replyTo ? /* @__PURE__ */ jsxs("button", {
+              type: "button",
+              onClick: () => scrollToMessage(msg.replyTo.id),
+              className: `w-full text-left mb-1.5 rounded-md px-2 py-1.5 border-l-[3px] ${isMe ? "bg-indigo-50/80 border-indigo-400" : "bg-slate-50 border-slate-400"} hover:brightness-[0.98] transition`,
+              children: [
+                /* @__PURE__ */ jsx("p", { className: `text-[10px] font-semibold truncate ${isMe ? "text-indigo-700" : "text-slate-600"}`, children: getSenderName(msg.replyTo.senderId) }),
+                /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 truncate", children: getReplyPreviewText(msg.replyTo) })
+              ]
+            }) : null,
+            msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words", children: msg.content }) : null,
             msg.attachment ? /* @__PURE__ */ jsxs("div", { className: `${msg.content ? "mt-2" : ""} space-y-2`, children: [
               String(msg.attachment.mime || "").startsWith("image/") ? /* @__PURE__ */ jsx("img", { src: msg.attachment.url, alt: msg.attachment.name || "Image attachment", className: "max-h-64 rounded-xl border border-black/10 object-contain bg-white" }) : null,
               /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-100 text-slate-700"}`, children: [
@@ -385,8 +599,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
                 msg.attachment.name || "Attachment"
               ] })
             ] }) : null,
-            /* @__PURE__ */ jsxs("div", { className: `absolute bottom-1 right-2 flex items-center gap-1 text-[10px] ${isMe ? "text-indigo-700/80" : "text-slate-400"}`, children: [
-              new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            /* @__PURE__ */ jsxs("div", { className: `mt-1 flex items-center justify-end gap-1 text-[10px] whitespace-nowrap ${isMe ? "text-indigo-700/80" : "text-slate-400"}`, children: [
+              formatMessageDateTime(msg.timestamp),
               isMe && (msg.read ? /* @__PURE__ */ jsx(CheckCheck, { size: 12, className: "text-[#53BDEB]", title: "Seen" }) : /* @__PURE__ */ jsx(Check, { size: 12, className: "text-slate-400", title: "Sent" }))
             ] })
           ] }) }, msg.id);
@@ -405,9 +619,28 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       /* @__PURE__ */ jsx("div", { className: "p-4 border-t border-indigo-100 bg-slate-100/80", children: isGhostMode ? /* @__PURE__ */ jsxs("div", { className: "bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-center gap-2 text-slate-500 text-sm", children: [
         /* @__PURE__ */ jsx(Lock, { size: 16 }),
         /* @__PURE__ */ jsx("span", { children: "Ghost Mode Active: Monitoring Only" })
-      ] }) : /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-end gap-2.5", children: [
+      ] }) : /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+        replyingTo ? /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-2 shadow-sm", children: [
+          /* @__PURE__ */ jsx("div", { className: "w-1 self-stretch rounded-full bg-indigo-500 shrink-0" }),
+          /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-[11px] font-semibold text-indigo-700 flex items-center gap-1", children: [
+              /* @__PURE__ */ jsx(Reply, { size: 12 }),
+              "Replying to ",
+              getSenderName(replyingTo.senderId)
+            ] }),
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 truncate", children: getReplyPreviewText(replyingTo) })
+          ] }),
+          /* @__PURE__ */ jsx("button", {
+            type: "button",
+            title: "Cancel reply",
+            onClick: () => setReplyingTo(null),
+            className: "p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100",
+            children: /* @__PURE__ */ jsx(X, { size: 14 })
+          })
+        ] }) : null,
+        /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-end gap-2.5", children: [
         /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*", className: "hidden", onChange: handleAttachmentChange }),
+          /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain", className: "hidden", onChange: handleAttachmentChange, title: "Attach PDF, Word, Excel, TXT, or image" }),
           /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
         ] }),
         /* @__PURE__ */ jsx(
@@ -420,6 +653,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               resizeTextInput();
             },
             onKeyDown: (e) => {
+              if (e.key === "Escape" && replyingTo) {
+                e.preventDefault();
+                setReplyingTo(null);
+                return;
+              }
               if (e.key !== "Enter") return;
               if (e.shiftKey || e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -437,12 +675,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               e.preventDefault();
               if (inputText.trim()) handleSend(e);
             },
-            placeholder: "Type a message...",
+            placeholder: replyingTo ? "Write a reply..." : "Type a message...",
             rows: 1,
             className: "flex-1 py-2.5 px-4 bg-white border border-gray-200 rounded-[22px] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm shadow-sm resize-none max-h-32 overflow-y-auto leading-[1.4]"
           }
         ),
         /* @__PURE__ */ jsx(Button, { type: "submit", className: "rounded-full w-10 h-10 p-0 flex items-center justify-center bg-[#0F172A] hover:bg-slate-800 border-none shrink-0", disabled: !inputText.trim(), children: /* @__PURE__ */ jsx(Send, { size: 17, className: "ml-0.5" }) })
+      ] })
       ] }) })
     ] })
   ] });

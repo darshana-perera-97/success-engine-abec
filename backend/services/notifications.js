@@ -94,6 +94,7 @@ async function deliverStudentNotificationWhatsapp({
   attachment = null,
   preferredSenderIds = [],
   persistToChat = true,
+  replyTo = null,
 }) {
   const receiverId = String(studentId || student?.id || "").trim();
   const messageText = String(content || "").trim();
@@ -119,6 +120,7 @@ async function deliverStudentNotificationWhatsapp({
 
   const parts = [];
   let winningSenderId = "";
+  let winningResult = null;
   for (const senderId of candidates) {
     const result = await deliverCounselorMessageToStudentWhatsapp({
       senderId,
@@ -126,10 +128,12 @@ async function deliverStudentNotificationWhatsapp({
       content: messageText,
       attachment,
       persistToChat: false,
+      replyTo,
     });
     parts.push({ senderId, ...result });
     if (result.status === "sent") {
       winningSenderId = senderId;
+      winningResult = result;
       break;
     }
   }
@@ -146,11 +150,17 @@ async function deliverStudentNotificationWhatsapp({
       content: chatContent,
       attachment: hasAttachment ? attachment : null,
       whatsappDelivery: winningPart || aggregated,
+      replyTo,
     });
   }
 
   if (winningSenderId) {
-    return { ...aggregated, senderId: winningSenderId };
+    return {
+      ...aggregated,
+      senderId: winningSenderId,
+      ...(winningResult?.whatsappMessageId ? { whatsappMessageId: winningResult.whatsappMessageId } : {}),
+      ...(winningResult?.quotedMessageId ? { quotedMessageId: winningResult.quotedMessageId } : {}),
+    };
   }
   return aggregated;
 }
