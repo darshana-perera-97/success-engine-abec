@@ -84,6 +84,7 @@ import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import {
   formatWhatsappContactCardTitle,
   loadBranchWhatsappAccounts,
+  loadAllBranchWhatsappAccountGroups,
   resolveStudentBranchWhatsappAccount,
 } from "../utils/branchWhatsappAccounts";
 import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch, buildCounselorTransferHistory, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
@@ -1779,24 +1780,29 @@ const StudentProfile = ({
   };
   const openWhatsappContactDialog = async () => {
     if (!canRequestWhatsappContactChange || whatsappContactChangePending) return;
-    const branchLabel = String(localStudent.branch || "").trim();
-    const accounts = await loadBranchWhatsappAccounts(branchLabel);
+    const groups = await loadAllBranchWhatsappAccountGroups();
     const currentId = String(localStudent.branchWhatsappMessengerUserId || whatsappContactAccount?.userId || "").trim();
-    const alternatives = accounts.filter((row) => {
+    const allConnected = groups.flatMap((g) => (g.accounts || []).filter((row) => row.connected));
+    const alternatives = allConnected.filter((row) => {
       const userId = String(row?.userId || "").trim();
-      return userId && userId !== currentId && row.connected;
+      return userId && userId !== currentId;
     });
     if (!alternatives.length) {
       onNotify?.(
         "No alternative accounts",
-        "There are no other connected WhatsApp accounts available for this branch.",
+        "There are no other connected WhatsApp accounts available across any branch.",
         "warning"
       );
       return;
     }
+    const branchLabel = String(localStudent.branch || "").trim();
+    const branchMatch = alternatives.find((row) => {
+      const group = groups.find((g) => (g.accounts || []).includes(row));
+      return group && group.branch.toLowerCase() === branchLabel.toLowerCase();
+    });
     setWhatsappContactDialog({
       open: true,
-      messengerUserId: String(alternatives[0]?.userId || "").trim(),
+      messengerUserId: String((branchMatch || alternatives[0])?.userId || "").trim(),
       reason: "",
       saving: false,
       error: ""
@@ -3143,7 +3149,8 @@ const StudentProfile = ({
                 value: whatsappContactDialog.messengerUserId,
                 onChange: (value) => setWhatsappContactDialog((prev) => ({ ...prev, messengerUserId: value, error: "" })),
                 disabled: whatsappContactDialog.saving,
-                required: true
+                required: true,
+                allowAnyAccount: true
               })
             ] }),
             /* @__PURE__ */ jsxs("label", { className: "block", children: [

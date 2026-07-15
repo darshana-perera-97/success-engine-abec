@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts, searchStudents } from "../authApi";
-import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X } from "lucide-react";
+import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X, Layers } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole, canActAsPrimaryCounselorPortalRole } from "../roles";
@@ -115,6 +115,7 @@ const StudentList = ({
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
   const [countryFilter, setCountryFilter] = useState("All");
+  const [stageFilter, setStageFilter] = useState("All");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [accountCounselors, setAccountCounselors] = useState([]);
   const [assigningStudentId, setAssigningStudentId] = useState(null);
@@ -248,11 +249,12 @@ const StudentList = ({
     if (debouncedFilter) params.q = debouncedFilter;
     if (counselorFilter && counselorFilter !== "All") params.counselor = counselorFilter;
     if (countryFilter && countryFilter !== "All") params.country = countryFilter;
+    if (stageFilter && stageFilter !== "All") params.status = stageFilter;
     params.sortBy = sortBy;
     params.sortDirection = sortDirection;
     params.summary = true;
     return params;
-  }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilter, sortBy, sortDirection]);
+  }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilter, stageFilter, sortBy, sortDirection]);
 
   const fetchStudents = useCallback(async (params) => {
     const id = ++fetchIdRef.current;
@@ -436,6 +438,25 @@ const StudentList = ({
               children: [
                 /* @__PURE__ */ jsx("option", { value: "All", children: "All Countries" }),
                 ...countryOptions.map((country) => /* @__PURE__ */ jsx("option", { value: country, children: country }, country))
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-3.5 text-slate-400 pointer-events-none" })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[180px]", children: [
+          /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
+            /* @__PURE__ */ jsx(Layers, { size: 10, className: "inline mr-1 -mt-0.5" }),
+            "Stage"
+          ] }),
+          /* @__PURE__ */ jsx(
+            "select",
+            {
+              value: stageFilter,
+              onChange: (e) => setStageFilter(e.target.value),
+              className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm hover:shadow transition-shadow focus:outline-none focus:ring-2 focus:ring-slate-200",
+              children: [
+                /* @__PURE__ */ jsx("option", { value: "All", children: "All Stages" }),
+                ...PIPELINE_STEPS.map((stage) => /* @__PURE__ */ jsx("option", { value: stage, children: stage }, stage))
               ]
             }
           ),

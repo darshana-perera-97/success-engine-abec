@@ -1067,7 +1067,11 @@ async function syncWhatsappIncomingToChats() {
     }
     if (!student?.id) continue;
     const content = String(row.message || "").trim();
-    if (!content) continue;
+    const rowAttachment =
+      row.attachment && typeof row.attachment === "object" && row.attachment.url
+        ? row.attachment
+        : null;
+    if (!content && !rowAttachment) continue;
     const receiverId = resolveStudentPrimaryCounselorId(student, String(row.counselorId || ""));
     if (!receiverId) continue;
     const replyTo = normalizeReplyTo(row.replyTo);
@@ -1080,7 +1084,7 @@ async function syncWhatsappIncomingToChats() {
       timestamp: row.timestamp || new Date().toISOString(),
       read: false,
       platform: "whatsapp",
-      attachment: null,
+      attachment: rowAttachment,
       ...(replyTo ? { replyTo } : {}),
       whatsappIncomingId: String(row.id || "").trim(),
       whatsappMessageId: isNativeWhatsappMessageId(nativeWaId) ? nativeWaId : incomingKey,
@@ -1163,6 +1167,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
       : new Date().toISOString(),
     isGroup: false,
     mappedStudentId: String(student?.id || ""),
+    ...(attachment ? { attachment } : {}),
     ...(replyTo ? { replyTo } : {}),
     ...(incomingId ? { whatsappMessageId: incomingId } : {}),
   });

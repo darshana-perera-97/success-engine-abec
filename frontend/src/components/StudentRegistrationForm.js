@@ -107,6 +107,10 @@ export function StudentRegistrationForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError("");
+    if (form.name.trim() && !/^[a-zA-Z\s]+$/.test(form.name.trim())) {
+      setFormError("Name must contain only letters (a-z).");
+      return;
+    }
     const email = form.email.trim();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setFormError("Please enter a valid email address.");
@@ -200,7 +204,12 @@ export function StudentRegistrationForm() {
               autoComplete="name"
               className="w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               value={form.name}
-              onChange={(e) => update("name", e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "" || /^[a-zA-Z\s]+$/.test(val)) {
+                  update("name", val);
+                }
+              }}
               placeholder="As on your passport or ID"
             />
           </div>

@@ -592,13 +592,26 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               ]
             }) : null,
             msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words", children: msg.content }) : null,
-            msg.attachment ? /* @__PURE__ */ jsxs("div", { className: `${msg.content ? "mt-2" : ""} space-y-2`, children: [
-              String(msg.attachment.mime || "").startsWith("image/") ? /* @__PURE__ */ jsx("img", { src: msg.attachment.url, alt: msg.attachment.name || "Image attachment", className: "max-h-64 rounded-xl border border-black/10 object-contain bg-white" }) : null,
-              /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-100 text-slate-700"}`, children: [
-                "\ud83d\udcce ",
-                msg.attachment.name || "Attachment"
-              ] })
-            ] }) : null,
+            msg.attachment ? (() => {
+              const attMime = String(msg.attachment.mime || "").toLowerCase();
+              const isImage = attMime.startsWith("image/");
+              const isPdf = attMime === "application/pdf";
+              return /* @__PURE__ */ jsxs("div", { className: `${msg.content ? "mt-2" : ""} space-y-2`, children: [
+                isImage ? /* @__PURE__ */ jsx("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsx("img", { src: msg.attachment.url, alt: msg.attachment.name || "Image attachment", className: "max-h-64 rounded-xl border border-black/10 object-contain bg-white cursor-pointer hover:opacity-90 transition-opacity" }) }) : null,
+                isPdf ? /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-black/10 overflow-hidden bg-white", children: [
+                  /* @__PURE__ */ jsx("iframe", { src: `${msg.attachment.url}#toolbar=1&navpanes=0`, title: msg.attachment.name || "PDF attachment", className: "w-full h-72 border-0" }),
+                  /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `flex items-center gap-2 text-xs font-medium px-3 py-2 border-t border-black/5 ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-50 text-slate-700"}`, children: [
+                    "\ud83d\udcc4 ",
+                    msg.attachment.name || "PDF Document",
+                    " \u2014 Open"
+                  ] })
+                ] }) : null,
+                !isImage && !isPdf ? /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-100 text-slate-700"}`, children: [
+                  "\ud83d\udcce ",
+                  msg.attachment.name || "Attachment"
+                ] }) : null
+              ] });
+            })() : null,
             /* @__PURE__ */ jsxs("div", { className: `mt-1 flex items-center justify-end gap-1 text-[10px] whitespace-nowrap ${isMe ? "text-indigo-700/80" : "text-slate-400"}`, children: [
               formatMessageDateTime(msg.timestamp),
               isMe && (msg.read ? /* @__PURE__ */ jsx(CheckCheck, { size: 12, className: "text-[#53BDEB]", title: "Seen" }) : /* @__PURE__ */ jsx(Check, { size: 12, className: "text-slate-400", title: "Sent" }))
