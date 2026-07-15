@@ -80,6 +80,11 @@ function canSendWhatsappAttachmentMime(mime) {
     "image/jpg",
     "image/webp",
     "image/gif",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain",
   ]).has(normalized);
 }
 

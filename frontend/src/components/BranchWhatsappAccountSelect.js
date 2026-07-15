@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   formatBranchWhatsappAccountLabel,
   loadAllBranchWhatsappAccountGroups,
@@ -22,6 +22,11 @@ export function BranchWhatsappAccountSelect({
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
 
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
   useEffect(() => {
     if (!allowAnyAccount) return undefined;
     let cancelled = false;
@@ -36,15 +41,15 @@ export function BranchWhatsappAccountSelect({
         setLoadError("No connected WhatsApp accounts found.");
         return;
       }
-      if (!String(value || "").trim()) {
+      if (!String(valueRef.current || "").trim()) {
         const nextValue = pickDefaultAccountIdFromGroups(rows, branchLabel);
-        if (nextValue) onChange?.(nextValue);
+        if (nextValue) onChangeRef.current?.(nextValue);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [allowAnyAccount, branchLabel, value, onChange]);
+  }, [allowAnyAccount, branchLabel]);
 
   useEffect(() => {
     if (allowAnyAccount) return undefined;
@@ -65,15 +70,15 @@ export function BranchWhatsappAccountSelect({
         setLoadError("No Manager or Team Lead WhatsApp accounts found for this branch.");
         return;
       }
-      if (!String(value || "").trim()) {
+      if (!String(valueRef.current || "").trim()) {
         const nextValue = pickDefaultBranchWhatsappAccountId(rows, "");
-        if (nextValue) onChange?.(nextValue);
+        if (nextValue) onChangeRef.current?.(nextValue);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [allowAnyAccount, branchLabel, value, onChange]);
+  }, [allowAnyAccount, branchLabel]);
 
   const renderOption = (account) => {
     const userId = String(account?.userId || "").trim();
@@ -97,7 +102,7 @@ export function BranchWhatsappAccountSelect({
           required={required}
           className={className}
         >
-          <option value="">{loading ? "Loading WhatsApp accounts…" : "Select WhatsApp account…"}</option>
+          {loading && <option value="">Loading WhatsApp accounts…</option>}
           {groups.map((group) => (
             <optgroup key={group.branch || "unassigned"} label={group.branch || "Unassigned"}>
               {group.accounts.map(renderOption)}
@@ -131,7 +136,7 @@ export function BranchWhatsappAccountSelect({
         required={required}
         className={className}
       >
-        <option value="">{loading ? "Loading WhatsApp accounts…" : "Select WhatsApp account…"}</option>
+        {loading && <option value="">Loading WhatsApp accounts…</option>}
         {accounts.map(renderOption)}
       </select>
       {loadError ? <p className="text-xs text-amber-800">{loadError}</p> : null}

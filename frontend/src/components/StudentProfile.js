@@ -1582,13 +1582,15 @@ const StudentProfile = ({
     const result = await getBranchWhatsappMessengerChangeRequests({ studentId, pendingOnly: true });
     setWhatsappContactChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
   }, [branchWhatsappEnabled, localStudent?.id]);
+  const localStudentRef = useRef(localStudent);
+  localStudentRef.current = localStudent;
   const refreshWhatsappContactAccount = useCallback(async () => {
     if (!branchWhatsappEnabled) {
       setWhatsappContactAccount(null);
       setWhatsappContactLoading(false);
       return;
     }
-    const branchLabel = String(localStudent?.branch || "").trim();
+    const branchLabel = String(localStudentRef.current?.branch || "").trim();
     if (!branchLabel) {
       setWhatsappContactAccount(null);
       setWhatsappContactLoading(false);
@@ -1596,9 +1598,9 @@ const StudentProfile = ({
     }
     setWhatsappContactLoading(true);
     const accounts = await loadBranchWhatsappAccounts(branchLabel);
-    setWhatsappContactAccount(resolveStudentBranchWhatsappAccount(accounts, localStudent));
+    setWhatsappContactAccount(resolveStudentBranchWhatsappAccount(accounts, localStudentRef.current));
     setWhatsappContactLoading(false);
-  }, [branchWhatsappEnabled, localStudent]);
+  }, [branchWhatsappEnabled, localStudent?.branch, localStudent?.id]);
   const refreshDetailChangePending = useCallback(async () => {
     const studentId = String(localStudent?.id || "").trim();
     if (!studentId) {

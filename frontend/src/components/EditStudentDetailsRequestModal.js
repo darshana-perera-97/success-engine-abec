@@ -51,6 +51,7 @@ export function EditStudentDetailsRequestModal({
   const [reason, setReason] = useState("");
   const [localError, setLocalError] = useState("");
 
+  const studentId = student?.id;
   useEffect(() => {
     if (open && student) {
       setStep(1);
@@ -58,7 +59,7 @@ export function EditStudentDetailsRequestModal({
       setReason("");
       setLocalError("");
     }
-  }, [open, student]);
+  }, [open, studentId]);
 
   const previewChanges = useMemo(() => {
     if (!student) return [];

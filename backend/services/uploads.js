@@ -146,6 +146,11 @@ function isSupportedWhatsappMediaMime(mime) {
     "image/jpg",
     "image/webp",
     "image/gif",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain",
   ]);
   return allowed.has(String(mime || "").toLowerCase());
 }
@@ -259,6 +264,8 @@ module.exports = {
   storeImageDataUrl,
   getDataUrlMime,
   extensionFromMime,
+  mimeFromExtension,
+  extensionFromFileName,
   sanitizeFileName,
   storeChatAttachmentDataUrl,
   isSupportedWhatsappMediaMime,

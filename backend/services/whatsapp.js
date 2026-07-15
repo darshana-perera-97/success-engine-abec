@@ -45,12 +45,12 @@ const BRANCH_WHATSAPP_ACTIVE_STATUSES = new Set([
 ]);
 
 const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
-const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl } = require("./uploads");
+const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl, extensionFromFileName, mimeFromExtension } = require("./uploads");
 const { appendWhatsappIncoming, readWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
 
-const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
+const AUTHENTICATED_STUCK_TIMEOUT_MS = 180 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 let isWhatsappShuttingDown = false;
@@ -286,7 +286,10 @@ function listBrowserProcessIdsForProfile(profileDir) {
 
 async function terminateBrowserProcessesUsingProfile(profileDir) {
   const initialPids = listBrowserProcessIdsForProfile(profileDir);
-  if (!initialPids.length) return;
+  if (!initialPids.length) {
+    await removeStaleBrowserLockFiles(profileDir);
+    return;
+  }
   for (const pid of initialPids) {
     try {
       process.kill(pid, "SIGTERM");
@@ -297,7 +300,7 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const remaining = listBrowserProcessIdsForProfile(profileDir);
-    if (!remaining.length) return;
+    if (!remaining.length) break;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   for (const pid of listBrowserProcessIdsForProfile(profileDir)) {
@@ -305,6 +308,19 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
       process.kill(pid, "SIGKILL");
     } catch {
       // Process may already be gone.
+    }
+  }
+  await removeStaleBrowserLockFiles(profileDir);
+}
+
+async function removeStaleBrowserLockFiles(profileDir) {
+  if (!profileDir) return;
+  const lockNames = ["SingletonLock", "SingletonSocket", "SingletonCookie"];
+  for (const name of lockNames) {
+    try {
+      await fs.unlink(path.join(profileDir, name));
+    } catch {
+      // File may not exist.
     }
   }
 }
@@ -1080,7 +1096,7 @@ async function syncWhatsappIncomingToChats() {
       id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
       senderId: String(student.id),
       receiverId,
-      content,
+      content: formatWhatsappReplyContent(content, replyTo),
       timestamp: row.timestamp || new Date().toISOString(),
       read: false,
       platform: "whatsapp",
@@ -1127,35 +1143,136 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   const content = String(message.body || "").trim();
   let attachment = null;
   if (message?.hasMedia === true && typeof message.downloadMedia === "function") {
-    try {
-      const media = await message.downloadMedia();
-      const mime = String(media?.mimetype || "").toLowerCase();
-      if (media?.data && isSupportedWhatsappMediaMime(mime)) {
-        const stored = await storeChatAttachmentDataUrl(
-          `data:${mime};base64,${media.data}`,
-          String(media?.filename || "whatsapp-media")
-        );
-        if (stored && !stored.error) {
-          attachment = {
-            name: stored.name,
-            mime: stored.mime,
-            size: stored.size,
-            url: stored.url,
-          };
+    const MEDIA_DOWNLOAD_RETRIES = 4;
+    const MEDIA_RETRY_DELAYS_MS = [3000, 5000, 8000];
+    const MEDIA_TIMEOUT_MS = 30000;
+    let media = null;
+    const serializedMsgId = String(message?.id?._serialized || "").trim();
+    const senderState = ensureWhatsappState(counselorId);
+
+    const tryDownload = async (msg) => {
+      return Promise.race([
+        msg.downloadMedia(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Media download timed out")), MEDIA_TIMEOUT_MS)
+        ),
+      ]);
+    };
+
+    const formatError = (err) =>
+      err instanceof Error
+        ? err.message
+        : typeof err === "object"
+          ? JSON.stringify(err)
+          : String(err);
+
+    for (let attempt = 1; attempt <= MEDIA_DOWNLOAD_RETRIES; attempt++) {
+      let targetMsg = message;
+      if (attempt > 1 && serializedMsgId && senderState.client) {
+        try {
+          const refetched = await senderState.client.getMessageById(serializedMsgId);
+          if (refetched && typeof refetched.downloadMedia === "function") {
+            targetMsg = refetched;
+          }
+        } catch {
+          // Fall back to original message object.
         }
       }
-    } catch {
-      attachment = null;
+      try {
+        media = await tryDownload(targetMsg);
+        if (media?.data) break;
+      } catch (downloadErr) {
+        const errDetail = formatError(downloadErr);
+        if (attempt < MEDIA_DOWNLOAD_RETRIES) {
+          logEvent("whatsapp", `media download attempt ${attempt}/${MEDIA_DOWNLOAD_RETRIES} failed, retrying`, {
+            from: fromChatId,
+            error: errDetail,
+            refetched: targetMsg !== message,
+          });
+          await new Promise((r) => setTimeout(r, MEDIA_RETRY_DELAYS_MS[attempt - 1] || 5000));
+        } else {
+          logEvent("whatsapp", "media download failed after retries", {
+            from: fromChatId,
+            attempts: MEDIA_DOWNLOAD_RETRIES,
+            error: errDetail,
+          });
+        }
+      }
+    }
+    if (media?.data) {
+      try {
+        let rawMime = String(media.mimetype || "").toLowerCase();
+        const semiIdx = rawMime.indexOf(";");
+        if (semiIdx !== -1) rawMime = rawMime.slice(0, semiIdx).trim();
+        const mediaFilename = String(media.filename || "whatsapp-media");
+        let effectiveMime = rawMime;
+        if (!effectiveMime || effectiveMime === "application/octet-stream") {
+          const fileExt = extensionFromFileName(mediaFilename);
+          if (fileExt) effectiveMime = mimeFromExtension(fileExt);
+        }
+        if (isSupportedWhatsappMediaMime(effectiveMime)) {
+          const stored = await storeChatAttachmentDataUrl(
+            `data:${effectiveMime};base64,${media.data}`,
+            mediaFilename
+          );
+          if (stored && !stored.error) {
+            attachment = {
+              name: stored.name,
+              mime: stored.mime,
+              size: stored.size,
+              url: stored.url,
+            };
+            const sizeKB = stored.size ? `${(stored.size / 1024).toFixed(1)} KB` : "unknown size";
+            logEvent("whatsapp", "media received", {
+              from: fromChatId,
+              studentId: String(student?.id || ""),
+              file: stored.name,
+              mime: stored.mime,
+              size: sizeKB,
+            });
+          }
+        } else {
+          logEvent("whatsapp", "media skipped (unsupported type)", {
+            from: fromChatId,
+            mime: effectiveMime || rawMime || "unknown",
+            filename: mediaFilename,
+          });
+        }
+      } catch (storeErr) {
+        logEvent("whatsapp", "media store failed", {
+          from: fromChatId,
+          error: String(storeErr?.message || storeErr),
+        });
+      }
     }
   }
+  const mediaDownloadFailed = message?.hasMedia === true && !attachment;
   const normalizedContent =
-    content || (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "");
+    content ||
+    (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "") ||
+    (mediaDownloadFailed ? "Sent a media file (could not be downloaded)." : "");
   if (!normalizedContent && !attachment) return;
   const receiverId = resolveStudentPrimaryCounselorId(student, counselorId);
   const replyTo = await buildReplyToFromWhatsappQuotedMessage(message, {
     studentId: String(student?.id || ""),
     counselorId: String(receiverId || counselorId || ""),
   });
+  // Fallback: extract quoted text from raw message data when getQuotedMessage() fails
+  let effectiveReplyTo = replyTo;
+  if (!effectiveReplyTo && message.hasQuotedMsg === true) {
+    try {
+      const rawQuotedBody = String(message?._data?.quotedMsg?.body || "").trim();
+      if (rawQuotedBody) {
+        effectiveReplyTo = normalizeReplyTo({
+          id: `WAQ-raw-${crypto.randomUUID().slice(0, 8)}`,
+          senderId: "",
+          content: rawQuotedBody,
+        });
+      }
+    } catch {
+      // Raw data access may not be available in all whatsapp-web.js versions.
+    }
+  }
   await appendWhatsappIncoming({
     id: `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
     counselorId: String(counselorId || ""),
@@ -1168,7 +1285,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     isGroup: false,
     mappedStudentId: String(student?.id || ""),
     ...(attachment ? { attachment } : {}),
-    ...(replyTo ? { replyTo } : {}),
+    ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
     ...(incomingId ? { whatsappMessageId: incomingId } : {}),
   });
   if (!student || !student.id) return;
@@ -1180,14 +1297,14 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
     senderId: String(student.id),
     receiverId,
-    content: normalizedContent,
+    content: formatWhatsappReplyContent(normalizedContent, effectiveReplyTo),
     timestamp: message.timestamp
       ? new Date(Number(message.timestamp) * 1000).toISOString()
       : new Date().toISOString(),
     read: false,
     platform: "whatsapp",
     attachment,
-    ...(replyTo ? { replyTo } : {}),
+    ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
     whatsappMessageId: incomingId,
     whatsappDelivery: {
       attempted: true,
@@ -1313,7 +1430,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
           deliveryResult = {
             attempted: false,
             status: "skipped",
-            reason: "Only PDF and image attachments can be sent via WhatsApp.",
+            reason: "Only PDF, Word, Excel, TXT, and image attachments can be sent via WhatsApp.",
           };
         } else {
           const mediaPath =
@@ -1352,6 +1469,9 @@ async function deliverCounselorMessageToStudentWhatsapp({
           const sendOptions = {};
           if (quotedMessageId) sendOptions.quotedMessageId = quotedMessageId;
           if (preparedMedia && whatsappBody) sendOptions.caption = whatsappBody;
+          if (preparedMedia && preparedMediaMime && !preparedMediaMime.startsWith("image/")) {
+            sendOptions.sendMediaAsDocument = true;
+          }
 
           const performSend = async () => {
             const live = ensureWhatsappState(sender.id);
@@ -1476,6 +1596,201 @@ async function deliverCounselorMessageToStudentWhatsapp({
   return deliveryResult;
 }
 
+async function syncWhatsappChatHistoryForStudent(counselorUserId, studentId) {
+  const cleanCounselorId = String(counselorUserId || "").trim();
+  const cleanStudentId = String(studentId || "").trim();
+  if (!cleanCounselorId) return { synced: 0, error: "Counselor user ID is required." };
+  if (!cleanStudentId) return { synced: 0, error: "Student ID is required." };
+
+  const state = ensureWhatsappState(cleanCounselorId);
+  if (!state.client || (state.status !== "connected" && state.status !== "authenticated")) {
+    return { synced: 0, error: "WhatsApp is not connected." };
+  }
+
+  const students = await readStudemts();
+  const student = students.find((s) => String(s.id || "") === cleanStudentId);
+  if (!student) return { synced: 0, error: "Student not found." };
+
+  const phone = resolveStudentWhatsappPhone(student);
+  const waChatId = toWhatsAppChatId(phone);
+  if (!waChatId) return { synced: 0, error: "Student WhatsApp number is missing." };
+
+  let waChat;
+  try {
+    waChat = await state.client.getChatById(waChatId);
+  } catch {
+    return { synced: 0, error: "WhatsApp chat not found for this student." };
+  }
+  if (!waChat) return { synced: 0, error: "WhatsApp chat not found for this student." };
+
+  let waMessages;
+  try {
+    waMessages = await waChat.fetchMessages({ limit: 50 });
+  } catch {
+    return { synced: 0, error: "Failed to fetch WhatsApp messages." };
+  }
+  if (!waMessages || !waMessages.length) return { synced: 0 };
+
+  const chats = await readChats();
+  const existingWaIds = new Set(
+    chats.map((c) => String(c.whatsappMessageId || "").trim()).filter(Boolean)
+  );
+
+  const receiverId = resolveStudentPrimaryCounselorId(student, cleanCounselorId);
+  const toAdd = [];
+
+  for (const msg of waMessages) {
+    if (isWhatsappGroupIncomingMessage(msg)) continue;
+
+    const waId = String(msg.id?._serialized || "").trim();
+    if (!waId || existingWaIds.has(waId)) continue;
+
+    const isFromMe = msg.fromMe === true;
+    const senderId = isFromMe ? (receiverId || cleanCounselorId) : String(student.id);
+    const msgReceiverId = isFromMe ? String(student.id) : (receiverId || cleanCounselorId);
+    const content = String(msg.body || "").trim();
+
+    let attachment = null;
+    if (msg.hasMedia === true && typeof msg.downloadMedia === "function") {
+      try {
+        const media = await Promise.race([
+          msg.downloadMedia(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Media download timed out")), 30000)
+          ),
+        ]);
+        if (media?.data) {
+          let rawMime = String(media.mimetype || "").toLowerCase();
+          const semiIdx = rawMime.indexOf(";");
+          if (semiIdx !== -1) rawMime = rawMime.slice(0, semiIdx).trim();
+          const mediaFilename = String(media.filename || "whatsapp-media");
+          let effectiveMime = rawMime;
+          if (!effectiveMime || effectiveMime === "application/octet-stream") {
+            const fileExt = extensionFromFileName(mediaFilename);
+            if (fileExt) effectiveMime = mimeFromExtension(fileExt);
+          }
+          if (isSupportedWhatsappMediaMime(effectiveMime)) {
+            const stored = await storeChatAttachmentDataUrl(
+              `data:${effectiveMime};base64,${media.data}`,
+              mediaFilename
+            );
+            if (stored && !stored.error) {
+              attachment = {
+                name: stored.name,
+                mime: stored.mime,
+                size: stored.size,
+                url: stored.url,
+              };
+            }
+          }
+        }
+      } catch {
+        // Skip media if download fails during history sync.
+      }
+    }
+
+    const normalizedContent =
+      content || (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "");
+    if (!normalizedContent && !attachment) continue;
+
+    let replyTo = null;
+    try {
+      replyTo = await buildReplyToFromWhatsappQuotedMessage(msg, {
+        studentId: String(student.id),
+        counselorId: String(receiverId || cleanCounselorId),
+      });
+    } catch {
+      replyTo = null;
+    }
+
+    toAdd.push({
+      id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
+      senderId,
+      receiverId: msgReceiverId,
+      content: normalizedContent,
+      timestamp: msg.timestamp
+        ? new Date(Number(msg.timestamp) * 1000).toISOString()
+        : new Date().toISOString(),
+      read: true,
+      platform: "whatsapp",
+      attachment,
+      ...(replyTo ? { replyTo } : {}),
+      whatsappMessageId: waId,
+      whatsappDelivery: {
+        attempted: true,
+        status: isFromMe ? "sent" : "received",
+        channel: "whatsapp",
+        chatId: waChatId,
+      },
+    });
+    existingWaIds.add(waId);
+  }
+
+  if (!toAdd.length) return { synced: 0 };
+
+  const latestChats = await readChats();
+  const latestWaIds = new Set(
+    latestChats.map((c) => String(c.whatsappMessageId || "").trim()).filter(Boolean)
+  );
+  const deduped = toAdd.filter((m) => !latestWaIds.has(m.whatsappMessageId));
+  if (!deduped.length) return { synced: 0 };
+
+  await writeChats([...latestChats, ...deduped]);
+  logEvent("whatsapp", "history sync completed", {
+    counselorId: cleanCounselorId,
+    studentId: cleanStudentId,
+    synced: deduped.length,
+  });
+  return { synced: deduped.length };
+}
+
+async function syncAllWhatsappChatHistory(counselorUserId) {
+  const cleanCounselorId = String(counselorUserId || "").trim();
+  if (!cleanCounselorId) return { synced: 0, error: "Counselor user ID is required." };
+
+  const state = ensureWhatsappState(cleanCounselorId);
+  if (!state.client || (state.status !== "connected" && state.status !== "authenticated")) {
+    return { synced: 0, error: "WhatsApp is not connected." };
+  }
+
+  let waChats;
+  try {
+    waChats = await state.client.getChats();
+  } catch {
+    return { synced: 0, error: "Failed to fetch WhatsApp chats." };
+  }
+  if (!waChats || !waChats.length) return { synced: 0 };
+
+  const students = await readStudemts();
+  let totalSynced = 0;
+
+  for (const waChat of waChats) {
+    if (waChat.isGroup) continue;
+    const chatId = String(waChat.id?._serialized || "").trim();
+    if (!chatId || !chatId.includes("@c.us")) continue;
+
+    const numberPart = chatId.split("@")[0] || "";
+    const digits = normalizePhoneDigits(numberPart);
+    if (!digits) continue;
+
+    const student = students.find((s) => studentPhoneDigitsMatch(digits, s));
+    if (!student) continue;
+
+    try {
+      const result = await syncWhatsappChatHistoryForStudent(cleanCounselorId, String(student.id));
+      totalSynced += (result.synced || 0);
+    } catch {
+      // Continue syncing remaining students even if one fails.
+    }
+  }
+
+  logEvent("whatsapp", "full history sync completed", {
+    counselorId: cleanCounselorId,
+    synced: totalSynced,
+  });
+  return { synced: totalSynced };
+}
+
 module.exports = {
   isSupportedWhatsappMediaMime,
   sanitizeUserIdForPath,
@@ -1502,6 +1817,8 @@ module.exports = {
   findStudentByWhatsappFrom,
   persistIncomingWhatsappMessage,
   syncWhatsappIncomingToChats,
+  syncWhatsappChatHistoryForStudent,
+  syncAllWhatsappChatHistory,
   isWhatsappGroupChatRecord,
   resolveStudentPrimaryCounselorId,
   deliverCounselorMessageToStudentWhatsapp,

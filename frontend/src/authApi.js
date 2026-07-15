@@ -1514,6 +1514,26 @@ export async function getWhatsappStatus(userId) {
   }
 }
 
+export async function syncWhatsappHistory(userId, studentId = "") {
+  try {
+    const res = await fetch(`${API_BASE}/api/whatsapp/sync-history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, ...(studentId ? { studentId } : {}) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to sync WhatsApp history.", synced: data.synced || 0 };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach WhatsApp server. Please contact the Support team."
+    };
+  }
+}
+
 export async function connectWhatsapp(userId) {
   try {
     const res = await fetch(`${API_BASE}/api/whatsapp/connect`, {

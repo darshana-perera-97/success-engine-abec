@@ -1,7 +1,7 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useEffect, useRef } from "react";
-import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle, Reply, X } from "lucide-react";
-import { getAccounts, getChats, getWhatsappStatus } from "../authApi";
+import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle, Reply, X, RefreshCw } from "lucide-react";
+import { getAccounts, getChats, getWhatsappStatus, syncWhatsappHistory } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole, canSendStaffStudentMessages, isStudentMessagingStaffRole } from "../roles";
@@ -42,6 +42,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [whatsappSyncStatus, setWhatsappSyncStatus] = useState("disconnected");
   const [replyingTo, setReplyingTo] = useState(null);
   const [highlightMessageId, setHighlightMessageId] = useState(null);
+  const [isSyncingWhatsapp, setIsSyncingWhatsapp] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -291,8 +292,26 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       clearInterval(timer);
     };
   }, [relevantCounselorId]);
+  const isWhatsappConnected = whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated";
+  const handleSyncWhatsapp = async () => {
+    if (isSyncingWhatsapp || !isWhatsappConnected || !relevantCounselorId) return;
+    setIsSyncingWhatsapp(true);
+    try {
+      const studentId = currentRole === "Student" ? "" : String(activeConversationId || "").trim();
+      await syncWhatsappHistory(relevantCounselorId, studentId);
+      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
+      const result = await getChats(shouldLoadAll ? "" : currentUser?.id, { markRead: false });
+      if (result.ok) {
+        setLiveMessages(result.data || []);
+        lastSignatureRef.current = "";
+      }
+    } catch {
+      // Sync failed silently; next poll will pick up any new messages.
+    }
+    setIsSyncingWhatsapp(false);
+  };
   const whatsappSyncLabel =
-    whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated"
+    isWhatsappConnected
       ? "WhatsApp Connected"
       : whatsappSyncStatus === "connecting" || whatsappSyncStatus === "awaiting_qr_scan"
         ? "WhatsApp Connecting"
@@ -518,8 +537,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
                 /* @__PURE__ */ jsx("p", { className: `text-xs truncate h-4 min-w-0 flex-1 ${hasUnread ? "text-slate-700 font-medium" : "text-slate-500"}`, children: lastMsg ? lastMsg.content || lastMsg.attachment?.name || "Attachment" : /* @__PURE__ */ jsx("span", { className: "italic text-slate-400", children: "No messages yet" }) }),
                 hasUnread ? /* @__PURE__ */ jsx("span", {
-                  className: "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-bold shrink-0",
-                  children: unreadCount > 99 ? "99+" : String(unreadCount)
+                  className: "w-2.5 h-2.5 rounded-full bg-indigo-600 shrink-0"
                 }) : null
               ] }),
               isGhostMode && "counselor" in user && /* @__PURE__ */ jsxs("div", { className: "mt-2 text-[10px] text-slate-400 flex items-center gap-1", children: [
@@ -548,9 +566,19 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-gray-100", children: [
-          /* @__PURE__ */ jsx("div", { className: `w-2 h-2 rounded-full ${whatsappSyncDotClass}` }),
-          whatsappSyncLabel
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-gray-100", children: [
+            /* @__PURE__ */ jsx("div", { className: `w-2 h-2 rounded-full ${whatsappSyncDotClass}` }),
+            whatsappSyncLabel
+          ] }),
+          !isGhostMode && isWhatsappConnected && /* @__PURE__ */ jsx("button", {
+            type: "button",
+            title: isSyncingWhatsapp ? "Syncing WhatsApp messages..." : "Sync WhatsApp messages",
+            onClick: handleSyncWhatsapp,
+            disabled: isSyncingWhatsapp,
+            className: `p-2 rounded-full border border-gray-100 bg-slate-50 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:outline-none`,
+            children: /* @__PURE__ */ jsx(RefreshCw, { size: 14, className: isSyncingWhatsapp ? "animate-spin" : "" })
+          })
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { ref: messagesContainerRef, className: "flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50", children: [
@@ -594,8 +622,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
             msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words", children: msg.content }) : null,
             msg.attachment ? (() => {
               const attMime = String(msg.attachment.mime || "").toLowerCase();
+              const attName = String(msg.attachment.name || "").toLowerCase();
+              const attUrl = String(msg.attachment.url || "").toLowerCase();
               const isImage = attMime.startsWith("image/");
-              const isPdf = attMime === "application/pdf";
+              const isPdf = attMime === "application/pdf" || attMime.startsWith("application/pdf") || attName.endsWith(".pdf") || attUrl.endsWith(".pdf");
+              const isWord = attMime === "application/msword" || attMime.includes("wordprocessingml") || attName.endsWith(".doc") || attName.endsWith(".docx");
+              const isExcel = attMime === "application/vnd.ms-excel" || attMime.includes("spreadsheetml") || attName.endsWith(".xls") || attName.endsWith(".xlsx");
+              const isDocFile = isWord || isExcel || attMime === "text/plain" || attName.endsWith(".txt");
               return /* @__PURE__ */ jsxs("div", { className: `${msg.content ? "mt-2" : ""} space-y-2`, children: [
                 isImage ? /* @__PURE__ */ jsx("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsx("img", { src: msg.attachment.url, alt: msg.attachment.name || "Image attachment", className: "max-h-64 rounded-xl border border-black/10 object-contain bg-white cursor-pointer hover:opacity-90 transition-opacity" }) }) : null,
                 isPdf ? /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-black/10 overflow-hidden bg-white", children: [
@@ -606,7 +639,16 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
                     " \u2014 Open"
                   ] })
                 ] }) : null,
-                !isImage && !isPdf ? /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-100 text-slate-700"}`, children: [
+                !isImage && !isPdf && isDocFile ? /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `flex items-center gap-2 text-sm font-medium px-3 py-2.5 rounded-xl border ${isMe ? "bg-indigo-50 border-indigo-200 text-indigo-800" : "bg-white border-slate-200 text-slate-700"} hover:shadow-sm transition-shadow`, children: [
+                  isWord ? "\ud83d\udcdd" : isExcel ? "\ud83d\udcca" : "\ud83d\udcc4",
+                  " ",
+                  /* @__PURE__ */ jsxs("span", { className: "flex flex-col min-w-0", children: [
+                    /* @__PURE__ */ jsx("span", { className: "truncate font-semibold text-xs", children: msg.attachment.name || "Document" }),
+                    /* @__PURE__ */ jsx("span", { className: "text-[10px] opacity-60", children: isWord ? "Word Document" : isExcel ? "Excel Spreadsheet" : "Text File" })
+                  ] }),
+                  /* @__PURE__ */ jsx("span", { className: "ml-auto text-[10px] opacity-50 shrink-0", children: msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(0)} KB` : "Download" })
+                ] }) : null,
+                !isImage && !isPdf && !isDocFile ? /* @__PURE__ */ jsxs("a", { href: msg.attachment.url, target: "_blank", rel: "noreferrer", className: `inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1.5 rounded-lg ${isMe ? "bg-indigo-50 text-indigo-800" : "bg-slate-100 text-slate-700"}`, children: [
                   "\ud83d\udcce ",
                   msg.attachment.name || "Attachment"
                 ] }) : null

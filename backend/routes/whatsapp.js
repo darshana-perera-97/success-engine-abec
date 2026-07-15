@@ -8,6 +8,8 @@ const {
   resolveWhatsappMessenger,
   resolveWhatsappIntegrationContextForUser,
   prepareBranchWhatsappConnect,
+  syncWhatsappChatHistoryForStudent,
+  syncAllWhatsappChatHistory,
 } = require("../services/whatsapp");
 const {
   assertCanManageWhatsappConnection,
@@ -189,6 +191,37 @@ async function handle(req, res, url) {
       sendJson(res, 200, { ok: true, data, context });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to disconnect WhatsApp." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/whatsapp/sync-history") {
+    try {
+      const body = await parseBody(req);
+      const userId = String(body.userId || "").trim();
+      const studentId = String(body.studentId || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return true;
+      }
+      const messenger = await resolveWhatsappMessenger(userId);
+      if (!messenger) {
+        sendJson(res, 404, { ok: false, error: "WhatsApp account not found." });
+        return true;
+      }
+      let result;
+      if (studentId) {
+        result = await syncWhatsappChatHistoryForStudent(userId, studentId);
+      } else {
+        result = await syncAllWhatsappChatHistory(userId);
+      }
+      if (result.error) {
+        sendJson(res, 400, { ok: false, error: result.error, synced: result.synced || 0 });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, data: result });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: String(error?.message || "Failed to sync WhatsApp history.") });
     }
     return true;
   }
