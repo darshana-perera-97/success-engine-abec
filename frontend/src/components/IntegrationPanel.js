@@ -81,6 +81,22 @@ const defaultContext = {
   messengerName: "",
 };
 
+const QR_SIGNIN_TIMEOUT_ERROR =
+  "WhatsApp sign-in timed out after QR scan. Please connect again to generate a fresh QR code.";
+const AUTO_RECONNECT_COOLDOWN_MS = 60 * 60 * 1000; // once per hour
+
+function autoReconnectStorageKey(userId) {
+  return `whatsapp-auto-reconnect:${String(userId || "").trim()}`;
+}
+
+function markAutoReconnectAttempt(userId) {
+  try {
+    localStorage.setItem(autoReconnectStorageKey(userId), String(Date.now()));
+  } catch {
+    // Ignore storage failures; in-memory guard still prevents rapid retries this session.
+  }
+}
+
 export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false }) {
   const [state, setState] = useState(null);
   const [context, setContext] = useState(defaultContext);
@@ -89,6 +105,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
   const [branchAccounts, setBranchAccounts] = useState([]);
   const [branchAccountsLoading, setBranchAccountsLoading] = useState(false);
   const statusFailureCountRef = useRef(0);
+  const autoReconnectInFlightRef = useRef(false);
   const userId = String(currentUser?.id || "").trim();
   const isAdmin = String(currentUser?.role || "").trim() === "Admin";
   const showAdminBranchOverview = isAdmin && branchWhatsappEnabled === true;
@@ -199,20 +216,65 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
   }, [showAdminBranchOverview]);
 
   const handleConnect = async () => {
-    if (!userId || !canManage) return;
+    if (!userId || !canManage) return false;
     setLoading(true);
     setActionError("");
     const response = await connectWhatsapp(userId);
     setLoading(false);
     if (!response.ok) {
       setActionError(response.error || "Failed to start WhatsApp connection.");
-      return;
+      return false;
     }
     setState(response.data);
     if (response.context) {
       setContext({ ...defaultContext, ...response.context });
     }
+    return true;
   };
+  const handleConnectRef = useRef(handleConnect);
+  handleConnectRef.current = handleConnect;
+
+  // When QR sign-in times out, auto-click Connect WhatsApp at most once per hour.
+  useEffect(() => {
+    if (!userId || !canManage) return undefined;
+    if (String(state?.error || "").trim() !== QR_SIGNIN_TIMEOUT_ERROR) return undefined;
+
+    let cancelled = false;
+    let timerId = null;
+
+    const remainingCooldownMs = () => {
+      try {
+        const lastAttemptMs = Number(localStorage.getItem(autoReconnectStorageKey(userId)) || 0);
+        if (!Number.isFinite(lastAttemptMs) || lastAttemptMs <= 0) return 0;
+        return Math.max(0, AUTO_RECONNECT_COOLDOWN_MS - (Date.now() - lastAttemptMs));
+      } catch {
+        return 0;
+      }
+    };
+
+    const schedule = (delayMs) => {
+      clearTimeout(timerId);
+      timerId = setTimeout(async () => {
+        if (cancelled || autoReconnectInFlightRef.current) return;
+        autoReconnectInFlightRef.current = true;
+        markAutoReconnectAttempt(userId);
+        try {
+          await handleConnectRef.current();
+        } finally {
+          autoReconnectInFlightRef.current = false;
+          // Keep retrying hourly while this timeout error is still showing.
+          if (!cancelled) schedule(AUTO_RECONNECT_COOLDOWN_MS);
+        }
+      }, delayMs);
+    };
+
+    schedule(remainingCooldownMs());
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
+  }, [userId, canManage, state?.error]);
 
   const handleDisconnect = async () => {
     if (!userId || !canManage) return;

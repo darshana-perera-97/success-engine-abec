@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye, Plane } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentManager } from "./DocumentManager";
@@ -55,7 +55,14 @@ const StudentDashboard = ({
   }, [student, onNavigate]);
   const counselorTeam = buildStudentDashboardCounselorRoster(student, employees);
   const { config: countryDocConfig } = useCountryDocConfig(student?.country);
+  // Same gate as counselor profile Visa tab: Documentation stage and after.
   const visaPilotUnlocked = isVisaPilotUnlockedForConfig(student.status, countryDocConfig);
+
+  useEffect(() => {
+    if (!visaPilotUnlocked && docTab === "visa-pilot") {
+      setDocTab("pipeline");
+    }
+  }, [visaPilotUnlocked, docTab]);
 
   const pipelineSteps = countryDocConfig?.pipelineSteps?.length ? countryDocConfig.pipelineSteps : PIPELINE_STEPS;
   const visualIndex = Math.max(0, getStudentPipelineStepIndex(student.status, countryDocConfig?.stages));
@@ -76,6 +83,10 @@ const StudentDashboard = ({
     pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const scrollToVisaPilotDocs = () => {
+    if (!visaPilotUnlocked) {
+      scrollToPipelineDocs();
+      return;
+    }
     setDocTab("visa-pilot");
     pipelineDocsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -253,9 +264,9 @@ const StudentDashboard = ({
                 /* @__PURE__ */ jsx(FileText, { size: 18, className: "text-indigo-600" }),
                 "Your documents"
               ] }),
-              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: docTab === "pipeline" ? "Pipeline requirements for your country and stage. Upload files and track review status — your counselor will approve or request changes." : "Visa Pilot checklist for your destination country. Upload each required visa document when you reach the Documentation stage." })
+              /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: docTab === "visa-pilot" && visaPilotUnlocked ? "Visa Pilot checklist for your destination country. Upload each required visa document." : "Pipeline requirements for your country and stage. Upload files and track review status — your counselor will approve or request changes." })
             ] }),
-            /* @__PURE__ */ jsxs("div", { className: "flex border-b border-gray-200 mb-6 gap-1", role: "tablist", "aria-label": "Document categories", children: [
+            visaPilotUnlocked && /* @__PURE__ */ jsxs("div", { className: "flex border-b border-gray-200 mb-6 gap-1", role: "tablist", "aria-label": "Document categories", children: [
               /* @__PURE__ */ jsxs(
                 "button",
                 {
@@ -285,7 +296,16 @@ const StudentDashboard = ({
                 }
               )
             ] }),
-            docTab === "pipeline" ? /* @__PURE__ */ jsx(
+            docTab === "visa-pilot" && visaPilotUnlocked ? /* @__PURE__ */ jsx(
+              VisaPilot,
+              {
+                student,
+                userRole: "Student",
+                countryDocConfig,
+                onUploadDocument,
+                onUpdateStudent
+              }
+            ) : /* @__PURE__ */ jsx(
               DocumentManager,
               {
                 student,
@@ -299,22 +319,7 @@ const StudentDashboard = ({
                 showUniversityOfferLettersBlock: true,
                 showProfileOtherDocuments: false
               }
-            ) : /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
-              !visaPilotUnlocked && /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700", children: [
-                /* @__PURE__ */ jsx("p", { className: "font-semibold", children: "Visa Pilot unlocks at the Documentation stage" }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "You can preview the visa checklist below. Uploads will open once your application reaches Documentation." })
-              ] }),
-              /* @__PURE__ */ jsx(
-                VisaPilot,
-                {
-                  student,
-                  userRole: "Student",
-                  countryDocConfig,
-                  onUploadDocument,
-                  onUpdateStudent
-                }
-              )
-            ] })
+            )
           ]
         }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
