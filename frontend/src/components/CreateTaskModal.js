@@ -3,7 +3,7 @@ import { useState } from "react";
 import { X, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "./Button";
 import { MultiSelect } from "./MultiSelect";
-import { DatePicker } from "./DatePicker";
+import { DatePicker, getLocalDateIso } from "./DatePicker";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { getRoleDisplayName } from "../roleDisplay";
 const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, userRole, students = [], employees = [] }) => {
@@ -163,7 +163,8 @@ const CreateTaskModal = ({ isOpen, onClose, onSubmit, student, currentUser, user
             label: "Due Date",
             value: dueDate,
             onChange: setDueDate,
-            required: true
+            required: true,
+            minDate: getLocalDateIso()
           }
         )
       ] }),

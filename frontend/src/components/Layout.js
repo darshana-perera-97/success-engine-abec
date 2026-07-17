@@ -10,7 +10,6 @@ import {
   FileText,
   Settings,
   Bell,
-  Search,
   Command,
   LogOut,
   BarChart3,
@@ -30,6 +29,7 @@ import {
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
+import { GlobalSearch } from "./GlobalSearch";
 const whatsappNavStatusLabel = (status, branchWhatsappEnabled = false) => {
   const s = String(status || "").trim();
   const branchPrefix = branchWhatsappEnabled ? "Branch WhatsApp" : "WhatsApp";
@@ -87,7 +87,9 @@ const Layout = ({
   showWhatsappNavIndicator = false,
   whatsappConnectionStatus = "disconnected",
   adminChatEnabled = false,
-  branchWhatsappEnabled = false
+  branchWhatsappEnabled = false,
+  onSelectStudent,
+  globalSearchScope = null
 }) => {
   void pageLoading;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -318,6 +320,7 @@ const Layout = ({
           { id: "accounts", label: "Accounts", icon: /* @__PURE__ */ jsx(Contact, { size: 20 }) },
           { id: "university", label: "Uni Database", icon: /* @__PURE__ */ jsx(Globe, { size: 20 }) },
           { id: "tasks", label: "Escalations", icon: /* @__PURE__ */ jsx(CheckSquare, { size: 20 }), badge: pipelineEscalationBadge },
+          { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) },
           { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) }
@@ -487,17 +490,7 @@ const Layout = ({
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 capitalize", children: activeView.replace("-", " ") })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4", children: [
-          currentRole !== "Student" && /* @__PURE__ */ jsxs("div", { className: "relative hidden md:block", children: [
-            /* @__PURE__ */ jsx(Search, { className: "absolute left-2.5 top-2.5 text-gray-400", size: 16 }),
-            /* @__PURE__ */ jsx(
-              "input",
-              {
-                type: "text",
-                placeholder: "Search anything...",
-                className: "pl-9 pr-4 py-1.5 w-64 text-sm bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400 focus:bg-white transition-all placeholder:text-gray-400"
-              }
-            )
-          ] }),
+          currentRole !== "Student" && onSelectStudent && /* @__PURE__ */ jsx(GlobalSearch, { searchScope: globalSearchScope || {}, onSelectStudent, className: "hidden md:block" }),
           showWhatsappNavIndicator && /* @__PURE__ */ jsx(
             "button",
             {

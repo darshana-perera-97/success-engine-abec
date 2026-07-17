@@ -1,7 +1,7 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getAccounts, searchStudents } from "../authApi";
-import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X, Layers } from "lucide-react";
+import { getAccounts, getBranches, searchStudents } from "../authApi";
+import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X, Layers, Building2 } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole, canActAsPrimaryCounselorPortalRole } from "../roles";
@@ -9,6 +9,7 @@ import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, get
 import { Button } from "./Button";
 import { AddStudentModal } from "./AddStudentModal";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
+import { MultiSelect } from "./MultiSelect";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
@@ -114,7 +115,8 @@ const StudentList = ({
 }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
-  const [countryFilter, setCountryFilter] = useState("All");
+  const [countryFilters, setCountryFilters] = useState([]);
+  const [branchFilters, setBranchFilters] = useState([]);
   const [stageFilter, setStageFilter] = useState("All");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [accountCounselors, setAccountCounselors] = useState([]);
@@ -221,6 +223,7 @@ const StudentList = ({
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchLoading, setSearchLoading] = useState(true);
   const [countryOptions, setCountryOptions] = useState([]);
+  const [branchOptions, setBranchOptions] = useState([]);
   const [debouncedFilter, setDebouncedFilter] = useState("");
   const debounceRef = useRef(null);
   const fetchIdRef = useRef(0);
@@ -248,13 +251,14 @@ const StudentList = ({
     }
     if (debouncedFilter) params.q = debouncedFilter;
     if (counselorFilter && counselorFilter !== "All") params.counselor = counselorFilter;
-    if (countryFilter && countryFilter !== "All") params.country = countryFilter;
+    if (countryFilters.length > 0) params.countries = countryFilters;
+    if (!scopeBranch && branchFilters.length > 0) params.filterBranches = branchFilters;
     if (stageFilter && stageFilter !== "All") params.status = stageFilter;
     params.sortBy = sortBy;
     params.sortDirection = sortDirection;
     params.summary = true;
     return params;
-  }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilter, stageFilter, sortBy, sortDirection]);
+  }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilters, branchFilters, stageFilter, sortBy, sortDirection]);
 
   const fetchStudents = useCallback(async (params) => {
     const id = ++fetchIdRef.current;
@@ -266,6 +270,7 @@ const StudentList = ({
       setSearchResults(result.data);
       setSearchTotal(result.total || result.data.length);
       if (result.countries) setCountryOptions(result.countries);
+      if (result.branches) setBranchOptions(result.branches);
     }
   }, []);
 
@@ -278,6 +283,37 @@ const StudentList = ({
     const countries = Array.from(new Set(students.map((s) => String(s.country || "").trim()).filter(Boolean)));
     if (countries.length > 0) setCountryOptions((prev) => prev.length > 0 ? prev : countries);
   }, [students]);
+
+  useEffect(() => {
+    if (scopeBranch) return;
+    let cancelled = false;
+    const loadBranches = async () => {
+      const result = await getBranches();
+      if (cancelled || !result.ok) return;
+      const locations = result.data.map((b) => String(b.location || "").trim()).filter(Boolean);
+      if (locations.length > 0) {
+        setBranchOptions((prev) => {
+          const merged = Array.from(new Set([...prev, ...locations])).sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" })
+          );
+          return merged;
+        });
+      }
+    };
+    loadBranches();
+    return () => {
+      cancelled = true;
+    };
+  }, [scopeBranch]);
+
+  const countryMultiSelectOptions = useMemo(
+    () => countryOptions.map((country) => ({ value: country, label: country })),
+    [countryOptions]
+  );
+  const branchMultiSelectOptions = useMemo(
+    () => branchOptions.map((branch) => ({ value: branch, label: branch })),
+    [branchOptions]
+  );
 
   const sortedFilteredStudents = searchResults;
 
@@ -424,25 +460,36 @@ const StudentList = ({
           ),
           /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-3.5 text-slate-400 pointer-events-none" })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[170px]", children: [
-          /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[200px] max-w-[260px]", children: [
+          /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded z-10", children: [
             /* @__PURE__ */ jsx(Globe2, { size: 10, className: "inline mr-1 -mt-0.5" }),
             "Country"
           ] }),
           /* @__PURE__ */ jsx(
-            "select",
+            MultiSelect,
             {
-              value: countryFilter,
-              onChange: (e) => setCountryFilter(e.target.value),
-              className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm hover:shadow transition-shadow focus:outline-none focus:ring-2 focus:ring-slate-200",
-              children: [
-                /* @__PURE__ */ jsx("option", { value: "All", children: "All Countries" }),
-                ...countryOptions.map((country) => /* @__PURE__ */ jsx("option", { value: country, children: country }, country))
-              ]
+              options: countryMultiSelectOptions,
+              value: countryFilters,
+              onChange: setCountryFilters,
+              placeholder: "All Countries"
             }
-          ),
-          /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-3.5 text-slate-400 pointer-events-none" })
+          )
         ] }),
+        !scopeBranch ? /* @__PURE__ */ jsxs("div", { className: "relative min-w-[200px] max-w-[260px]", children: [
+          /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded z-10", children: [
+            /* @__PURE__ */ jsx(Building2, { size: 10, className: "inline mr-1 -mt-0.5" }),
+            "Branch"
+          ] }),
+          /* @__PURE__ */ jsx(
+            MultiSelect,
+            {
+              options: branchMultiSelectOptions,
+              value: branchFilters,
+              onChange: setBranchFilters,
+              placeholder: "All Branches"
+            }
+          )
+        ] }) : null,
         /* @__PURE__ */ jsxs("div", { className: "relative min-w-[180px]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
             /* @__PURE__ */ jsx(Layers, { size: 10, className: "inline mr-1 -mt-0.5" }),
@@ -564,8 +611,20 @@ const StudentList = ({
             className: dt.rowInteractive,
             children: [
               /* @__PURE__ */ jsxs("td", { className: "px-6 py-3 font-medium text-slate-900", children: [
-                student.name,
-                student.priority === "High" && /* @__PURE__ */ jsx("span", { className: "ml-2 inline-block w-2 h-2 rounded-full bg-rose-500", title: "High Priority" })
+                /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 min-w-0", children: [
+                  student.id ? /* @__PURE__ */ jsx(
+                    "span",
+                    {
+                      className: "inline-flex shrink-0 items-center px-2 py-0.5 text-[10px] font-semibold rounded border border-slate-200 bg-slate-50 text-slate-600 tabular-nums",
+                      title: "Student ID",
+                      children: student.id
+                    }
+                  ) : null,
+                  /* @__PURE__ */ jsxs("span", { className: "min-w-0", children: [
+                    student.name,
+                    student.priority === "High" && /* @__PURE__ */ jsx("span", { className: "ml-2 inline-block w-2 h-2 rounded-full bg-rose-500", title: "High Priority" })
+                  ] })
+                ] })
               ] }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-600", children: student.country }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-500 text-xs", children: student.branch }),

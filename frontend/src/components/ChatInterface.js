@@ -5,8 +5,9 @@ import { getAccounts, getChats, getWhatsappStatus, syncWhatsappHistory } from ".
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
 import { Button } from "./Button";
 import { isCounselorEquivalentPortalRole, canSendStaffStudentMessages, isStudentMessagingStaffRole } from "../roles";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, MAX_CHAT_ATTACHMENTS } from "../uploadLimits";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
+import { renderChatMessageText } from "../utils/linkifyText";
 
 const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
@@ -43,6 +44,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [replyingTo, setReplyingTo] = useState(null);
   const [highlightMessageId, setHighlightMessageId] = useState(null);
   const [isSyncingWhatsapp, setIsSyncingWhatsapp] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -124,33 +127,50 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     return new Date(lastMsgB.timestamp).getTime() - new Date(lastMsgA.timestamp).getTime();
   });
   useEffect(() => {
-    if (currentRole !== "Student") return;
     const peer = String(initialChatPeerId || "").trim();
-    if (!peer) return;
-    const roster = buildCounselorTeamEntriesWithFallback(currentUser, employees);
-    if (!roster.some((c) => String(c.id || "").trim() === peer)) return;
-    setSelectedConversationId(peer);
-  }, [initialChatPeerId, currentRole, currentUser, employees]);
+    if (peer) {
+      if (!conversationList.some((entry) => String(entry?.id || "").trim() === peer)) return;
+      setSelectedConversationId((current) => (current === peer ? current : peer));
+      return;
+    }
+    // Sidebar open (Inbox / Omni-Channel / Live Ops): pick a conversation by default.
+    if (!conversationList.length) {
+      setSelectedConversationId(null);
+      return;
+    }
+    setSelectedConversationId((current) => {
+      const currentId = String(current || "").trim();
+      if (currentId && conversationList.some((entry) => String(entry?.id || "").trim() === currentId)) {
+        return current;
+      }
+      if (liveMessages.length) {
+        const studentIdsWithMessages = new Set(
+          liveMessages.flatMap((m) => [String(m.senderId || ""), String(m.receiverId || "")])
+        );
+        const firstWithMessages = conversationList.find((student) =>
+          studentIdsWithMessages.has(String(student.id || ""))
+        );
+        if (firstWithMessages) return firstWithMessages.id;
+      }
+      return conversationList[0].id;
+    });
+  }, [initialChatPeerId, conversationList, liveMessages]);
   useEffect(() => {
     setReplyingTo(null);
     setHighlightMessageId(null);
+    setPendingAttachments([]);
   }, [selectedConversationId]);
   useEffect(() => () => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
   }, []);
-  useEffect(() => {
-    if (selectedConversationId) return;
-    if (!conversationList.length || !liveMessages.length) return;
-    if (currentRole !== "Manager" && currentRole !== "Team Lead" && currentRole !== "Admin") return;
-    const studentIdsWithMessages = /* @__PURE__ */ new Set(
-      liveMessages.flatMap((m) => [String(m.senderId || ""), String(m.receiverId || "")])
-    );
-    const firstWithMessages = conversationList.find((student) => studentIdsWithMessages.has(String(student.id || "")));
-    if (firstWithMessages) {
-      setSelectedConversationId(firstWithMessages.id);
-    }
-  }, [selectedConversationId, conversationList, liveMessages, currentRole]);
-  const activeConversationId = selectedConversationId || conversationList[0]?.id;
+  const pendingInitialPeer = String(initialChatPeerId || "").trim();
+  const resolvedInitialPeer =
+    pendingInitialPeer &&
+    conversationList.some((entry) => String(entry?.id || "").trim() === pendingInitialPeer)
+      ? pendingInitialPeer
+      : null;
+  const activeConversationId =
+    selectedConversationId || resolvedInitialPeer || (!pendingInitialPeer ? conversationList[0]?.id : null);
   useEffect(() => {
     if (isGhostMode) return;
     const peerId = String(activeConversationId || "").trim();
@@ -363,6 +383,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (reply.attachmentName) return reply.attachmentName;
     return "Attachment";
   };
+  const getLastMessagePreview = (msg) => {
+    if (!msg) return "";
+    const content = String(msg.content || "").trim();
+    if (content) return content;
+    if (msg.attachment?.name) return msg.attachment.name;
+    return "Attachment";
+  };
   const startReplyToMessage = (msg) => {
     const payload = buildReplyToPayload(msg);
     if (!payload) return;
@@ -381,24 +408,62 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   };
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!inputText.trim() || !activeConversationId) return;
-    const text = inputText;
+    const text = inputText.trim();
+    if ((!text && pendingAttachments.length === 0) || !activeConversationId || isSending) return;
     const replyPayload = replyingTo;
     setInputText("");
     setReplyingTo(null);
     if (textInputRef.current) textInputRef.current.style.height = "auto";
-    const result = await onSendMessage(text, activeConversationId, null, replyPayload);
-    if (!result?.ok) {
-      setInputText(text);
-      setReplyingTo(replyPayload);
-      requestAnimationFrame(resizeTextInput);
-      return;
-    }
-    if (result.data) {
+    const attachmentsToSend = [...pendingAttachments];
+    setPendingAttachments([]);
+    setIsSending(true);
+    let replyUsed = false;
+    const appendSentMessage = (message) => {
+      if (!message?.id) return;
       setLiveMessages((prev) => {
-        if (prev.some((msg) => msg.id === result.data.id)) return prev;
-        return [...prev, result.data];
+        if (prev.some((msg) => msg.id === message.id)) return prev;
+        return [...prev, message];
       });
+    };
+    try {
+      if (text) {
+        const result = await onSendMessage(text, activeConversationId, null, replyPayload);
+        if (!result?.ok) {
+          setInputText(text);
+          setReplyingTo(replyPayload);
+          setPendingAttachments(attachmentsToSend);
+          requestAnimationFrame(resizeTextInput);
+          window.alert(result?.error || "Failed to send message.");
+          return;
+        }
+        appendSentMessage(result.data);
+        replyUsed = true;
+      }
+      for (let index = 0; index < attachmentsToSend.length; index += 1) {
+        const attachment = attachmentsToSend[index];
+        const result = await onSendMessage(
+          "",
+          activeConversationId,
+          {
+            name: attachment.name,
+            mime: attachment.mime,
+            size: attachment.size || 0,
+            dataUrl: attachment.dataUrl
+          },
+          !replyUsed ? replyPayload : null
+        );
+        if (!result?.ok) {
+          setInputText(text);
+          setReplyingTo(replyPayload);
+          setPendingAttachments(attachmentsToSend.slice(index));
+          window.alert(result?.error || "Failed to upload attachment.");
+          return;
+        }
+        appendSentMessage(result.data);
+        replyUsed = true;
+      }
+    } finally {
+      setIsSending(false);
     }
     setIsWaitingForReply(true);
     setTimeout(() => {
@@ -426,25 +491,30 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     const name = String(file?.name || "");
     const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
     const fromExt = CHAT_ATTACHMENT_MIME_BY_EXT[ext] || "";
+    if (fromExt) return fromExt;
     const fromType = String(file?.type || "").toLowerCase();
-    if (fromType && fromType !== "application/octet-stream") return fromType;
-    return fromExt;
+    if (fromType && fromType !== "application/octet-stream") {
+      return Object.values(CHAT_ATTACHMENT_MIME_BY_EXT).includes(fromType) ? fromType : "";
+    }
+    return "";
   };
-  const handlePickAttachment = () => {
-    fileInputRef.current?.click();
+  const buildChatAttachmentName = (file, mime) => {
+    const existing = String(file?.name || "").trim();
+    if (existing) return existing;
+    const subtype = String(mime || file?.type || "image/png").split("/")[1] || "png";
+    const ext = subtype === "jpeg" ? "jpg" : subtype.replace(/[^a-z0-9]/gi, "") || "png";
+    return `pasted-image-${Date.now()}.${ext}`;
   };
-  const handleAttachmentChange = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !activeConversationId) return;
+  const queueChatAttachment = async (file) => {
+    if (!file || !activeConversationId) return false;
     const mime = resolveChatAttachmentMime(file);
     if (!mime) {
       window.alert("Unsupported file type. Use PDF, Word (.doc, .docx), Excel (.xls, .xlsx), TXT, or an image.");
-      return;
+      return false;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       window.alert(`Attachment must be under ${MAX_UPLOAD_LABEL}.`);
-      return;
+      return false;
     }
     const reader = new FileReader();
     const rawDataUrl = await new Promise((resolve) => {
@@ -452,26 +522,71 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       reader.onerror = () => resolve("");
       reader.readAsDataURL(file);
     });
-    if (!rawDataUrl) return;
-    // Normalize empty/octet-stream data URLs so the server can store Office files.
+    if (!rawDataUrl) {
+      window.alert("Unable to read file. Try again.");
+      return false;
+    }
     const dataUrl = rawDataUrl.replace(/^data:[^;]*;base64,/, `data:${mime};base64,`);
-    const replyPayload = replyingTo;
-    const result = await onSendMessage("", activeConversationId, {
-      name: file.name,
-      mime,
-      size: file.size || 0,
-      dataUrl
-    }, replyPayload);
-    if (!result?.ok) {
-      window.alert(result?.error || "Failed to upload attachment.");
+    let queued = false;
+    setPendingAttachments((prev) => {
+      if (prev.length >= MAX_CHAT_ATTACHMENTS) return prev;
+      queued = true;
+      return [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: buildChatAttachmentName(file, mime),
+          mime,
+          size: file.size || 0,
+          dataUrl
+        }
+      ];
+    });
+    if (!queued) {
+      window.alert(`You can attach up to ${MAX_CHAT_ATTACHMENTS} files per message.`);
+    }
+    return queued;
+  };
+  const removePendingAttachment = (attachmentId) => {
+    setPendingAttachments((prev) => prev.filter((item) => item.id !== attachmentId));
+  };
+  const handlePickAttachment = () => {
+    if (pendingAttachments.length >= MAX_CHAT_ATTACHMENTS) {
+      window.alert(`You can attach up to ${MAX_CHAT_ATTACHMENTS} files per message.`);
       return;
     }
-    setReplyingTo(null);
-    if (result?.data) {
-      setLiveMessages((prev) => {
-        if (prev.some((msg) => msg.id === result.data.id)) return prev;
-        return [...prev, result.data];
-      });
+    fileInputRef.current?.click();
+  };
+  const handleAttachmentChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length || !activeConversationId) return;
+    const slotsLeft = MAX_CHAT_ATTACHMENTS - pendingAttachments.length;
+    if (slotsLeft <= 0) {
+      window.alert(`You can attach up to ${MAX_CHAT_ATTACHMENTS} files per message.`);
+      return;
+    }
+    const selectedFiles = files.slice(0, slotsLeft);
+    if (files.length > slotsLeft) {
+      window.alert(`Only ${slotsLeft} more file(s) can be added (maximum ${MAX_CHAT_ATTACHMENTS} per message).`);
+    }
+    for (const file of selectedFiles) {
+      const queued = await queueChatAttachment(file);
+      if (!queued) break;
+    }
+  };
+  const handlePaste = async (e) => {
+    if (!activeConversationId || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS) return;
+    const items = e.clipboardData?.items;
+    if (!items?.length) return;
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (item.kind !== "file" || !String(item.type || "").startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      await queueChatAttachment(file);
+      return;
     }
   };
   if (!isChatsLoading && conversationList.length === 0) {
@@ -522,11 +637,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               (m) => String(m.receiverId || "").trim() === myId && m.read !== true
             ).length;
         const hasUnread = unreadCount > 0;
+        const lastMessagePreview = lastMsg ? getLastMessagePreview(lastMsg) : "";
+        const lastMessageSender = lastMsg ? getSenderName(lastMsg.senderId) : "";
         return /* @__PURE__ */ jsxs(
           "div",
           {
             onClick: () => setSelectedConversationId(user.id),
-            className: `p-4 border-b border-gray-100 cursor-pointer transition-colors hover:bg-white outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]
+            title: lastMsg ? `${lastMessageSender}: ${lastMessagePreview}` : void 0,
+            className: `relative group p-4 border-b border-gray-100 cursor-pointer transition-colors hover:bg-white outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]
                                     ${isSelected ? "bg-white border-l-4 border-l-indigo-600 shadow-sm" : "border-l-4 border-l-transparent text-slate-600"}
                                 `,
             children: [
@@ -544,7 +662,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
                 /* @__PURE__ */ jsx("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
                 "Agent: ",
                 getCounselorDisplayName(user.counselor)
-              ] })
+              ] }),
+              lastMsg && /* @__PURE__ */ jsxs("div", {
+                className: "pointer-events-none absolute inset-0 z-10 flex flex-col justify-center bg-white/95 px-4 py-3 border border-indigo-200 shadow-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-150",
+                children: [
+                  /* @__PURE__ */ jsx("p", { className: "text-[11px] font-semibold text-indigo-700 truncate", children: lastMessageSender }),
+                  /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-1 line-clamp-4 whitespace-pre-wrap break-words", children: lastMessagePreview })
+                ]
+              })
             ]
           },
           user.id
@@ -552,6 +677,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       }) })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "flex-1 flex flex-col bg-white relative", children: [
+      !activeConversationId ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center flex-1 text-slate-400 px-6", children: [
+        /* @__PURE__ */ jsx(MessageCircle, { size: 56, className: "mb-4 text-slate-300" }),
+        /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-700", children: "Select a conversation" }),
+        /* @__PURE__ */ jsx("p", { className: "text-sm mt-2 text-center max-w-sm", children: "Choose a chat from the inbox to view messages and reply." })
+      ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
       /* @__PURE__ */ jsxs("div", { className: "h-16 border-b border-indigo-100 flex items-center justify-between px-6 bg-gradient-to-r from-indigo-50/70 to-white z-10", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
           /* @__PURE__ */ jsx("div", { className: "w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold overflow-hidden", children: activeUser && "avatar" in activeUser && activeUser.avatar ? /* @__PURE__ */ jsx("img", { src: activeUser.avatar, alt: activeUser.name, className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : (activeUser?.name || "?").charAt(0) }),
@@ -616,10 +746,10 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               className: `w-full text-left mb-1.5 rounded-md px-2 py-1.5 border-l-[3px] ${isMe ? "bg-indigo-50/80 border-indigo-400" : "bg-slate-50 border-slate-400"} hover:brightness-[0.98] transition`,
               children: [
                 /* @__PURE__ */ jsx("p", { className: `text-[10px] font-semibold truncate ${isMe ? "text-indigo-700" : "text-slate-600"}`, children: getSenderName(msg.replyTo.senderId) }),
-                /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 truncate", children: getReplyPreviewText(msg.replyTo) })
+                /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 whitespace-pre-wrap break-words line-clamp-3", children: renderChatMessageText(getReplyPreviewText(msg.replyTo), "text-indigo-600 underline hover:text-indigo-800") })
               ]
             }) : null,
-            msg.content ? /* @__PURE__ */ jsx("p", { className: "text-[14px] leading-[1.35] whitespace-pre-wrap break-words", children: msg.content }) : null,
+            msg.content ? /* @__PURE__ */ jsx("div", { className: "text-[14px] leading-[1.35] break-words [overflow-wrap:anywhere]", children: renderChatMessageText(msg.content, isMe ? "text-indigo-700 underline hover:text-indigo-900 break-all" : "text-indigo-600 underline hover:text-indigo-800 break-all") }) : null,
             msg.attachment ? (() => {
               const attMime = String(msg.attachment.mime || "").toLowerCase();
               const attName = String(msg.attachment.name || "").toLowerCase();
@@ -683,7 +813,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               "Replying to ",
               getSenderName(replyingTo.senderId)
             ] }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 truncate", children: getReplyPreviewText(replyingTo) })
+            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 whitespace-pre-wrap break-words line-clamp-2", children: renderChatMessageText(getReplyPreviewText(replyingTo)) })
           ] }),
           /* @__PURE__ */ jsx("button", {
             type: "button",
@@ -693,10 +823,29 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
             children: /* @__PURE__ */ jsx(X, { size: 14 })
           })
         ] }) : null,
+        pendingAttachments.length > 0 ? /* @__PURE__ */ jsxs("div", { className: "rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm", children: [
+          /* @__PURE__ */ jsxs("p", { className: "text-[11px] font-semibold text-slate-600 mb-2", children: [
+            "Attachments (",
+            pendingAttachments.length,
+            "/",
+            MAX_CHAT_ATTACHMENTS,
+            ")"
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-2", children: pendingAttachments.map((attachment) => /* @__PURE__ */ jsxs("div", { className: "inline-flex items-center gap-2 max-w-full rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700", children: [
+            /* @__PURE__ */ jsx("span", { className: "truncate", children: attachment.name }),
+            /* @__PURE__ */ jsx("button", {
+              type: "button",
+              title: "Remove attachment",
+              onClick: () => removePendingAttachment(attachment.id),
+              className: "p-0.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100",
+              children: /* @__PURE__ */ jsx(X, { size: 12 })
+            })
+          ] }, attachment.id)) })
+        ] }) : null,
         /* @__PURE__ */ jsxs("form", { onSubmit: handleSend, className: "flex items-end gap-2.5", children: [
         /* @__PURE__ */ jsxs(Fragment, { children: [
-          /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain", className: "hidden", onChange: handleAttachmentChange, title: "Attach PDF, Word, Excel, TXT, or image" }),
-          /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent]", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
+          /* @__PURE__ */ jsx("input", { ref: fileInputRef, type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.txt,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain", className: "hidden", onChange: handleAttachmentChange, title: `Attach up to ${MAX_CHAT_ATTACHMENTS} files (PDF, Word, Excel, TXT, or image)` }),
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: handlePickAttachment, disabled: isSending || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS, className: "p-2.5 rounded-full bg-white border border-gray-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors outline-none focus:outline-none focus-visible:outline-none [-webkit-tap-highlight-color:transparent] disabled:opacity-50 disabled:cursor-not-allowed", children: /* @__PURE__ */ jsx(Paperclip, { size: 18 }) })
         ] }),
         /* @__PURE__ */ jsx(
           "textarea",
@@ -707,6 +856,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
               setInputText(e.target.value);
               resizeTextInput();
             },
+            onPaste: handlePaste,
             onKeyDown: (e) => {
               if (e.key === "Escape" && replyingTo) {
                 e.preventDefault();
@@ -728,16 +878,17 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
                 return;
               }
               e.preventDefault();
-              if (inputText.trim()) handleSend(e);
+              if (inputText.trim() || pendingAttachments.length > 0) handleSend(e);
             },
             placeholder: replyingTo ? "Write a reply..." : "Type a message...",
             rows: 1,
             className: "flex-1 py-2.5 px-4 bg-white border border-gray-200 rounded-[22px] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm shadow-sm resize-none max-h-32 overflow-y-auto leading-[1.4]"
           }
         ),
-        /* @__PURE__ */ jsx(Button, { type: "submit", className: "rounded-full w-10 h-10 p-0 flex items-center justify-center bg-[#0F172A] hover:bg-slate-800 border-none shrink-0", disabled: !inputText.trim(), children: /* @__PURE__ */ jsx(Send, { size: 17, className: "ml-0.5" }) })
+        /* @__PURE__ */ jsx(Button, { type: "submit", className: "rounded-full w-10 h-10 p-0 flex items-center justify-center bg-[#0F172A] hover:bg-slate-800 border-none shrink-0", disabled: isSending || (!inputText.trim() && pendingAttachments.length === 0), children: /* @__PURE__ */ jsx(Send, { size: 17, className: "ml-0.5" }) })
       ] })
       ] }) })
+      ] })
     ] })
   ] });
 };

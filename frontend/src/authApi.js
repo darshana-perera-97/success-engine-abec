@@ -152,6 +152,26 @@ export async function updateCounselorTeamLead(accountId, teamLeadId) {
   }
 }
 
+export async function updateAccountProfile(accountId, { username, email }) {
+  try {
+    const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(accountId)}/profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, email })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.data) {
+      return { ok: false, error: data.error || "Failed to update account profile." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach account server. Please contact the Support team."
+    };
+  }
+}
+
 export async function resetAccountPassword(accountId, newPassword) {
   try {
     const res = await fetch(`${API_BASE}/api/accounts/${encodeURIComponent(accountId)}/reset-password`, {
@@ -1284,7 +1304,14 @@ export async function searchStudents(params = {}) {
     if (params.userCountry) query.set("userCountry", params.userCountry);
     if (params.q) query.set("q", params.q);
     if (params.counselor) query.set("counselor", params.counselor);
-    if (params.country) query.set("country", params.country);
+    if (Array.isArray(params.countries) && params.countries.length > 0) {
+      query.set("country", params.countries.join(","));
+    } else if (params.country) {
+      query.set("country", params.country);
+    }
+    if (Array.isArray(params.filterBranches) && params.filterBranches.length > 0) {
+      query.set("filterBranch", params.filterBranches.join(","));
+    }
     if (params.status) query.set("status", params.status);
     if (params.sortBy) query.set("sortBy", params.sortBy);
     if (params.sortDirection) query.set("sortDirection", params.sortDirection);
@@ -1297,7 +1324,13 @@ export async function searchStudents(params = {}) {
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to search students." };
     }
-    return { ok: true, data: data.data, total: data.total || 0, countries: data.countries || [] };
+    return {
+      ok: true,
+      data: data.data,
+      total: data.total || 0,
+      countries: data.countries || [],
+      branches: data.branches || [],
+    };
   } catch {
     return { ok: false, error: "Cannot reach student server. Please contact the Support team." };
   }

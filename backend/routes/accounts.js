@@ -360,6 +360,103 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "PUT" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/profile")) {
+    try {
+      const accountId = decodeURIComponent(
+        url.pathname.replace("/api/accounts/", "").replace("/profile", "").trim()
+      ).replace(/\/+$/, "");
+      if (!accountId) {
+        sendJson(res, 400, { ok: false, error: "Account ID is required." });
+        return true;
+      }
+      if (accountId === "ADM001") {
+        sendJson(res, 400, {
+          ok: false,
+          error: "The primary admin login is managed in backend configuration and cannot be edited here.",
+        });
+        return true;
+      }
+      const body = await parseBody(req);
+      const username = String(body.username || "").trim();
+      const email = normalizeEmail(body.email);
+      if (!username) {
+        sendJson(res, 400, { ok: false, error: "Username is required." });
+        return true;
+      }
+      if (!email) {
+        sendJson(res, 400, { ok: false, error: "Email is required." });
+        return true;
+      }
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailPattern.test(email)) {
+        sendJson(res, 400, { ok: false, error: "Enter a valid email." });
+        return true;
+      }
+
+      const users = await readUsers();
+      const studemts = await readStudemts();
+      const targetIndex = users.findIndex((u) => String(u.id || "") === accountId);
+      if (targetIndex === -1) {
+        sendJson(res, 404, { ok: false, error: "Account not found." });
+        return true;
+      }
+      const target = users[targetIndex];
+      if (normalizeEmail(target.email) === ADMIN_EMAIL) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "The primary admin login cannot be edited from this screen.",
+        });
+        return true;
+      }
+
+      const duplicateUser = users.find(
+        (u, idx) => idx !== targetIndex && normalizeEmail(u.email) === email
+      );
+      if (duplicateUser || email === ADMIN_EMAIL) {
+        sendJson(res, 409, { ok: false, error: "Account email already exists." });
+        return true;
+      }
+      if (studemts.some((s) => normalizeEmail(s.email) === email)) {
+        sendJson(res, 409, { ok: false, error: "Email is already used by a student profile." });
+        return true;
+      }
+
+      const updatedAccount = {
+        ...target,
+        username,
+        email,
+        updatedAt: new Date().toISOString(),
+      };
+      const updatedUsers = users.map((u, idx) => {
+        if (idx === targetIndex) return updatedAccount;
+        if (isCounselorRole(u.role) && String(u.teamLeadId || "") === accountId) {
+          return {
+            ...u,
+            teamLeadName: username,
+            teamLeadEmail: email,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return u;
+      });
+      await writeUsers(updatedUsers);
+      logEvent("auth", "admin updated account profile", {
+        accountId: updatedAccount.id,
+        previousEmail: target.email,
+        email: updatedAccount.email,
+        previousUsername: target.username,
+        username: updatedAccount.username,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+      });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname.startsWith("/api/accounts/") && url.pathname.endsWith("/reset-password")) {
     try {
       const accountId = decodeURIComponent(

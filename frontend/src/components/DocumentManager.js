@@ -1,6 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useState, useMemo } from "react";
-import { Upload, FileText, Check, X, AlertCircle, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen } from "lucide-react";
+import { Upload, FileText, Check, X, AlertCircle, Hourglass, Download, MessageCircle, FileUp, Trash2, Plus, FolderOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentViewButton, documentDownloadProps, useDocumentPreview } from "./DocumentPreviewModal";
 import {
@@ -59,6 +59,36 @@ function DocumentRequirementBadge({ required }) {
     children: isRequired ? "Required" : "Optional",
   });
 }
+
+function DocumentVerificationProgress({ verified, total, compact = false, className = "" }) {
+  if (total <= 0) return null;
+  const pct = Math.round((verified / total) * 100);
+  const barColor = pct >= 100 ? "bg-emerald-500" : pct >= 50 ? "bg-indigo-500" : "bg-amber-500";
+  const trackHeight = compact ? "h-1.5" : "h-2";
+  return jsx("div", {
+    className: `${compact ? "w-24 sm:w-32 shrink-0" : "w-full max-w-xs"} ${className}`,
+    title: `${verified} of ${total} required documents verified (${pct}%)`,
+    children: jsxs("div", { className: "space-y-1", children: [
+      jsx("div", { className: "flex items-center justify-end", children:
+        jsx("span", {
+          className: `text-[11px] font-semibold tabular-nums ${pct >= 100 ? "text-emerald-700" : "text-slate-600"}`,
+          children: `${pct}%`
+        })
+      }),
+      jsx("div", { className: `w-full bg-slate-200/80 rounded-full overflow-hidden ${trackHeight}`, children:
+        jsx("div", {
+          className: `${trackHeight} rounded-full transition-[width] duration-300 ${barColor}`,
+          style: { width: `${pct}%` },
+          role: "progressbar",
+          "aria-valuenow": pct,
+          "aria-valuemin": 0,
+          "aria-valuemax": 100,
+          "aria-label": `${pct}% of required documents verified`
+        })
+      })
+    ] })
+  });
+}
 const OFFER_LETTER_STATUSES = ["Unconditional", "Conditional", "Rejected"];
 const PROFILE_OTHER_DOCUMENTS_MAX_SLOT = 25;
 
@@ -109,7 +139,17 @@ const DocumentManager = ({
   });
   const [offerLetterUploading, setOfferLetterUploading] = useState(false);
   const [whatsappNotification, setWhatsappNotification] = useState({ show: false, message: "" });
+  const [collapsedPipelineGroups, setCollapsedPipelineGroups] = useState(() => new Set());
   const { openDocumentPreview, documentPreviewModal } = useDocumentPreview();
+  const togglePipelineGroup = (groupKey) => {
+    setCollapsedPipelineGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
+  const isPipelineGroupExpanded = (groupKey) => !collapsedPipelineGroups.has(groupKey);
   const studentDocuments = useMemo(() => student.documents || [], [student.documents]);
   const profileOtherSlotEntries = useMemo(
     () => migrateProfileOtherDocumentsToSlotEntries(student.profileOtherDocuments),
@@ -486,18 +526,16 @@ const DocumentManager = ({
     showPipelineChecklist ? "mt-10 pt-8 border-t border-slate-200" : "mt-2 pt-0";
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     showPipelineChecklist && /* @__PURE__ */ jsx("div", { key: "pipeline-header", className: "flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-indigo-50 p-4 rounded-lg border border-indigo-100", children: [
-      /* @__PURE__ */ jsxs("div", { children: [
+      /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1 space-y-2", children: [
         /* @__PURE__ */ jsxs("h4", { className: "text-indigo-900 font-semibold", children: [
           "Paperless Pipeline: ",
           student.country
         ] }),
-        /* @__PURE__ */ jsxs("p", { className: "text-indigo-700 text-xs mt-1", children: [
-          verifiedRequired,
-          " / ",
-          requiredItems.length,
-          " required verified",
-          optionalItems.length > 0 ? ` · ${optionalItems.length} optional` : ""
-        ] })
+        requiredItems.length > 0
+          ? /* @__PURE__ */ jsx(DocumentVerificationProgress, { verified: verifiedRequired, total: requiredItems.length })
+          : optionalItems.length > 0
+            ? /* @__PURE__ */ jsxs("p", { className: "text-indigo-700 text-xs", children: [optionalItems.length, " optional document", optionalItems.length === 1 ? "" : "s"] })
+            : null
       ] }),
       flatItems.length > 0 && /* @__PURE__ */ jsxs("div", { key: "pipeline-badges", className: "flex flex-wrap items-center gap-2 text-[10px]", children: [
         /* @__PURE__ */ jsx(DocumentRequirementBadge, { key: "badge-required", required: true }),
@@ -510,15 +548,27 @@ const DocumentManager = ({
       if (isOfferLetterChecklistGroup(category.stage)) {
         if (!showUniversityOfferLettersInline || offerLettersInlineRendered) return null;
         offerLettersInlineRendered = true;
-        return /* @__PURE__ */ jsxs("div", { key: "university-offer-letters", className: "rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3", children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3", children: [
-            /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
-              /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Unconditional, Conditional, or Rejected." })
-            ] }),
+        const offerLettersExpanded = isPipelineGroupExpanded("university-offer-letters");
+        return /* @__PURE__ */ jsxs("div", { key: "university-offer-letters", className: "rounded-xl border border-indigo-100 bg-indigo-50/40 overflow-hidden shadow-sm", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-b border-indigo-100 bg-white/80", children: [
+            /* @__PURE__ */ jsxs("button", {
+              type: "button",
+              onClick: () => togglePipelineGroup("university-offer-letters"),
+              "aria-expanded": offerLettersExpanded,
+              className: "flex items-start gap-2 min-w-0 text-left hover:opacity-80 transition-opacity",
+              children: [
+                offerLettersExpanded
+                  ? /* @__PURE__ */ jsx(ChevronDown, { size: 16, className: "text-indigo-500 shrink-0 mt-0.5" })
+                  : /* @__PURE__ */ jsx(ChevronRight, { size: 16, className: "text-indigo-500 shrink-0 mt-0.5" }),
+                /* @__PURE__ */ jsxs("div", { children: [
+                  /* @__PURE__ */ jsx("h3", { className: "text-xs font-bold text-indigo-800 uppercase tracking-wider", children: "University Offer Letters" }),
+                  /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-700/80 mt-1", children: "Upload one or more offer letters and mark each batch as Unconditional, Conditional, or Rejected." })
+                ] })
+              ]
+            }),
             canUploadOfferLetters && /* @__PURE__ */ jsxs(Button, {
               size: "sm",
-              className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
+              className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none shrink-0",
               onClick: () => setOfferLetterModal({ open: true, offerStatus: "Unconditional", error: "", pendingFiles: [] }),
               children: [
                 /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
@@ -526,6 +576,7 @@ const DocumentManager = ({
               ]
             })
           ] }),
+          offerLettersExpanded && /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
           universityOfferLetters.length > 0 ? /* @__PURE__ */ jsx("div", { className: "space-y-2", children: universityOfferLetters.map((letter, idx) => /* @__PURE__ */ jsxs("div", { key: letter.id || `offer-letter-${letter.name}-${idx}`, className: "bg-white border border-gray-200 p-3 rounded-lg flex items-center justify-between hover:shadow-sm transition-all", children: [
             /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 min-w-0", children: [
               /* @__PURE__ */ jsx("div", { className: `w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${letter.offerStatus === "Unconditional" || letter.offerStatus === "Approved" ? "bg-emerald-100 text-emerald-600" : letter.offerStatus === "Rejected" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-600"}`, children: /* @__PURE__ */ jsx(FileText, { size: 18 }) }),
@@ -542,24 +593,35 @@ const DocumentManager = ({
               ] })
             ] })
           ] })) }) : /* @__PURE__ */ jsx("div", { className: "bg-white/70 border-2 border-dashed border-indigo-200 p-4 rounded-lg text-center", children: /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500", children: canUploadOfferLetters ? "No offer letters uploaded yet." : "No offer letters uploaded yet. Counselors, country coordinators, managers, and admins can upload them." }) })
+          ] })
         ] });
       }
       const groupRequired = category.items.filter((item) => item.required !== false);
       const groupVerified = groupRequired.filter((item) =>
         item.uploadedFiles.some((f) => f.status === "Verified")
       ).length;
+      const groupExpanded = isPipelineGroupExpanded(category.stage);
       return /* @__PURE__ */ jsxs("div", {
         key: category.stage,
         className: "rounded-xl border border-slate-200 bg-slate-50/40 shadow-sm overflow-hidden",
         children: [
-          /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 border-b border-slate-200 bg-white/80", children: [
-            /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 min-w-0", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white/80", children: [
+          /* @__PURE__ */ jsxs("button", {
+            type: "button",
+            onClick: () => togglePipelineGroup(category.stage),
+            "aria-expanded": groupExpanded,
+            className: "flex items-center gap-2 min-w-0 flex-1 text-left hover:opacity-80 transition-opacity",
+            children: [
+              groupExpanded
+                ? /* @__PURE__ */ jsx(ChevronDown, { size: 16, className: "text-slate-400 shrink-0" })
+                : /* @__PURE__ */ jsx(ChevronRight, { size: 16, className: "text-slate-400 shrink-0" }),
               /* @__PURE__ */ jsx(FolderOpen, { size: 16, className: "text-indigo-500 shrink-0" }),
               /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-800 truncate", children: category.stage })
-            ] }),
-            groupRequired.length > 0 && /* @__PURE__ */ jsx("span", { className: "text-[11px] font-medium text-slate-500 shrink-0", children: `${groupVerified} / ${groupRequired.length} required verified` })
+            ]
+          }),
+          groupRequired.length > 0 && /* @__PURE__ */ jsx(DocumentVerificationProgress, { verified: groupVerified, total: groupRequired.length, compact: true })
           ] }),
-          /* @__PURE__ */ jsx("div", { className: "p-4 space-y-4", children: category.items.map(({ docType, description, uploadedFiles, required }) => {
+          groupExpanded && /* @__PURE__ */ jsx("div", { className: "p-4 space-y-4", children: category.items.map(({ docType, description, uploadedFiles, required }) => {
         const hasVerifiedUpload = uploadedFiles.some((f) => f.status === "Verified");
         const isRequired = required !== false;
         return /* @__PURE__ */ jsxs("div", { key: docType, className: "space-y-2", children: [

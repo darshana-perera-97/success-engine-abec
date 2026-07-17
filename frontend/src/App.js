@@ -605,6 +605,31 @@ function App({ initialView = "dashboard" }) {
     if (currentRole !== "Country Coordinator" || !countryCoordinatorScope.active) return invoices;
     return invoices.filter((inv) => countryCoordinatorStudentIds.has(String(inv.studentId || "")));
   }, [invoices, currentRole, countryCoordinatorScope.active, countryCoordinatorStudentIds]);
+  const globalSearchScope = useMemo(() => {
+    const scope = {};
+    if (isCounselorEquivalentPortalRole(currentRole)) {
+      scope.role = "Counselor";
+      scope.userId = authenticatedUser?.id || currentUser?.id || "";
+    } else if (currentRole === "Manager" || currentRole === "Accountant") {
+      scope.role = currentRole;
+      scope.userId = authenticatedUser?.id || currentUser?.id || "";
+      if (managerDataScope.active) scope.branch = managerDataScope.branchLabel;
+    } else if (currentRole === "Country Coordinator") {
+      scope.role = currentRole;
+      scope.userId = authenticatedUser?.id || currentUser?.id || "";
+      const country = String(authenticatedUser?.country || currentUser?.country || "").trim();
+      if (country) scope.userCountry = country;
+    }
+    return scope;
+  }, [
+    currentRole,
+    authenticatedUser?.id,
+    authenticatedUser?.country,
+    currentUser?.id,
+    currentUser?.country,
+    managerDataScope.active,
+    managerDataScope.branchLabel
+  ]);
   const navMyTasksCount = useMemo(() => {
     const isIncompleteTask = (task) => String(task?.status || "").trim() !== "Completed";
     if (isCounselorEquivalentPortalRole(currentRole)) {
@@ -842,6 +867,7 @@ function App({ initialView = "dashboard" }) {
     return params;
   }, [currentRole, authenticatedUser?.id, authenticatedUser?.branch, authenticatedUser?.country, currentUser?.id, currentUser?.branch, currentUser?.country]);
   useEffect(() => {
+    if (currentRole === "Student") return undefined;
     let cancelled = false;
     const loadStudents = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -855,7 +881,32 @@ function App({ initialView = "dashboard" }) {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [studentScopeParams]);
+  }, [studentScopeParams, currentRole]);
+  useEffect(() => {
+    if (currentRole !== "Student") return undefined;
+    const studentId = String(authenticatedUser?.id || "").trim();
+    if (!studentId) return undefined;
+
+    let cancelled = false;
+    const loadSelf = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const result = await getStudentById(studentId);
+      if (cancelled || !result.ok || !result.data) return;
+      setStudents((prev) => {
+        const exists = prev.some((s) => String(s.id ?? "") === studentId);
+        if (exists) {
+          return prev.map((s) => (String(s.id ?? "") === studentId ? result.data : s));
+        }
+        return [...prev, result.data];
+      });
+    };
+    loadSelf();
+    const intervalId = setInterval(loadSelf, POLL_MS.students);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [currentRole, authenticatedUser?.id]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.pathname !== VIEW_TO_PATH["student-detail"]) return;
@@ -892,6 +943,12 @@ function App({ initialView = "dashboard" }) {
     }
   }, [searchParams, students]);
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname !== VIEW_TO_PATH.messages) return;
+    const peer = (searchParams.get("peer") || "").trim();
+    setStudentMessagesInitialPeerId(peer || null);
+  }, [searchParams]);
+  useEffect(() => {
     let cancelled = false;
     tasksFetchCycleReadyRef.current = false;
     taskAssignNotifySeededRef.current = false;
@@ -905,7 +962,13 @@ function App({ initialView = "dashboard" }) {
       setTasks(result.data);
     };
     loadTasks();
-    if (!isCounselorEquivalentPortalRole(currentRole) && currentRole !== "Country Coordinator") return undefined;
+    if (
+      !isCounselorEquivalentPortalRole(currentRole) &&
+      currentRole !== "Country Coordinator" &&
+      currentRole !== "Student"
+    ) {
+      return undefined;
+    }
     const intervalId = setInterval(loadTasks, POLL_MS.tasks);
     return () => {
       cancelled = true;
@@ -1316,8 +1379,10 @@ function App({ initialView = "dashboard" }) {
       setCounselorListResetSignal((prev) => prev + 1);
     }
     const counselorNav = String(options?.counselorId ?? "").trim();
+    const chatPeerNav = String(options?.chatPeerId ?? "").trim();
+    const messagesPeerNav = chatPeerNav || counselorNav || "";
     if (view === "messages") {
-      setStudentMessagesInitialPeerId(counselorNav || null);
+      setStudentMessagesInitialPeerId(messagesPeerNav || null);
     } else {
       setStudentMessagesInitialPeerId(null);
     }
@@ -1328,8 +1393,13 @@ function App({ initialView = "dashboard" }) {
     }
     setCurrentView(view);
     const nextPath = VIEW_TO_PATH[view];
-    if (nextPath && window.location.pathname !== nextPath) {
-      navigate(nextPath);
+    if (nextPath) {
+      if (view === "messages") {
+        const search = messagesPeerNav ? `?peer=${encodeURIComponent(messagesPeerNav)}` : "";
+        navigate({ pathname: nextPath, search });
+      } else if (window.location.pathname !== nextPath) {
+        navigate(nextPath);
+      }
     }
     if (view !== "student-detail") {
       setSelectedStudent(null);
@@ -2585,10 +2655,10 @@ function App({ initialView = "dashboard" }) {
     if (currentRole === "Student") {
       const studentUser = currentUser;
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
-      if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent });
+      if (currentView === "dashboard") return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent, currentUser, authenticatedUser });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: "Student", tasks: studentVisibleTasks, student: studentUser, onUpdateStudent: handleUpdateStudent, onAddActivity: handleAddActivity, currentUser, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, employees, onUploadStudentDocument: handleUploadStudentDocument });
       if (currentView === "finance") return /* @__PURE__ */ jsx(FinanceModule, { student: studentUser, userRole: "Student", onUpdateInvoice: handleUpdateInvoice, onNotify: addNotification });
-      return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent });
+      return /* @__PURE__ */ jsx(StudentDashboard, { student: studentUser, onNavigate: handleNavigate, tasks: studentVisibleTasks, onUpdateTasks: handleUpdateTasks, employees, onUploadDocument: handleUploadStudentDocument, onUploadProfileOtherDocument: handleUploadStudentProfileOtherDocument, onUpdateStudent: handleUpdateStudent, currentUser, authenticatedUser });
     }
     const openEscalationStudent = (studentId) => {
       const latest = students.find((s) => String(s.id) === String(studentId));
@@ -2851,7 +2921,26 @@ function App({ initialView = "dashboard" }) {
               "Password reset",
               `Password updated for ${row.username} (${row.email}). Share the new password with them securely.`,
               "success"
-            )
+            ),
+          onProfileUpdated: (row) => {
+            setEmployees((prev) =>
+              prev.map((e) =>
+                String(e.id || "") === String(row.id || "")
+                  ? {
+                      ...e,
+                      name: row.username || e.name,
+                      username: row.username || e.username,
+                      email: row.email || e.email
+                    }
+                  : e
+              )
+            );
+            addNotification(
+              "Profile updated",
+              `Username and email updated for ${row.username} (${row.email}).`,
+              "success"
+            );
+          }
         });
       case "settings":
         return currentRole === "Admin" ? /* @__PURE__ */ jsx(AdminSettings, {
@@ -2998,6 +3087,8 @@ function App({ initialView = "dashboard" }) {
         whatsappConnectionStatus,
         adminChatEnabled,
         branchWhatsappEnabled,
+        onSelectStudent: handleSelectStudent,
+        globalSearchScope,
         onLogout: () => {
           clearLoginSession();
           setAuthenticatedUser(null);

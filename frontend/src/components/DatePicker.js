@@ -6,7 +6,25 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-reac
 const DROPDOWN_WIDTH = 280;
 const DROPDOWN_HEIGHT = 320;
 
-const DatePicker = ({ label, value, onChange, required }) => {
+export function getLocalDateIso(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function isDateBeforeMin(year, month, day, minDate) {
+  if (!minDate) return false;
+  const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return dateStr < minDate;
+}
+
+function isMonthBeforeMin(year, month, minDate) {
+  if (!minDate) return false;
+  const min = new Date(`${minDate}T00:00:00`);
+  const monthStart = new Date(year, month, 1);
+  const minMonthStart = new Date(min.getFullYear(), min.getMonth(), 1);
+  return monthStart < minMonthStart;
+}
+
+const DatePicker = ({ label, value, onChange, required, minDate }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [currentDate, setCurrentDate] = useState(value ? new Date(value) : /* @__PURE__ */ new Date());
   const [dropdownStyle, setDropdownStyle] = useState({ top: 0, left: 0 });
@@ -59,6 +77,7 @@ const DatePicker = ({ label, value, onChange, required }) => {
   const handleDateClick = (day) => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
+    if (isDateBeforeMin(year, month, day, minDate)) return;
     const formattedDate = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     onChange(formattedDate);
     setIsOpen(false);
@@ -66,8 +85,15 @@ const DatePicker = ({ label, value, onChange, required }) => {
 
   const changeMonth = (offset) => {
     const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1);
+    if (offset < 0 && isMonthBeforeMin(newDate.getFullYear(), newDate.getMonth(), minDate)) return;
     setCurrentDate(newDate);
   };
+
+  const canGoToPreviousMonth = !isMonthBeforeMin(
+    currentDate.getFullYear(),
+    currentDate.getMonth() - 1,
+    minDate
+  );
 
   const renderCalendar = () => {
     const year = currentDate.getFullYear();
@@ -82,18 +108,20 @@ const DatePicker = ({ label, value, onChange, required }) => {
       const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       const isSelected = value === dateStr;
       const isToday = (/* @__PURE__ */ new Date()).toDateString() === new Date(year, month, d).toDateString();
+      const isDisabled = isDateBeforeMin(year, month, d, minDate);
       slots.push(
         /* @__PURE__ */ jsx(
           "button",
           {
             type: "button",
+            disabled: isDisabled,
             onClick: (e) => {
               e.preventDefault();
-              handleDateClick(d);
+              if (!isDisabled) handleDateClick(d);
             },
             className: `w-8 h-8 text-xs rounded-full flex items-center justify-center transition-all
-                        ${isSelected ? "bg-[#0F172A] text-white font-bold shadow-sm" : "hover:bg-slate-100 text-slate-700"}
-                        ${!isSelected && isToday ? "text-indigo-600 font-bold bg-indigo-50 border border-indigo-100" : ""}
+                        ${isDisabled ? "text-slate-300 cursor-not-allowed" : isSelected ? "bg-[#0F172A] text-white font-bold shadow-sm" : "hover:bg-slate-100 text-slate-700"}
+                        ${!isDisabled && !isSelected && isToday ? "text-indigo-600 font-bold bg-indigo-50 border border-indigo-100" : ""}
                     `,
             children: d
           },
@@ -113,7 +141,7 @@ const DatePicker = ({ label, value, onChange, required }) => {
         className: "p-4 bg-white border border-gray-200 rounded-xl shadow-xl animate-in fade-in zoom-in-95 duration-100",
         children: [
           /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
-            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(-1), className: "p-1 hover:bg-slate-50 rounded-md text-slate-500 transition-colors", children: /* @__PURE__ */ jsx(ChevronLeft, { size: 16 }) }),
+            /* @__PURE__ */ jsx("button", { type: "button", onClick: () => changeMonth(-1), disabled: !canGoToPreviousMonth, className: `p-1 rounded-md transition-colors ${canGoToPreviousMonth ? "hover:bg-slate-50 text-slate-500" : "text-slate-300 cursor-not-allowed"}`, children: /* @__PURE__ */ jsx(ChevronLeft, { size: 16 }) }),
             /* @__PURE__ */ jsxs("span", { className: "text-sm font-semibold text-slate-900", children: [
               months[currentDate.getMonth()],
               " ",
@@ -144,6 +172,14 @@ const DatePicker = ({ label, value, onChange, required }) => {
             setIsOpen((prev) => {
               const next = !prev;
               if (next) {
+                if (minDate) {
+                  const min = new Date(`${minDate}T00:00:00`);
+                  setCurrentDate((prevDate) => {
+                    const view = new Date(prevDate.getFullYear(), prevDate.getMonth(), 1);
+                    const minView = new Date(min.getFullYear(), min.getMonth(), 1);
+                    return view < minView ? min : prevDate;
+                  });
+                }
                 requestAnimationFrame(updateDropdownPosition);
               }
               return next;

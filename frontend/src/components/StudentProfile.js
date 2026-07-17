@@ -42,6 +42,7 @@ import { StudentApplications } from "./StudentApplications";
 import { VisaPilot } from "./VisaPilot";
 
 import { StudentProfileCounselorsRoster } from "./StudentProfileCounselorsRoster";
+import { StudentSummaries } from "./StudentSummaries";
 import { AIResumeBuilder } from "./AIResumeBuilder";
 import {
   PIPELINE_STEPS,
@@ -1459,7 +1460,7 @@ const StudentProfile = ({
       setSlaResolveBusy(false);
     }
   };
-  const canManagerEditContact = userRole === "Manager";
+  const canManagerEditContact = userRole === "Manager" || userRole === "Admin";
   const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
   const canRequestCountryChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestBranchChange = userRole !== "Student" && userRole !== "Accountant";
@@ -2643,7 +2644,13 @@ const StudentProfile = ({
             student: localStudent,
             tasks,
             userRole,
-            onUploadDocument: onUploadStudentDocument,
+            onUploadDocument: async (payload) => {
+              const result = await onUploadStudentDocument?.(payload);
+              if (result?.ok && result.data) {
+                setLocalStudent(result.data);
+              }
+              return result;
+            },
             onUpdateDocument: handlePipelineDocumentUpdate,
             onUpdateTasks
           }),
@@ -2770,7 +2777,10 @@ const StudentProfile = ({
                   removalPending ? " Remove pending" : " Remove"
                 ]
               }),
-              /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages"), size: "sm", children: [
+              /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages", {
+                chatPeerId: localStudent.id,
+                counselorId: localStudent.counselor
+              }), size: "sm", children: [
                 /* @__PURE__ */ jsx(MessageSquare, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
                 " Message"
               ] }),
@@ -2975,6 +2985,7 @@ const StudentProfile = ({
             }),
             /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
+            /* @__PURE__ */ jsx(StudentSummaries, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
               student: localStudent,
               employees,

@@ -111,7 +111,7 @@ function CounselorRosterCard({
 
 /**
  * Roster of counselors involved with this student (primary counselor/visa officer, then secondary staff).
- * Shown to staff after Specialized Notes on the student profile.
+ * Shown to staff after Summaries on the student profile.
  */
 export function StudentProfileCounselorsRoster({
   student,

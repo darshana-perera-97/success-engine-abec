@@ -1444,6 +1444,12 @@ async function deliverCounselorMessageToStudentWhatsapp({
             };
           } else {
             preparedMedia = MessageMedia.fromFilePath(mediaPath);
+            if (chatAttachment.name) {
+              preparedMedia.filename = chatAttachment.name;
+            }
+            if (preparedMediaMime) {
+              preparedMedia.mimetype = preparedMediaMime;
+            }
           }
         }
       } else if (!messageText) {

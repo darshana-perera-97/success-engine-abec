@@ -29,7 +29,19 @@ const {
   applyRoleScope,
   pipelineStageOrder,
   studentTimeMs,
+  branchesMatchBackend,
 } = require("../services/pipeline");
+
+function parseCsvQueryParam(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function studentBranchLabel(student) {
+  return String(student?.branch || student?.nearestOffice || "").trim();
+}
 const { reconcileSlaViolationsOnStudentRecord } = require("../services/adminData");
 const { notifyInquiryCallScheduled, deliverStudentNotificationWhatsapp } = require("../services/notifications");
 const {
@@ -201,7 +213,15 @@ async function handle(req, res, url) {
       const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
       const counselorParam = String(url.searchParams.get("counselor") || "").trim();
       const countryParam = String(url.searchParams.get("country") || "").trim();
+      const filterBranchParam = String(url.searchParams.get("filterBranch") || "").trim();
       const statusParam = String(url.searchParams.get("status") || "").trim();
+
+      const countryList = Array.from(
+        new Set(result.map((s) => String(s.country || "").trim()).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      const branchList = Array.from(
+        new Set(result.map((s) => studentBranchLabel(s)).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
       if (counselorParam && counselorParam !== "All") {
         if (counselorParam === "Unassigned") {
@@ -214,8 +234,19 @@ async function handle(req, res, url) {
         }
       }
 
-      if (countryParam && countryParam !== "All") {
-        result = result.filter((s) => s.country === countryParam);
+      const countryFilters = parseCsvQueryParam(countryParam);
+      if (countryFilters.length > 0 && countryParam !== "All") {
+        const countrySet = new Set(countryFilters.map((item) => item.toLowerCase()));
+        result = result.filter((s) => countrySet.has(String(s.country || "").trim().toLowerCase()));
+      }
+
+      const branchFilters = parseCsvQueryParam(filterBranchParam);
+      if (branchFilters.length > 0) {
+        result = result.filter((s) => {
+          const studentBranch = studentBranchLabel(s);
+          if (!studentBranch) return false;
+          return branchFilters.some((branchLabel) => branchesMatchBackend(studentBranch, branchLabel));
+        });
       }
 
       if (statusParam && statusParam !== "All") {
@@ -254,7 +285,6 @@ async function handle(req, res, url) {
       });
 
       const total = result.length;
-      const countryList = Array.from(new Set(result.map((s) => String(s.country || "").trim()).filter(Boolean)));
       const summary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
       const limitRaw = parseInt(url.searchParams.get("limit") || "0", 10);
       const offsetRaw = parseInt(url.searchParams.get("offset") || "0", 10);
@@ -270,7 +300,8 @@ async function handle(req, res, url) {
         ok: true,
         data: result.map((student) => mapper(req, stripStudentSecrets(student))),
         total,
-        countries: countryList
+        countries: countryList,
+        branches: branchList,
       });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to search students." });

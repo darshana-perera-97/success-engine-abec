@@ -64,10 +64,10 @@ const PAYMENTS_DIR = path.join(DATA_DIR, "payments");
 // Resolved via the SPA fallback to `frontend/public/companyIcon.png` (or the
 // equivalent file in the production build output).
 const DEFAULT_MALE_AVATAR_PATH = "/companyIcon.png";
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-const MAX_UPLOAD_LABEL = "5MB";
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+const MAX_UPLOAD_LABEL = "15MB";
 /** Base64 data URLs in JSON need headroom above decoded file size. */
-const MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024;
 
 const DEFAULT_DAY_SCHEDULE = {
   isOpen: true,

@@ -2,7 +2,8 @@ import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, X, MapPin, GripVertical,
-  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil, Clock, Calendar
+  Lock, Trash2, Save, FileText, ShieldCheck, FolderOpen, AlertCircle, ListChecks, Mail, MessageCircle, Pencil, Clock, Calendar,
+  ChevronDown, ChevronRight
 } from "lucide-react";
 import {
   getCountries, createCountry, getDocMapping, saveDocMappingStages,
@@ -247,6 +248,16 @@ function addBetweenBtn(idx, showAddAt, setShowAddAt, newLabel, setNewLabel, hand
 // ─── Shared doc group body (renders group cards + add-doc modal) ─
 function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, removeGroup, onEditGroup, showDocModal, setShowDocModal, newDocName, setNewDocName, newDocRequired, setNewDocRequired, addDoc, stageLabelsForGroup, stages }) {
   const stageById = useMemo(() => new Map((stages || []).map((s) => [s.id, s.label])), [stages]);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
+  const toggleGroupExpanded = (groupName) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      return next;
+    });
+  };
+  const isGroupExpanded = (groupName) => !collapsedGroups.has(groupName);
 
   return jsxs(Fragment, { children: [
     groups.length === 0
@@ -255,14 +266,24 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
           const stageLabels = stageLabelsForGroup ? stageLabelsForGroup(groupDocs) : null;
           const isLocked = groupDocs.some((d) => d.locked);
           const lockedDoc = groupDocs.find((d) => d.locked);
-          return jsxs("div", { className: `rounded-lg border ${isLocked ? "border-indigo-200 bg-indigo-50/30" : "border-gray-100 bg-slate-50/50"}`, children: [
+          const groupExpanded = isGroupExpanded(groupName);
+          return jsxs("div", { className: `rounded-lg border overflow-hidden ${isLocked ? "border-indigo-200 bg-indigo-50/30" : "border-gray-100 bg-slate-50/50"}`, children: [
             jsxs("div", { className: "flex flex-col gap-1.5 px-4 py-2.5 border-b border-gray-100", children: [
-              jsxs("div", { className: "flex items-center justify-between", children: [
-                jsxs("div", { className: "flex items-center gap-2", children: [
-                  jsx(FolderOpen, { size: 14, className: isLocked ? "text-indigo-500" : "text-amber-500" }),
-                  jsx("span", { className: "text-sm font-semibold text-slate-700", children: groupName }),
-                  isLocked && jsx(Lock, { size: 12, className: "text-indigo-400" })
-                ] }),
+              jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                jsxs("button", {
+                  type: "button",
+                  onClick: () => toggleGroupExpanded(groupName),
+                  "aria-expanded": groupExpanded,
+                  className: "flex items-center gap-2 min-w-0 text-left hover:opacity-80 transition-opacity",
+                  children: [
+                    groupExpanded
+                      ? jsx(ChevronDown, { size: 14, className: "text-slate-400 shrink-0" })
+                      : jsx(ChevronRight, { size: 14, className: "text-slate-400 shrink-0" }),
+                    jsx(FolderOpen, { size: 14, className: isLocked ? "text-indigo-500 shrink-0" : "text-amber-500 shrink-0" }),
+                    jsx("span", { className: "text-sm font-semibold text-slate-700 truncate", children: groupName }),
+                    isLocked && jsx(Lock, { size: 12, className: "text-indigo-400 shrink-0" })
+                  ]
+                }),
                 jsxs("div", { className: "flex items-center gap-1.5", children: [
                   !isLocked && jsx("button", {
                     type: "button",
@@ -290,11 +311,11 @@ function DocGroupBody({ docs, groups, onChange, removeDoc, toggleRequired, remov
                 jsxs("span", { className: "font-medium text-slate-500", children: ["Visible from: ", jsx("span", { className: "px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold", children: stageById.get(lockedDoc.visibleFrom) || lockedDoc.visibleFrom || "—" })] }),
                 jsxs("span", { className: "font-medium text-slate-500 ml-2", children: ["Complete by: ", jsx("span", { className: "px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-semibold", children: stageById.get(lockedDoc.completeBy) || lockedDoc.completeBy || "—" })] })
               ] }),
-              !isLocked && stageLabels && stageLabels.length > 0 && jsx("div", { className: "flex flex-wrap gap-1", children:
+              !isLocked && stageLabels && stageLabels.length > 0 && jsx("div", { className: "flex flex-wrap gap-1 pl-6", children:
                 stageLabels.map((sl) => jsx("span", { className: "text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100", children: sl }, sl))
               })
             ] }),
-            jsx("div", { className: "divide-y divide-gray-100", children:
+            groupExpanded && jsx("div", { className: "divide-y divide-gray-100", children:
               groupDocs.filter((d) => d.name !== "(placeholder)").length === 0
                 ? jsx("p", { className: "text-xs text-slate-400 px-4 py-3 text-center", children: "No documents in this group." })
                 : groupDocs.filter((d) => d.name !== "(placeholder)").map((doc) =>

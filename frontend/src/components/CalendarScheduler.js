@@ -22,6 +22,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
   const [busyReasonOther, setBusyReasonOther] = useState("");
   const [busyError, setBusyError] = useState("");
   const [isSavingBusy, setIsSavingBusy] = useState(false);
+  const [meetingCounselorId, setMeetingCounselorId] = useState("");
   const [meetingStudentId, setMeetingStudentId] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingTime, setMeetingTime] = useState("");
@@ -192,7 +193,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     alert(`Session booked for ${newApt.date} at ${newApt.time}! Notification sent.`);
   };
   const handleAddBusyTime = async () => {
-    if (!isCounselorEquivalentPortalRole(currentRole)) return;
+    if (!canScheduleMeetings) return;
     setBusyError("");
     if (!busyDate) {
       setBusyError("Select a date for the one-time busy block.");
@@ -222,20 +223,22 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
     setBusyReason("Leave");
     setBusyReasonOther("");
   };
+  const canScheduleMeetings = isCounselorEquivalentPortalRole(currentRole) || currentRole === "Manager" || currentRole === "Team Lead";
   const counselorStudents = studentPool.filter((student) => {
-    if (!isCounselorEquivalentPortalRole(currentRole)) return false;
+    if (!canScheduleMeetings) return false;
+    if (currentRole === "Manager" || currentRole === "Team Lead") return true;
     return String(student?.counselor || "") === String(currentUser?.id || "");
   });
   const handleCreateMeetingForStudent = async () => {
-    if (!isCounselorEquivalentPortalRole(currentRole)) return;
+    if (!canScheduleMeetings) return;
     setMeetingCreateError("");
-    const counselorId = String(currentUser?.id || "").trim();
+    const counselorId = (currentRole === "Manager" || currentRole === "Team Lead") ? String(meetingCounselorId || "").trim() : String(currentUser?.id || "").trim();
     const studentId = String(meetingStudentId || "").trim();
     const date = String(meetingDate || "").trim();
     const time = String(meetingTime || "").trim();
     const link = String(meetingLink || "").trim();
     if (!counselorId) {
-      setMeetingCreateError("Counselor account not found.");
+      setMeetingCreateError((currentRole === "Manager" || currentRole === "Team Lead") ? "Select a counselor." : "Counselor account not found.");
       return;
     }
     if (!studentId || !date || !time) {
@@ -301,6 +304,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       setMeetingCreateError(result?.error || "Failed to create meeting.");
       return;
     }
+    setMeetingCounselorId("");
     setMeetingStudentId("");
     setMeetingDate("");
     setMeetingTime("");
@@ -419,7 +423,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       /* @__PURE__ */ jsx("div", { className: "grid grid-cols-7 gap-y-2", children: slots })
     ] });
   };
-  const pendingReview = isCounselorEquivalentPortalRole(currentRole) ? appointments.filter((a) => a.counselorId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : [];
+  const pendingReview = isCounselorEquivalentPortalRole(currentRole) ? appointments.filter((a) => a.counselorId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : (currentRole === "Manager" || currentRole === "Team Lead") ? appointments.filter((a) => a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) < /* @__PURE__ */ new Date()) : [];
   const studentUpcomingMeetings = currentRole === "Student" ? appointments.filter((a) => a.studentId === currentUser.id && a.status === "Scheduled" && /* @__PURE__ */ new Date(`${a.date}T${a.time}`) > /* @__PURE__ */ new Date()).length : 0;
   const hasStudentMeetingLimit = currentRole === "Student" && studentUpcomingMeetings >= 3;
   const outcomeModalApt = outcomeModalOpen && selectedAptId ? appointments.find((a) => a.id === selectedAptId) : null;
@@ -506,7 +510,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             bookingType
           ] }) })
         ] }),
-        isCounselorEquivalentPortalRole(currentRole) && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+        canScheduleMeetings && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Block Busy Time" }),
           busyError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: busyError }),
           /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-4 gap-3", children: [
@@ -537,7 +541,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
             }, children: "Remove" })
           ] }, block.id)) })
         ] }),
-        isCounselorEquivalentPortalRole(currentRole) && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+        canScheduleMeetings && /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 mb-4", children: "Add meeting for student" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Create a student meeting and send details via WhatsApp." }),
           /* @__PURE__ */ jsx("div", { className: "mt-3 flex justify-end", children: /* @__PURE__ */ jsx(Button, { onClick: () => {
@@ -632,7 +636,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                   ] })
                 ] }),
                 /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
-                  !isPast && apt.status === "Scheduled" && isCounselorEquivalentPortalRole(currentRole) && (String(apt.meetingLink || "").trim() ? /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
+                  !isPast && apt.status === "Scheduled" && (isCounselorEquivalentPortalRole(currentRole) || currentRole === "Manager" || currentRole === "Team Lead") && (String(apt.meetingLink || "").trim() ? /* @__PURE__ */ jsx("a", { href: apt.meetingLink, target: "_blank", rel: "noreferrer", children: /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", children: [
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join now"
                   ] }) }) : /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "secondary", className: "h-8", onClick: () => openMeetingLinkModal(apt), children: [
@@ -643,7 +647,7 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
                     /* @__PURE__ */ jsx(Video, { size: 14, className: "mr-2" }),
                     " Join"
                   ] }) }),
-                  isPast && apt.status === "Scheduled" && (isCounselorEquivalentPortalRole(currentRole) || currentRole === "Country Coordinator") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
+                  isPast && apt.status === "Scheduled" && (isCounselorEquivalentPortalRole(currentRole) || currentRole === "Country Coordinator" || currentRole === "Manager" || currentRole === "Team Lead") && /* @__PURE__ */ jsx(Button, { size: "sm", className: "h-8 bg-amber-600 hover:bg-amber-700 border-none text-white", onClick: () => {
                     setSelectedAptId(apt.id);
                     setOutcomeModalOpen(true);
                   }, children: "Log Outcome" })
@@ -732,6 +736,10 @@ const CalendarScheduler = ({ appointments, bookingBlocks = [], onBookAppointment
       /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900 mb-4", children: "Add meeting for student" }),
       meetingCreateError && /* @__PURE__ */ jsx("div", { className: "mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: meetingCreateError }),
       /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3", children: [
+        (currentRole === "Manager" || currentRole === "Team Lead") && /* @__PURE__ */ jsxs("select", { value: meetingCounselorId, onChange: (e) => setMeetingCounselorId(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white", children: [
+          /* @__PURE__ */ jsx("option", { value: "", children: "Select counselor" }),
+          ...employees.filter((e) => isCounselorEquivalentPortalRole(e.role)).map((emp) => /* @__PURE__ */ jsx("option", { value: emp.id, children: emp.name || emp.id }, emp.id))
+        ] }),
         /* @__PURE__ */ jsxs("select", { value: meetingStudentId, onChange: (e) => setMeetingStudentId(e.target.value), className: "w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white", children: [
           /* @__PURE__ */ jsx("option", { value: "", children: "Select student" }),
           ...counselorStudents.map((student) => /* @__PURE__ */ jsx("option", { value: student.id, children: student.name || student.id }, student.id))

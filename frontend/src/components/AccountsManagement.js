@@ -2,13 +2,14 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
 import { dt } from "./DataTable";
-import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, Shield, X } from "lucide-react";
+import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, Shield, UserPen, X } from "lucide-react";
 import {
   createAccount,
   getAccounts,
   getBranches,
   getCountries,
   resetAccountPassword,
+  updateAccountProfile,
   updateAccountRole,
   updateAdminAvatar
 } from "../authApi";
@@ -79,7 +80,7 @@ function roleBadgeClass(role) {
   }
 }
 
-const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUpdated }) => {
+const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUpdated, onProfileUpdated }) => {
   const [rows, setRows] = useState([]);
   const [query, setQuery] = useState("");
   const [pendingId, setPendingId] = useState(null);
@@ -111,6 +112,11 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
   const [roleError, setRoleError] = useState("");
   const [roleSuccess, setRoleSuccess] = useState("");
   const [roleSaving, setRoleSaving] = useState(false);
+  const [profileTarget, setProfileTarget] = useState(null);
+  const [profileForm, setProfileForm] = useState({ username: "", email: "" });
+  const [profileError, setProfileError] = useState("");
+  const [profileSuccess, setProfileSuccess] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
   const [pageLoads, setPageLoads] = useState({
     accounts: false,
     branches: false,
@@ -202,6 +208,55 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
     setRoleTarget(null);
     setRoleError("");
     setRoleSuccess("");
+  };
+
+  const openProfileDialog = (row) => {
+    setProfileTarget(row);
+    setProfileForm({
+      username: row.username || "",
+      email: row.email || ""
+    });
+    setProfileError("");
+    setProfileSuccess("");
+  };
+
+  const closeProfileDialog = () => {
+    if (profileSaving) return;
+    setProfileTarget(null);
+    setProfileError("");
+    setProfileSuccess("");
+  };
+
+  const handleConfirmProfileChange = async () => {
+    if (!profileTarget) return;
+    const username = String(profileForm.username || "").trim();
+    const email = String(profileForm.email || "").trim().toLowerCase();
+    if (!username) {
+      setProfileError("Username is required.");
+      return;
+    }
+    if (!email) {
+      setProfileError("Email is required.");
+      return;
+    }
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(email)) {
+      setProfileError("Enter a valid email.");
+      return;
+    }
+    setProfileError("");
+    setProfileSaving(true);
+    setPendingId(profileTarget.id);
+    const result = await updateAccountProfile(profileTarget.id, { username, email });
+    setProfileSaving(false);
+    setPendingId(null);
+    if (!result.ok) {
+      setProfileError(result.error || "Failed to update profile.");
+      return;
+    }
+    setRows((prev) => prev.map((row) => (row.id === profileTarget.id ? { ...row, ...result.data } : row)));
+    setProfileSuccess(`Profile updated for ${username}.`);
+    onProfileUpdated?.({ ...profileTarget, ...result.data });
   };
 
   const handleConfirmRoleChange = async () => {
@@ -308,7 +363,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               }),
               /* @__PURE__ */ jsx("p", {
                 className: "text-sm text-slate-500 mt-0.5",
-                children: "Manage platform logins. Add accounts, change access levels, and reset passwords (except the primary admin login)."
+                children: "Manage platform logins. Add accounts, edit usernames and emails, change access levels, and reset passwords (except the primary admin login)."
               })
             ]
           }),
@@ -429,6 +484,18 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                                       onClick: () => fileRef.current?.click(),
                                       children: "Upload photo"
                                     })
+                                  ]
+                                }) : null,
+                                row.id !== "ADM001" ? /* @__PURE__ */ jsxs(Button, {
+                                  type: "button",
+                                  variant: "outline",
+                                  size: "sm",
+                                  className: "gap-1.5",
+                                  isLoading: pendingId === row.id,
+                                  onClick: () => openProfileDialog(row),
+                                  children: [
+                                    /* @__PURE__ */ jsx(UserPen, { size: 14 }),
+                                    "Edit profile"
                                   ]
                                 }) : null,
                                 row.id !== "ADM001" ? /* @__PURE__ */ jsxs(Button, {
@@ -837,6 +904,121 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                         (roleForm.role === "Country Coordinator" && (!roleForm.country || countryOptions.length === 0)),
                       onClick: handleConfirmRoleChange,
                       children: "Save access level"
+                    })
+                  ].filter(Boolean)
+                })
+              ].filter(Boolean)
+            })
+          ]
+        })
+      }) : null,
+      profileTarget ? /* @__PURE__ */ jsx("div", {
+        className: "fixed inset-0 z-[120] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/50 backdrop-blur-sm",
+        onClick: (e) => {
+          if (e.target === e.currentTarget) closeProfileDialog();
+        },
+        children: /* @__PURE__ */ jsxs("div", {
+          className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto",
+          children: [
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between",
+              children: [
+                /* @__PURE__ */ jsxs("div", {
+                  children: [
+                    /* @__PURE__ */ jsx("h3", {
+                      className: "font-semibold text-lg text-slate-900",
+                      children: "Edit profile"
+                    }),
+                    /* @__PURE__ */ jsxs("p", {
+                      className: "text-xs text-slate-500 mt-0.5",
+                      children: [
+                        "Update the login username and email for ",
+                        /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: profileTarget.username }),
+                        "."
+                      ]
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsx("button", {
+                  type: "button",
+                  className: "text-slate-400 hover:text-slate-600",
+                  onClick: closeProfileDialog,
+                  disabled: profileSaving,
+                  children: /* @__PURE__ */ jsx(X, { size: 18 })
+                })
+              ]
+            }),
+            /* @__PURE__ */ jsxs("div", {
+              className: "p-5 space-y-4",
+              children: [
+                profileError ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2",
+                  children: profileError
+                }) : null,
+                profileSuccess ? /* @__PURE__ */ jsx("div", {
+                  className: "text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2",
+                  children: profileSuccess
+                }) : null,
+                /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "Username"
+                    }),
+                    /* @__PURE__ */ jsx("input", {
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: profileForm.username,
+                      onChange: (e) => {
+                        setProfileForm((prev) => ({ ...prev, username: e.target.value }));
+                        if (profileError) setProfileError("");
+                        if (profileSuccess) setProfileSuccess("");
+                      },
+                      disabled: profileSaving || Boolean(profileSuccess),
+                      required: true
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsxs("div", {
+                  className: "space-y-1.5",
+                  children: [
+                    /* @__PURE__ */ jsx("label", {
+                      className: "text-xs font-semibold uppercase tracking-wide text-slate-700",
+                      children: "Email"
+                    }),
+                    /* @__PURE__ */ jsx("input", {
+                      type: "email",
+                      className: "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500",
+                      value: profileForm.email,
+                      onChange: (e) => {
+                        setProfileForm((prev) => ({ ...prev, email: e.target.value }));
+                        if (profileError) setProfileError("");
+                        if (profileSuccess) setProfileSuccess("");
+                      },
+                      disabled: profileSaving || Boolean(profileSuccess),
+                      required: true
+                    })
+                  ]
+                }),
+                /* @__PURE__ */ jsx("p", {
+                  className: "text-[11px] text-slate-500",
+                  children: "The user will sign in with the new email. Share the update with them if their login address changes."
+                }),
+                /* @__PURE__ */ jsxs("div", {
+                  className: "pt-2 flex justify-end gap-2",
+                  children: [
+                    /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      variant: "ghost",
+                      onClick: closeProfileDialog,
+                      disabled: profileSaving,
+                      children: profileSuccess ? "Close" : "Cancel"
+                    }),
+                    profileSuccess ? null : /* @__PURE__ */ jsx(Button, {
+                      type: "button",
+                      isLoading: profileSaving,
+                      onClick: handleConfirmProfileChange,
+                      children: "Save profile"
                     })
                   ].filter(Boolean)
                 })

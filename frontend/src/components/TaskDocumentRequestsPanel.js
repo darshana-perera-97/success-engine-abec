@@ -3,8 +3,13 @@ import { useMemo, useRef, useState } from "react";
 import { Upload, FileText, Check, X, AlertCircle, Download, Hourglass } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentViewButton, documentDownloadProps, useDocumentPreview } from "./DocumentPreviewModal";
-import { areAllTaskDocumentSlotsVerified, findTaskDocumentForSlot } from "../taskDocumentRequests";
-import { isCounselorEquivalentPortalRole } from "../roles";
+import {
+  areAllTaskDocumentSlotsVerified,
+  canUploadTaskDocumentSlot,
+  canUploadTaskRequestedDocuments,
+  findTaskDocumentForSlot,
+  taskDocumentSlotUploadLabel
+} from "../taskDocumentRequests";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 
@@ -38,19 +43,29 @@ export function TaskDocumentRequestsPanel({
   const fileInputRefs = useRef({});
   const sid = String(student?.id || "").trim();
   const isStaff = userRole !== "Student";
-  const counselorCanUploadTaskDocs =
-    isCounselorEquivalentPortalRole(userRole) || userRole === "Country Coordinator";
-  const showTaskDocUpload = !isStaff || counselorCanUploadTaskDocs;
+  const staffCanUploadTaskDocs = canUploadTaskRequestedDocuments(userRole) && isStaff;
+  const showTaskDocUpload = canUploadTaskRequestedDocuments(userRole);
   const studentTasks = useMemo(() => {
     if (!sid) return [];
+    const documents = student?.documents || [];
     return (tasks || []).filter((t) => {
       if (String(t.student_id || t.studentId || "").trim() !== sid) return false;
       if (!t.requiresStudentDocuments) return false;
       if (!Array.isArray(t.taskDocumentRequests) || t.taskDocumentRequests.length === 0) return false;
       if (t.isPrivate) return false;
-      return String(t.status || "") !== "Completed";
+      const isCompleted = String(t.status || "") === "Completed";
+      if (!isCompleted) return true;
+      return (t.taskDocumentRequests || []).some((slot) => {
+        const doc = findTaskDocumentForSlot(documents, t.id, slot.id);
+        if (userRole === "Student") return Boolean(doc);
+        if (staffCanUploadTaskDocs) return canUploadTaskDocumentSlot(doc);
+        if (isStaff) {
+          return Boolean(doc) && (doc.status === "Pending" || doc.status === "Reviewing");
+        }
+        return false;
+      });
     });
-  }, [tasks, sid]);
+  }, [tasks, sid, student?.documents, userRole, staffCanUploadTaskDocs, isStaff]);
 
   if (studentTasks.length === 0) return null;
 
@@ -156,10 +171,10 @@ export function TaskDocumentRequestsPanel({
               }),
               /* @__PURE__ */ jsx("p", {
                 className: "text-xs text-indigo-800/90 mt-0.5",
-                children: isStaff && !counselorCanUploadTaskDocs
-                  ? "Review uploads from the student. Approve or reject each file."
-                  : counselorCanUploadTaskDocs
-                    ? "Upload on behalf of the student when needed, or review their uploads and approve or reject each file."
+                children: staffCanUploadTaskDocs
+                  ? "Upload on behalf of the student when needed, or review their uploads and approve or reject each file."
+                  : isStaff
+                    ? "Review uploads from the student. Approve or reject each file."
                     : "Upload each item your counselor asked for. You can replace a file until it is verified."
               })
             ]
@@ -231,7 +246,7 @@ export function TaskDocumentRequestsPanel({
                         className: "flex flex-wrap items-center gap-2 shrink-0",
                         children: [
                           showTaskDocUpload &&
-                            (!doc || doc.status === "Rejected") &&
+                            canUploadTaskDocumentSlot(doc) &&
                             /* @__PURE__ */ jsxs(Fragment, {
                               children: [
                                 /* @__PURE__ */ jsx("input", {
@@ -248,7 +263,7 @@ export function TaskDocumentRequestsPanel({
                                   onClick: () => fileInputRefs.current[key]?.click(),
                                   children: [
                                     /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-1" }),
-                                    busy ? "Uploading…" : doc?.status === "Rejected" ? "Re-upload" : "Upload"
+                                    busy ? "Uploading…" : taskDocumentSlotUploadLabel(doc)
                                   ]
                                 })
                               ]

@@ -1,8 +1,9 @@
-import { jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle, Upload, AlertTriangle, Calendar, Info, CheckSquare, FileText, Download, Eye, Plane } from "lucide-react";
 import { Button } from "./Button";
 import { DocumentManager } from "./DocumentManager";
+import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
 import { PersonContactCard } from "./PersonContactCard";
 import { VisaPilot } from "./VisaPilot";
 import { getStudentPipelineStepIndex, isVisaPilotUnlockedForConfig } from "../docMappingConfig";
@@ -15,6 +16,7 @@ import {
   resolveGeneratedCvPdfDownload,
 } from "../utils/cvPdf";
 import { toAbsoluteAssetUrl } from "../apiConfig";
+import { StudentSummaries } from "./StudentSummaries";
 const formatRegisteredDate = (student) => {
   const candidate = student.joinedDate || student.createdAt || "";
   if (!candidate) return "Not available";
@@ -30,7 +32,9 @@ const StudentDashboard = ({
   onUploadDocument,
   onUploadProfileOtherDocument,
   onUpdateTasks,
-  onUpdateStudent
+  onUpdateStudent,
+  currentUser,
+  authenticatedUser
 }) => {
   const pipelineDocsRef = useRef(null);
   const [docTab, setDocTab] = useState("pipeline");
@@ -305,21 +309,33 @@ const StudentDashboard = ({
                 onUploadDocument,
                 onUpdateStudent
               }
-            ) : /* @__PURE__ */ jsx(
-              DocumentManager,
-              {
-                student,
-                userRole: "Student",
-                countryDocConfig,
-                tasks,
-                onUpdateTasks,
-                onUploadDocument,
-                onUploadProfileOtherDocument,
-                showPipelineChecklist: true,
-                showUniversityOfferLettersBlock: true,
-                showProfileOtherDocuments: false
-              }
-            )
+            ) : /* @__PURE__ */ jsxs(Fragment, { children: [
+              /* @__PURE__ */ jsx(
+                TaskDocumentRequestsPanel,
+                {
+                  student,
+                  tasks,
+                  userRole: "Student",
+                  onUploadDocument,
+                  onUpdateTasks
+                }
+              ),
+              /* @__PURE__ */ jsx(
+                DocumentManager,
+                {
+                  student,
+                  userRole: "Student",
+                  countryDocConfig,
+                  tasks,
+                  onUpdateTasks,
+                  onUploadDocument,
+                  onUploadProfileOtherDocument,
+                  showPipelineChecklist: true,
+                  showUniversityOfferLettersBlock: true,
+                  showProfileOtherDocuments: false
+                }
+              )
+            ] })
           ]
         }),
         /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-6 shadow-sm", children: [
@@ -378,6 +394,13 @@ const StudentDashboard = ({
             /* @__PURE__ */ jsx(Button, { className: "w-full", variant: "secondary", onClick: () => onNavigate("calendar"), children: "Book Call" })
           ] })
         ] }),
+        /* @__PURE__ */ jsx(StudentSummaries, {
+          student,
+          onUpdateStudent,
+          currentUser: currentUser || student,
+          authenticatedUser,
+          userRole: "Student"
+        }),
         /* @__PURE__ */ jsxs("div", { className: "bg-indigo-900 rounded-xl p-6 text-white relative overflow-hidden", children: [
           /* @__PURE__ */ jsxs("div", { className: "relative z-10", children: [
             /* @__PURE__ */ jsxs("h3", { className: "font-bold mb-2 flex items-center gap-2", children: [

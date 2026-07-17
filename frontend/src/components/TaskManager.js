@@ -7,7 +7,7 @@ import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
-import { findTaskDocumentForSlot } from "../taskDocumentRequests";
+import { canUploadTaskDocumentSlot, findTaskDocumentForSlot, taskDocumentSlotUploadLabel } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
@@ -633,7 +633,7 @@ const TaskManager = ({
                                 className: "hidden",
                                 onChange: (e) => handleStudentTaskSlotUpload(task, slot, e)
                               }),
-                              (!doc || doc.status === "Rejected") &&
+                              canUploadTaskDocumentSlot(doc) &&
                                 /* @__PURE__ */ jsxs(Button, {
                                   size: "sm",
                                   variant: "secondary",
@@ -641,7 +641,7 @@ const TaskManager = ({
                                   onClick: () => studentTaskFileRefs.current[fkey]?.click(),
                                   children: [
                                     /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-1" }),
-                                    busy ? "Uploading…" : doc?.status === "Rejected" ? "Re-upload" : "Upload"
+                                    busy ? "Uploading…" : taskDocumentSlotUploadLabel(doc)
                                   ]
                                 })
                             ]

@@ -11,6 +11,37 @@ const { isCounselorRole } = require("../services/roles");
 
 const WAVE_OFF_APPROVER_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 
+function toStoredChatFileRelativePath(urlValue) {
+  const raw = String(urlValue || "").trim();
+  if (!raw) return "";
+  const idx = raw.indexOf("/chat-files/");
+  if (idx !== -1) return raw.slice(idx);
+  return raw.startsWith("/chat-files/") ? raw : "";
+}
+
+function buildInvoiceWhatsappAttachmentsFromRecord(invoice) {
+  if (!invoice || typeof invoice !== "object") {
+    return { receiptAttachment: null, invoiceFileAttachment: null };
+  }
+  const receiptPath = toStoredChatFileRelativePath(invoice.generatedReceiptUrl);
+  const filePath = toStoredChatFileRelativePath(invoice.attachmentFileUrl);
+  const receiptAttachment = receiptPath
+    ? {
+        url: receiptPath,
+        name: `${String(invoice.id || "invoice").trim() || "invoice"}.png`,
+        mime: "image/png",
+      }
+    : null;
+  const invoiceFileAttachment = filePath
+    ? {
+        url: filePath,
+        name: String(invoice.attachmentFileName || "attachment").trim() || "attachment",
+        mime: String(invoice.attachmentFileMime || "application/pdf").trim() || "application/pdf",
+      }
+    : null;
+  return { receiptAttachment, invoiceFileAttachment };
+}
+
 function normalizePaidAmount(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -548,11 +579,14 @@ async function handle(req, res, url) {
         attachmentFileName: invoice.attachmentFileName,
         generatedReceiptUrl: invoice.generatedReceiptUrl,
       });
+      const { receiptAttachment, invoiceFileAttachment } = buildInvoiceWhatsappAttachmentsFromRecord(invoice);
       const whatsappDelivery = await deliverInvoicePackageToStudentWhatsapp({
         student,
         senderId: counselorId,
         receiverId: String(invoice.studentId || "").trim(),
         messageText,
+        receiptAttachment,
+        invoiceFileAttachment,
       });
       const merged = {
         ...invoice,

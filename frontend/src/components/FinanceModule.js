@@ -8,6 +8,7 @@ import { isCounselorEquivalentAccountRole } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
 import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp, getRefundRequests, createRefundRequest } from "../authApi";
 import { RefundRequestModal } from "./RefundRequestModal";
+import { getLocalDateIso } from "./DatePicker";
 import { requestStatusBadgeClass, requestStatusLabel } from "../utils/studentDetailChangeRequests";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { COMPANY_NAME } from "../companyConfig";
@@ -520,10 +521,10 @@ const FinanceModule = ({
     setIsCreatingInvoice(true);
     setIsCreateOpen(false);
     onNotify?.(
-      newIsWaveOff ? "Wave-off request submitted" : "Invoice generation started",
+      newIsWaveOff ? "Wave-off request submitted" : "Generating invoice",
       newIsWaveOff
         ? "Your wave-off request was submitted for manager approval."
-        : "The invoice popup is closed. Generation is running in the background and you will get an update in about 2-3 minutes.",
+        : "Creating the invoice and sending it to the student via WhatsApp when possible.",
       "info",
       student?.id ? { studentId: student.id, view: "finance" } : null,
       7e3
@@ -575,15 +576,24 @@ const FinanceModule = ({
       return;
     }
     resetCreateForm();
-    onNotify?.(
-      newIsWaveOff ? "Wave-off request submitted" : "Invoice generated",
-      newIsWaveOff
-        ? `Wave-off request ${result?.data?.id || newInv.id} is pending manager approval.`
-        : `Invoice ${result?.data?.id || newInv.id} is ready. We will keep you updated if any further processing is needed.`,
-      "success",
-      student?.id ? { studentId: student.id, view: "finance" } : null,
-      7e3
-    );
+    if (newIsWaveOff) {
+      onNotify?.(
+        "Wave-off request submitted",
+        `Wave-off request ${result?.data?.id || newInv.id} is pending manager approval.`,
+        "success",
+        student?.id ? { studentId: student.id, view: "finance" } : null,
+        7e3
+      );
+    } else {
+      onNotify?.(
+        "Invoice generated",
+        `Invoice ${result?.data?.id || newInv.id} is ready.`,
+        "success",
+        student?.id ? { studentId: student.id, view: "finance" } : null,
+        7e3
+      );
+      showInvoiceCreationWhatsappResult(result?.data);
+    }
     loadStudentInvoices();
   };
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -616,6 +626,57 @@ const FinanceModule = ({
         `Invoice payment evidence was ${decisionLabel}. WhatsApp was not sent.${detail}`
       );
     }
+  };
+  const showInvoiceCreationWhatsappResult = (invoice) => {
+    const ws = invoice?.whatsappDelivery;
+    if (!ws) return;
+    const invoiceId = String(invoice?.id || "").trim() || "invoice";
+    const detail = ws?.reason ? ` ${ws.reason}` : "";
+    if (ws.status === "sent") {
+      onNotify?.(
+        "WhatsApp sent",
+        `Invoice ${invoiceId} was sent to the student via WhatsApp.`,
+        "success",
+        student?.id ? { studentId: student.id, view: "finance" } : null,
+        7e3
+      );
+    } else if (ws.status === "failed" || ws.status === "skipped") {
+      onNotify?.(
+        "WhatsApp not sent",
+        `Invoice ${invoiceId} was created but WhatsApp delivery did not complete.${detail}`,
+        "warning",
+        student?.id ? { studentId: student.id, view: "finance" } : null,
+        9e3
+      );
+    }
+  };
+  const renderInvoiceWhatsappStatus = (inv) => {
+    const ws = inv?.whatsappDelivery;
+    if (!ws || !isStaff) return null;
+    const status = String(ws.status || "").trim().toLowerCase();
+    const label =
+      status === "sent"
+        ? "Sent via WhatsApp"
+        : status === "failed"
+          ? "WhatsApp failed"
+          : status === "skipped"
+            ? "WhatsApp skipped"
+            : "WhatsApp pending";
+    const badgeClass =
+      status === "sent"
+        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+        : status === "failed"
+          ? "bg-rose-50 text-rose-700 border-rose-200"
+          : "bg-amber-50 text-amber-700 border-amber-200";
+    return /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-1", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsx(MessageCircle, { size: 14, className: "text-slate-500" }),
+        /* @__PURE__ */ jsx("span", { className: "font-semibold text-slate-700", children: "WhatsApp delivery" }),
+        /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border ${badgeClass}`, children: label })
+      ] }),
+      ws.reason ? /* @__PURE__ */ jsx("p", { className: "text-slate-600", children: ws.reason }) : null,
+      ws.sentAt ? /* @__PURE__ */ jsxs("p", { className: "text-slate-500", children: ["Last attempt: ", String(ws.sentAt).replace("T", " ").slice(0, 19)] }) : null
+    ] });
   };
   const handlePayClick = (invoice) => {
     setSelectedInvoiceIds([String(invoice.id)]);
@@ -1146,6 +1207,7 @@ const FinanceModule = ({
               required: !newIsWaveOff,
               disabled: newIsWaveOff,
               type: "date",
+              min: getLocalDateIso(),
               className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-400",
               value: newDueDate,
               onChange: (e) => setNewDueDate(e.target.value)
@@ -1365,6 +1427,7 @@ const FinanceModule = ({
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-3 text-sm", children: [
         renderInvoiceDeliveryPanel(detailsInvoice),
+        renderInvoiceWhatsappStatus(detailsInvoice),
         /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
           /* @__PURE__ */ jsx("span", { className: "text-slate-500", children: "Status:" }),
           /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(String(detailsInvoice.status || "—").trim())}`, children: detailsInvoice.status || "—" })

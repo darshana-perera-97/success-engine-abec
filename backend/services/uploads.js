@@ -87,25 +87,15 @@ function extensionFromFileName(fileName) {
 }
 
 function resolveChatAttachmentMeta(dataUrl, originalName) {
+  const nameExt = extensionFromFileName(originalName);
+  if (nameExt) {
+    return { mime: mimeFromExtension(nameExt), ext: nameExt };
+  }
+
   const dataMime = getDataUrlMime(dataUrl);
-  let ext = extensionFromMime(dataMime);
-  let mime = dataMime;
-
-  // Browsers often send Office files as empty / octet-stream; fall back to filename.
-  if (!ext) {
-    ext = extensionFromFileName(originalName);
-    if (ext) mime = mimeFromExtension(ext);
-  }
-
-  if (!ext || !mime || mime === "application/octet-stream") {
-    const nameExt = extensionFromFileName(originalName);
-    if (nameExt) {
-      ext = nameExt;
-      mime = mimeFromExtension(nameExt);
-    }
-  }
-
-  if (!ext || !mime) return null;
+  const ext = extensionFromMime(dataMime);
+  const mime = dataMime;
+  if (!ext || !mime || mime === "application/octet-stream") return null;
   return { mime, ext };
 }
 
