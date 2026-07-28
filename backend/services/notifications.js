@@ -11,9 +11,9 @@ const {
   ADMIN_WHATSAPP_USER_ID,
 } = require("./whatsapp");
 const {
-  resolveBranchForStudent,
   resolveStudentBranchWhatsappSenderId,
   isBranchWhatsappEnabled,
+  studentPrimaryWhatsappUnavailableReason,
 } = require("./branchWhatsapp");
 const {
   buildMeetingReminderWhatsappMessage,
@@ -72,15 +72,7 @@ async function collectStudentWhatsappSenderCandidates(student, preferredSenderId
 }
 
 async function branchWhatsappUnavailableReason(student) {
-  const branch = await resolveBranchForStudent(student);
-  if (!branch) {
-    return "Student branch is not set or does not match a configured branch office.";
-  }
-  const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
-  if (assignedId) {
-    return "The WhatsApp account assigned to this student is not connected.";
-  }
-  return "No WhatsApp account is connected for this student's branch.";
+  return studentPrimaryWhatsappUnavailableReason(student);
 }
 
 /**

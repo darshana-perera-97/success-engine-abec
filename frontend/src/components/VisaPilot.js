@@ -12,7 +12,11 @@ import {
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { normalizePipelineStatus } from "../pipeline";
 import { buildVisaPilotDocType } from "../studentEnrolledGate";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import {
+  MAX_DOCUMENTS_PER_UPLOAD,
+  MAX_UPLOAD_LABEL,
+  validateDocumentUploadFileList
+} from "../uploadLimits";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 
 function studentDocumentUrl(url) {
@@ -61,7 +65,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
   useEffect(() => {
     setVisaState(student.visa || {});
   }, [student.id, student.visa]);
-  const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0 });
+  const [uploadModal, setUploadModal] = useState({ isOpen: false, item: "", stageIndex: 0, pendingFiles: [] });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
@@ -118,64 +122,71 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       onUpdateStudent(persistResult.data);
     }
   };
-  const handleUploadFileChange = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !uploadModal.item) return;
+  const handleVisaFilesSelected = (event) => {
+    const validated = validateDocumentUploadFileList(event.target.files);
+    event.target.value = "";
+    if (!validated.ok) {
+      setUploadError(validated.error);
+      return;
+    }
+    setUploadError("");
+    setUploadModal((prev) => ({ ...prev, pendingFiles: validated.files }));
+  };
+  const handleVisaUploadDocuments = async () => {
+    const files = uploadModal.pendingFiles;
+    const item = uploadModal.item;
+    if (!files?.length || !item) return;
     if (!onUploadDocument) {
       setUploadError("Document upload service is unavailable.");
-      event.target.value = "";
-      return;
-    }
-    const allowedTypes = new Set([
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ]);
-    if (!allowedTypes.has(file.type)) {
-      setUploadError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
-      event.target.value = "";
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
-      event.target.value = "";
       return;
     }
     setUploadError("");
     setIsUploading(true);
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("read_error"));
-      reader.readAsDataURL(file);
-    }).catch(() => "");
-    if (!dataUrl) {
-      setIsUploading(false);
-      setUploadError("Unable to read file. Try again.");
-      event.target.value = "";
-      return;
+    let lastStudent = null;
+    let successCount = 0;
+    const docType = buildVisaDocType(item);
+    for (const file of files) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_error"));
+        reader.readAsDataURL(file);
+      }).catch(() => "");
+      if (!dataUrl) {
+        setIsUploading(false);
+        setUploadError(`Unable to read "${file.name}". Try again.`);
+        return;
+      }
+      const result = await onUploadDocument({
+        studentId: student.id,
+        dataUrl,
+        fileName: file.name,
+        docType,
+        phase: uploadModal.stageIndex + 1,
+        tier: "VisaPilot"
+      });
+      if (!result?.ok) {
+        setIsUploading(false);
+        setUploadError(
+          successCount > 0
+            ? `${result?.error || "Failed to upload document."} (${successCount} of ${files.length} uploaded.)`
+            : result?.error || "Failed to upload document."
+        );
+        if (lastStudent && onUpdateStudent) {
+          onUpdateStudent(lastStudent);
+        }
+        return;
+      }
+      if (result.data) {
+        lastStudent = result.data;
+      }
+      successCount += 1;
     }
-    const result = await onUploadDocument({
-      studentId: student.id,
-      dataUrl,
-      fileName: file.name,
-      docType: buildVisaDocType(uploadModal.item),
-      phase: uploadModal.stageIndex + 1,
-      tier: "VisaPilot"
-    });
     setIsUploading(false);
-    event.target.value = "";
-    if (!result?.ok) {
-      setUploadError(result?.error || "Failed to upload document.");
-      return;
+    if (lastStudent && onUpdateStudent) {
+      onUpdateStudent(lastStudent);
     }
-    if (result.data && onUpdateStudent) {
-      onUpdateStudent(result.data);
-    }
-    setUploadModal({ isOpen: false, item: "", stageIndex: 0 });
+    setUploadModal({ isOpen: false, item: "", stageIndex: 0, pendingFiles: [] });
   };
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3", children: [
@@ -255,7 +266,7 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
                           ]
                         }
                       ),
-                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, item, stageIndex: index }), children: [
+                      canUploadVisaDocs && /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => { setUploadError(""); setUploadModal({ isOpen: true, item, stageIndex: index, pendingFiles: [] }); }, children: [
                         /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
                         " Upload"
                       ] })
@@ -378,26 +389,52 @@ const VisaPilot = ({ student, userRole = "Admin", onUpdateStudent, onUploadDocum
       /* @__PURE__ */ jsxs("div", { className: "p-5 border-b border-gray-100 flex justify-between items-center bg-slate-50", children: [
         /* @__PURE__ */ jsxs("div", { children: [
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload Visa Document" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: uploadModal.item })
+          /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
+            uploadModal.item,
+            ` — up to ${MAX_DOCUMENTS_PER_UPLOAD} files per upload`
+          ] })
         ] }),
-        !isUploading && /* @__PURE__ */ jsx("button", { onClick: () => setUploadModal({ isOpen: false, item: "", stageIndex: 0 }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        !isUploading && /* @__PURE__ */ jsx("button", { onClick: () => { setUploadModal({ isOpen: false, item: "", stageIndex: 0, pendingFiles: [] }); setUploadError(""); }, className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "p-6", children: !isUploading ? /* @__PURE__ */ jsxs(
-        "label",
-        {
-          className: "border-2 border-dashed border-indigo-200 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group",
-          children: [
-            /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleUploadFileChange }),
-            /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
-            /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Click to browse file" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Supports PDF, JPG, PNG, DOC, DOCX (Max ${MAX_UPLOAD_LABEL})` }),
-            uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-3", children: uploadError }) : null
-          ]
-        }
-      ) : /* @__PURE__ */ jsxs("div", { className: "py-8 flex flex-col items-center justify-center text-center", children: [
+      /* @__PURE__ */ jsx("div", { className: "p-6", children: !isUploading ? /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
+        /* @__PURE__ */ jsxs(
+          "label",
+          {
+            className: "border-2 border-dashed border-indigo-200 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group",
+            children: [
+              /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handleVisaFilesSelected }),
+              /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
+              /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Choose up to 3 files" }),
+              /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+                "PDF, JPG, PNG, DOC, DOCX — max ",
+                MAX_UPLOAD_LABEL,
+                " each"
+              ] })
+            ]
+          }
+        ),
+        uploadModal.pendingFiles?.length > 0 && /* @__PURE__ */ jsxs("ul", { className: "text-xs text-slate-600 space-y-1 border border-slate-100 rounded-lg p-3 bg-slate-50", children: [
+          uploadModal.pendingFiles.map((file) => /* @__PURE__ */ jsx("li", { className: "truncate", title: file.name, children: file.name }, file.name)),
+          /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-400 pt-1", children: [
+            uploadModal.pendingFiles.length,
+            " of ",
+            MAX_DOCUMENTS_PER_UPLOAD,
+            " selected"
+          ] })
+        ] }),
+        uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: uploadError }) : null,
+        /* @__PURE__ */ jsx(Button, {
+          type: "button",
+          className: "w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
+          size: "sm",
+          disabled: !uploadModal.pendingFiles?.length,
+          onClick: handleVisaUploadDocuments,
+          children: uploadModal.pendingFiles?.length > 1 ? "Upload Documents" : "Upload Document"
+        })
+      ] }) : /* @__PURE__ */ jsxs("div", { className: "py-8 flex flex-col items-center justify-center text-center", children: [
         /* @__PURE__ */ jsx("div", { className: "w-16 h-16 rounded-full mb-6 bg-indigo-100 text-indigo-600 flex items-center justify-center animate-pulse", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
-        /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Uploading Document..." }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your file." })
+        /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Uploading Documents..." }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your files." })
       ] }) })
     ] }) }),
     documentPreviewModal

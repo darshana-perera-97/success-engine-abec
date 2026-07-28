@@ -8,6 +8,12 @@ import { isCounselorEquivalentPortalRole, canSendStaffStudentMessages, isStudent
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, MAX_CHAT_ATTACHMENTS } from "../uploadLimits";
 import { POLL_MS, SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 import { renderChatMessageText } from "../utils/linkifyText";
+import {
+  loadBranchWhatsappAccounts,
+  resolvePrimaryWhatsappMessengerUserId,
+  resolveStudentBranchLabel,
+  isWhatsappSessionStatusConnected,
+} from "../utils/branchWhatsappAccounts";
 
 const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
@@ -46,6 +52,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const [isSyncingWhatsapp, setIsSyncingWhatsapp] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [isSending, setIsSending] = useState(false);
+  const [primaryWhatsappStatusUserId, setPrimaryWhatsappStatusUserId] = useState("");
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -117,7 +124,8 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return students || [];
     }
   };
-  const conversationList = getConversations().filter(
+  const allConversations = getConversations();
+  const conversationList = allConversations.filter(
     (u) => u.name.toLowerCase().includes(searchTerm.toLowerCase())
   ).sort((a, b) => {
     const lastMsgA = liveMessages.filter((m) => m.senderId === a.id || m.receiverId === a.id).sort((m1, m2) => new Date(m2.timestamp).getTime() - new Date(m1.timestamp).getTime())[0];
@@ -134,13 +142,16 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return;
     }
     // Sidebar open (Inbox / Omni-Channel / Live Ops): pick a conversation by default.
-    if (!conversationList.length) {
+    if (!allConversations.length) {
       setSelectedConversationId(null);
       return;
     }
     setSelectedConversationId((current) => {
       const currentId = String(current || "").trim();
-      if (currentId && conversationList.some((entry) => String(entry?.id || "").trim() === currentId)) {
+      if (currentId && allConversations.some((entry) => String(entry?.id || "").trim() === currentId)) {
+        return current;
+      }
+      if (!conversationList.length) {
         return current;
       }
       if (liveMessages.length) {
@@ -154,7 +165,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       }
       return conversationList[0].id;
     });
-  }, [initialChatPeerId, conversationList, liveMessages]);
+  }, [initialChatPeerId, allConversations, conversationList, liveMessages]);
   useEffect(() => {
     setReplyingTo(null);
     setHighlightMessageId(null);
@@ -268,7 +279,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     );
   };
   const activeMessages = getActiveMessages();
-  const activeUser = conversationList.find((u) => u.id === activeConversationId);
+  const activeUser = allConversations.find((u) => u.id === activeConversationId);
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (container) {
@@ -290,14 +301,55 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     return String(selectedStudent?.counselor || "").trim();
   };
   const relevantCounselorId = getRelevantCounselorId();
+  const activeStudentPeer =
+    currentRole !== "Student"
+      ? students.find((s) => String(s.id || "") === String(activeConversationId || ""))
+      : null;
+  useEffect(() => {
+    let cancelled = false;
+    if (!branchWhatsappEnabled || currentRole === "Student") {
+      setPrimaryWhatsappStatusUserId(relevantCounselorId);
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (!activeStudentPeer) {
+      setPrimaryWhatsappStatusUserId("");
+      return () => {
+        cancelled = true;
+      };
+    }
+    const assignedId = String(activeStudentPeer.branchWhatsappMessengerUserId || "").trim();
+    if (assignedId) {
+      setPrimaryWhatsappStatusUserId(assignedId);
+      return () => {
+        cancelled = true;
+      };
+    }
+    (async () => {
+      const branchLabel = resolveStudentBranchLabel(activeStudentPeer);
+      const accounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
+      if (cancelled) return;
+      setPrimaryWhatsappStatusUserId(
+        resolvePrimaryWhatsappMessengerUserId(activeStudentPeer, accounts)
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branchWhatsappEnabled, currentRole, relevantCounselorId, activeStudentPeer?.id, activeStudentPeer?.branchWhatsappMessengerUserId]);
+  const whatsappStatusUserId =
+    branchWhatsappEnabled && currentRole !== "Student"
+      ? primaryWhatsappStatusUserId
+      : relevantCounselorId;
   useEffect(() => {
     let stop = false;
-    if (!relevantCounselorId) {
+    if (!whatsappStatusUserId) {
       setWhatsappSyncStatus("disconnected");
       return;
     }
     const run = async () => {
-      const result = await getWhatsappStatus(relevantCounselorId);
+      const result = await getWhatsappStatus(whatsappStatusUserId);
       if (stop) return;
       if (!result.ok) {
         setWhatsappSyncStatus("disconnected");
@@ -311,14 +363,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       stop = true;
       clearInterval(timer);
     };
-  }, [relevantCounselorId]);
-  const isWhatsappConnected = whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated";
+  }, [whatsappStatusUserId]);
+  const isWhatsappConnected = isWhatsappSessionStatusConnected(whatsappSyncStatus);
   const handleSyncWhatsapp = async () => {
-    if (isSyncingWhatsapp || !isWhatsappConnected || !relevantCounselorId) return;
+    if (isSyncingWhatsapp || !isWhatsappConnected || !whatsappStatusUserId) return;
     setIsSyncingWhatsapp(true);
     try {
       const studentId = currentRole === "Student" ? "" : String(activeConversationId || "").trim();
-      await syncWhatsappHistory(relevantCounselorId, studentId);
+      await syncWhatsappHistory(whatsappStatusUserId, studentId);
       const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
       const result = await getChats(shouldLoadAll ? "" : currentUser?.id, { markRead: false });
       if (result.ok) {
@@ -589,7 +641,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return;
     }
   };
-  if (!isChatsLoading && conversationList.length === 0) {
+  if (!isChatsLoading && allConversations.length === 0) {
     return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [
       /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mx-auto mb-4 text-slate-300" }),
       /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-800", children: currentRole === "Student" ? "No counselors to message yet" : "No conversations yet" }),
@@ -620,7 +672,10 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
           )
         ] })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-y-auto", children: conversationList.map((user) => {
+      /* @__PURE__ */ jsx("div", { className: "flex-1 overflow-y-auto", children: conversationList.length === 0 && searchTerm.trim() ? /* @__PURE__ */ jsxs("div", { className: "p-6 text-center text-slate-500", children: [
+        /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700", children: "No matching chats" }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs mt-1", children: "Try a different name or clear the search." })
+      ] }) : conversationList.map((user) => {
         const relatedMsgs = liveMessages.filter(
           (m) => m.senderId === user.id || m.receiverId === user.id
         ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());

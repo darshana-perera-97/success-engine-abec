@@ -189,22 +189,39 @@ async function resolveBranchForStudent(student) {
   return resolveBranchFromLabel(label);
 }
 
+/** User id of the Primary WhatsApp contact for a student (connected or not). */
+function resolveStudentPrimaryWhatsappMessengerUserId(student) {
+  if (!student) return "";
+  return String(student.branchWhatsappMessengerUserId || "").trim();
+}
+
+async function studentPrimaryWhatsappUnavailableReason(student) {
+  const branch = await resolveBranchForStudent(student);
+  if (!branch) {
+    return "Student branch is not set or does not match a configured branch office.";
+  }
+  const assignedId = resolveStudentPrimaryWhatsappMessengerUserId(student);
+  if (assignedId) {
+    return "The Primary WhatsApp contact for this student is not connected. Connect that account or assign a different Primary WhatsApp contact.";
+  }
+  return "No Primary WhatsApp contact is connected for this student. Connect a branch WhatsApp account or assign one on the student profile.";
+}
+
 /** Branch-linked WhatsApp sender for a student when branch mode is enabled. */
 async function resolveStudentBranchWhatsappSenderId(student) {
   if (!(await isBranchWhatsappEnabled()) || !student) return null;
 
-  // Honor the account explicitly assigned to the student, even when it belongs
-  // to a different branch than the student (any connected account is allowed).
-  const assignedId = String(student.branchWhatsappMessengerUserId || "").trim();
-  if (assignedId && isWhatsappSessionConnected(assignedId)) {
-    return assignedId;
+  const assignedId = resolveStudentPrimaryWhatsappMessengerUserId(student);
+  if (assignedId) {
+    return isWhatsappSessionConnected(assignedId) ? assignedId : null;
   }
 
   const studentBranch = await resolveBranchForStudent(student);
   if (!studentBranch) return null;
 
   const messenger = await findBranchWhatsappMessengerUser(studentBranch);
-  return messenger?.id ? String(messenger.id).trim() : null;
+  const messengerId = messenger?.id ? String(messenger.id).trim() : "";
+  return messengerId && isWhatsappSessionConnected(messengerId) ? messengerId : null;
 }
 
 async function validateStudentBranchWhatsappMessengerUserId(student, userId) {
@@ -230,23 +247,9 @@ async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
     return String(actor.id || "").trim() || null;
   }
 
-  // Branch mode: all student WhatsApp goes through the student's branch account.
+  // Branch mode: student WhatsApp always uses the student's Primary WhatsApp contact.
   if (student) {
-    const branchSenderId = await resolveStudentBranchWhatsappSenderId(student);
-    if (branchSenderId) return branchSenderId;
-    const studentBranch = await resolveBranchForStudent(student);
-    if (!studentBranch) return null;
-    const actorBranch = await resolveBranchForUser(actor);
-    const actorId = String(actor.id || "").trim();
-    if (
-      actorBranch &&
-      String(actorBranch.id || "") === String(studentBranch.id || "") &&
-      isBranchWhatsappManagerRole(actor.role) &&
-      isWhatsappSessionConnected(actorId)
-    ) {
-      return actorId || null;
-    }
-    return null;
+    return resolveStudentBranchWhatsappSenderId(student);
   }
 
   if (String(actor.id || "") === ADMIN_WHATSAPP_USER_ID || String(actor.role || "") === "Admin") {
@@ -427,6 +430,8 @@ module.exports = {
   resolveUserRecord,
   resolveBranchForUser,
   resolveBranchForStudent,
+  resolveStudentPrimaryWhatsappMessengerUserId,
+  studentPrimaryWhatsappUnavailableReason,
   resolveStudentBranchWhatsappSenderId,
   listBranchWhatsappAccounts,
   findBranchWhatsappMessengerUser,

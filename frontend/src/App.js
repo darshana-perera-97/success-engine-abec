@@ -56,6 +56,7 @@ import {
 } from "./roles";
 import { getRoleDisplayName } from "./roleDisplay";
 import { toAbsoluteAssetUrl, DEFAULT_USER_AVATAR } from "./apiConfig";
+import { shouldNotifyStudentWhatsappDelivery } from "./utils/branchWhatsappAccounts";
 import {
   buildBranchCounselorIdentitySet,
   computePipelineEscalations,
@@ -1694,13 +1695,13 @@ function App({ initialView = "dashboard" }) {
             : "Inquiry call schedule sent to the student.",
           "success"
         );
-      } else if (inquiryWa.status === "failed") {
+      } else if (inquiryWa.status === "failed" && shouldNotifyStudentWhatsappDelivery(inquiryWa)) {
         addNotification(
           "WhatsApp failed",
           inquiryWa.reason || "Could not send inquiry call schedule to the student.",
           "warning"
         );
-      } else if (inquiryWa.status === "skipped") {
+      } else if (inquiryWa.status === "skipped" && shouldNotifyStudentWhatsappDelivery(inquiryWa)) {
         addNotification(
           "WhatsApp skipped",
           inquiryWa.reason || "Inquiry call schedule was not sent via WhatsApp.",
@@ -2049,9 +2050,9 @@ function App({ initialView = "dashboard" }) {
     const wa = saved.taskAssignmentWhatsapp;
     if (wa && wa.status === "sent") {
       addNotification("WhatsApp sent", "The student was notified about the new task.", "success");
-    } else if (wa && wa.attempted && wa.status === "failed") {
+    } else if (wa && wa.attempted && wa.status === "failed" && shouldNotifyStudentWhatsappDelivery(wa)) {
       addNotification("WhatsApp failed", wa.reason || "Could not send task notification to the student.", "warning");
-    } else if (wa && wa.status === "skipped" && String(wa.reason || "").trim()) {
+    } else if (wa && wa.status === "skipped" && String(wa.reason || "").trim() && shouldNotifyStudentWhatsappDelivery(wa)) {
       addNotification("WhatsApp skipped", wa.reason, "warning");
     }
     return { ok: true, data: saved.data };
@@ -2338,9 +2339,9 @@ function App({ initialView = "dashboard" }) {
       const wa = saved.data?.meetingLinkWhatsappDelivery;
       if (wa?.status === "sent") {
         addNotification("WhatsApp sent", "Meeting details sent to the student.", "success");
-      } else if (wa?.status === "failed") {
+      } else if (wa?.status === "failed" && shouldNotifyStudentWhatsappDelivery(wa)) {
         addNotification("WhatsApp failed", wa.reason || "Could not send meeting details to the student.", "warning");
-      } else if (wa?.status === "skipped") {
+      } else if (wa?.status === "skipped" && shouldNotifyStudentWhatsappDelivery(wa)) {
         addNotification("WhatsApp skipped", wa.reason || "Meeting details were not sent via WhatsApp.", "warning");
       }
     }
@@ -2382,9 +2383,9 @@ function App({ initialView = "dashboard" }) {
       const wa = saved.data?.meetingLinkWhatsappDelivery;
       if (wa?.status === "sent") {
         addNotification("WhatsApp sent", "Meeting link sent to the student.", "success");
-      } else if (wa?.status === "failed") {
+      } else if (wa?.status === "failed" && shouldNotifyStudentWhatsappDelivery(wa)) {
         addNotification("WhatsApp failed", wa.reason || "Could not send meeting link to the student.", "warning");
-      } else if (wa?.status === "skipped") {
+      } else if (wa?.status === "skipped" && shouldNotifyStudentWhatsappDelivery(wa)) {
         addNotification("WhatsApp skipped", wa.reason || "Meeting link was not sent via WhatsApp.", "warning");
       }
     }
@@ -2650,7 +2651,8 @@ function App({ initialView = "dashboard" }) {
           : currentRole === "Country Coordinator"
             ? resolveCounselorIdentitySet(currentUser, counselorIdentitySet)
             : null,
-      branchWhatsappEnabled: systemData.branchWhatsappEnabled === true
+      branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
+      adminChatEnabled: systemData.adminChatEnabled === true,
     };
     if (currentRole === "Student") {
       const studentUser = currentUser;

@@ -1,4 +1,9 @@
-import { getBranchWhatsappConnectivity } from "../authApi";
+import { getBranchWhatsappConnectivity, getWhatsappStatus } from "../authApi";
+
+export function isWhatsappSessionStatusConnected(status) {
+  const value = String(status || "").trim();
+  return value === "connected" || value === "authenticated";
+}
 
 export function resolveStudentBranchLabel(student, scopeBranch = "") {
   const scoped = String(scopeBranch || "").trim();
@@ -86,9 +91,80 @@ export function resolveStudentBranchWhatsappAccount(accounts, student) {
   if (assignedId) {
     const match = rows.find((row) => String(row?.userId || "") === assignedId);
     if (match) return match;
+    return { userId: assignedId, connected: false, name: "", whatsappNumber: "" };
   }
   const connected = rows.filter((row) => row.connected);
   return connected.find((row) => row.isPrimary) || connected[0] || rows[0] || null;
+}
+
+/** Primary WhatsApp messenger user id for a student (assigned id or branch default). */
+export function resolvePrimaryWhatsappMessengerUserId(student, accounts = null) {
+  const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
+  if (assignedId) return assignedId;
+  if (Array.isArray(accounts)) {
+    const account = resolveStudentBranchWhatsappAccount(accounts, student);
+    return String(account?.userId || "").trim();
+  }
+  return "";
+}
+
+/**
+ * Returns whether the student's Primary WhatsApp contact is connected and ready to send.
+ */
+export async function getStudentPrimaryWhatsappSendReadiness(student) {
+  if (!student) {
+    return { ready: true, messengerUserId: "", account: null };
+  }
+  const branchLabel = resolveStudentBranchLabel(student);
+  const accounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
+  const account = resolveStudentBranchWhatsappAccount(accounts, student);
+  const messengerUserId = resolvePrimaryWhatsappMessengerUserId(student, accounts);
+  if (!messengerUserId) {
+    return {
+      ready: false,
+      messengerUserId: "",
+      account: account || null,
+      reason: "No Primary WhatsApp contact is set for this student. Assign one on the student profile.",
+    };
+  }
+  const statusResult = await getWhatsappStatus(messengerUserId);
+  const connected =
+    statusResult.ok && isWhatsappSessionStatusConnected(statusResult.data?.status);
+  if (connected) {
+    return {
+      ready: true,
+      messengerUserId,
+      account: account || { userId: messengerUserId, connected: true },
+    };
+  }
+  return {
+    ready: false,
+    messengerUserId,
+    account: account || { userId: messengerUserId, connected: false },
+    reason:
+      "The Primary WhatsApp contact for this student is not connected. Connect that WhatsApp account or assign a different Primary WhatsApp contact.",
+  };
+}
+
+/** True when WhatsApp was skipped/failed because the student's primary line is offline. */
+export function isStudentWhatsappNotConnectedDelivery(delivery) {
+  if (!delivery || typeof delivery !== "object") return false;
+  const status = String(delivery.status || "").trim().toLowerCase();
+  if (status !== "skipped" && status !== "failed") return false;
+  const reason = String(delivery.reason || "").trim().toLowerCase();
+  if (!reason) {
+    return status === "skipped" && delivery.attempted !== true;
+  }
+  return (
+    reason.includes("not connected") ||
+    reason.includes("primary whatsapp") ||
+    reason.includes("no whatsapp account") ||
+    reason.includes("no primary whatsapp")
+  );
+}
+
+export function shouldNotifyStudentWhatsappDelivery(delivery) {
+  return !isStudentWhatsappNotConnectedDelivery(delivery);
 }
 
 export function formatWhatsappContactCardTitle(account) {

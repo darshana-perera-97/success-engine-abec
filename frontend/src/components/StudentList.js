@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAccounts, getBranches, searchStudents } from "../authApi";
 import { Filter, ChevronDown, UserPlus, Globe2, Users2, ArrowDownUp, Clock, X, Layers, Building2 } from "lucide-react";
 import { branchesMatch, getCurrentStageSlaDisplay, normalizePipelineStatus, PIPELINE_STEPS, studentMatchesCounselorIdentitySet } from "../pipeline";
-import { resolveCountryDocConfig } from "../countryDocConfigStore";
+import { resolveCountryDocConfig, subscribeCountryDocConfig } from "../countryDocConfigStore";
+import { buildPipelineHealthStageOrder, getPipelineStepLabels } from "../docMappingConfig";
 import { isCounselorEquivalentAccountRole, isCounselorEquivalentPortalRole, isStudentContactStaffAccountRole, canActAsPrimaryCounselorPortalRole } from "../roles";
 import { buildStudentCounselorRemovalPatch, buildAddSecondaryCounselorPatch, getAssignedCounselorIds, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import { Button } from "./Button";
@@ -133,6 +134,8 @@ const StudentList = ({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef(null);
   const [stageSlaClock, setStageSlaClock] = useState(0);
+  const [docConfigRevision, setDocConfigRevision] = useState(0);
+  useEffect(() => subscribeCountryDocConfig(() => setDocConfigRevision((n) => n + 1)), []);
   useEffect(() => {
     const id = window.setInterval(() => setStageSlaClock((n) => n + 1), SLA_CLOCK_INTERVAL_MS);
     return () => window.clearInterval(id);
@@ -315,6 +318,26 @@ const StudentList = ({
     [branchOptions]
   );
 
+  const stageFilterOptions = useMemo(() => {
+    const pool = [...(students || []), ...(searchResults || [])];
+    const ordered = buildPipelineHealthStageOrder(pool, resolveCountryDocConfig);
+    const seen = new Set(ordered.map((label) => label.toLowerCase()));
+    const appendLabel = (label) => {
+      const trimmed = String(label || "").trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push(trimmed);
+    };
+    for (const country of countryOptions) {
+      for (const label of getPipelineStepLabels(resolveCountryDocConfig(country))) {
+        appendLabel(label);
+      }
+    }
+    return ordered;
+  }, [students, searchResults, countryOptions, docConfigRevision]);
+
   const sortedFilteredStudents = searchResults;
 
   const isUnassignedCounselor = (value) => {
@@ -439,8 +462,8 @@ const StudentList = ({
         "Add Student"
       ] })
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2 items-center", children: [
-        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[190px]", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex flex-nowrap items-center gap-1 w-full min-w-0 pt-2 pb-1", children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative shrink-0 w-[10.5rem]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
             /* @__PURE__ */ jsx(Users2, { size: 10, className: "inline mr-1 -mt-0.5" }),
             "Counselor"
@@ -460,7 +483,7 @@ const StudentList = ({
           ),
           /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-3.5 text-slate-400 pointer-events-none" })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[200px] max-w-[260px]", children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative flex-1 min-w-[11rem]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded z-10", children: [
             /* @__PURE__ */ jsx(Globe2, { size: 10, className: "inline mr-1 -mt-0.5" }),
             "Country"
@@ -475,7 +498,7 @@ const StudentList = ({
             }
           )
         ] }),
-        !scopeBranch ? /* @__PURE__ */ jsxs("div", { className: "relative min-w-[200px] max-w-[260px]", children: [
+        !scopeBranch ? /* @__PURE__ */ jsxs("div", { className: "relative flex-1 min-w-[11rem]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded z-10", children: [
             /* @__PURE__ */ jsx(Building2, { size: 10, className: "inline mr-1 -mt-0.5" }),
             "Branch"
@@ -490,7 +513,7 @@ const StudentList = ({
             }
           )
         ] }) : null,
-        /* @__PURE__ */ jsxs("div", { className: "relative min-w-[180px]", children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative shrink-0 w-[10.5rem]", children: [
           /* @__PURE__ */ jsxs("span", { className: "absolute -top-2 left-3 px-1.5 bg-white text-[10px] font-bold uppercase tracking-wider text-slate-500 rounded", children: [
             /* @__PURE__ */ jsx(Layers, { size: 10, className: "inline mr-1 -mt-0.5" }),
             "Stage"
@@ -503,27 +526,26 @@ const StudentList = ({
               className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm hover:shadow transition-shadow focus:outline-none focus:ring-2 focus:ring-slate-200",
               children: [
                 /* @__PURE__ */ jsx("option", { value: "All", children: "All Stages" }),
-                ...PIPELINE_STEPS.map((stage) => /* @__PURE__ */ jsx("option", { value: stage, children: stage }, stage))
+                ...stageFilterOptions.map((stage) => /* @__PURE__ */ jsx("option", { value: stage, children: stage }, stage))
               ]
             }
           ),
           /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-3.5 text-slate-400 pointer-events-none" })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative shrink-0 w-[10.5rem]", children: [
           /* @__PURE__ */ jsx(
             "input",
             {
               type: "text",
-              placeholder: "Search name, ID, email…",
+              placeholder: "Search name, ID…",
               value: filterText,
               onChange: (e) => setFilterText(e.target.value),
-              className: "pl-3 pr-8 py-2 text-sm border border-gray-200 rounded-md focus:ring-2 focus:ring-slate-100 focus:border-slate-300 w-64 transition-all"
+              className: "w-full pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm hover:shadow transition-all focus:ring-2 focus:ring-slate-200 focus:border-slate-300 focus:outline-none"
             }
           ),
           /* @__PURE__ */ jsx(Filter, { size: 14, className: "absolute right-2.5 top-3 text-gray-400" })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 shrink-0", children: [
-          /* @__PURE__ */ jsxs("div", { className: "relative shrink-0", ref: sortMenuRef, children: [
+        /* @__PURE__ */ jsxs("div", { className: "relative shrink-0", ref: sortMenuRef, children: [
             /* @__PURE__ */ jsx(
               "button",
               {
@@ -591,7 +613,6 @@ const StudentList = ({
               }
             )
           ] })
-        ] })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
       /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [

@@ -13,6 +13,7 @@ import { requestStatusBadgeClass, requestStatusLabel } from "../utils/studentDet
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { COMPANY_NAME } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import { shouldNotifyStudentWhatsappDelivery } from "../utils/branchWhatsappAccounts";
 import {
   invoiceInvoicedAmount,
   invoiceApprovedPaid,
@@ -908,7 +909,7 @@ const FinanceModule = ({
     const detail = ws?.reason ? ` ${ws.reason}` : "";
     if (ws?.status === "sent") {
       onNotify?.("WhatsApp sent", `Invoice ${invoice.id} was resent to student via WhatsApp.`, "success");
-    } else {
+    } else if (shouldNotifyStudentWhatsappDelivery(ws)) {
       onNotify?.("WhatsApp not sent", `Invoice ${invoice.id} resend did not complete.${detail}`, "warning");
     }
     loadStudentInvoices();

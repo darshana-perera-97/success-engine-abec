@@ -29,6 +29,7 @@ const {
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,
   resolveEffectiveWhatsappSenderId,
+  studentPrimaryWhatsappUnavailableReason,
   resolveWhatsappIntegrationContext,
   assertCanManageWhatsappConnection,
   onWhatsappSessionReady,
@@ -1398,13 +1399,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
     const branchWhatsappEnabled = await isBranchWhatsappEnabled();
     let reason;
     if (branchWhatsappEnabled && student) {
-      const studentBranch = await resolveBranchForStudent(student);
-      if (!studentBranch) {
-        reason =
-          "Student branch is not set or does not match a configured branch office.";
-      } else {
-        reason = "No WhatsApp account is connected for this student's branch.";
-      }
+      reason = await studentPrimaryWhatsappUnavailableReason(student);
     } else {
       reason = branchWhatsappEnabled
         ? "No WhatsApp account is connected for this student's branch."

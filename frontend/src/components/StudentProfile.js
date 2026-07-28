@@ -81,12 +81,15 @@ import { formatStudentIntake, intakeFieldsFromStudent, validateIntakeFields } fr
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { EditStudentDetailsRequestModal } from "./EditStudentDetailsRequestModal";
 import { RemoveStudentRequestModal } from "./RemoveStudentRequestModal";
+import { PrimaryWhatsappConnectPrompt } from "./PrimaryWhatsappConnectPrompt";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import {
   formatWhatsappContactCardTitle,
   loadBranchWhatsappAccounts,
   loadAllBranchWhatsappAccountGroups,
   resolveStudentBranchWhatsappAccount,
+  getStudentPrimaryWhatsappSendReadiness,
+  isStudentWhatsappNotConnectedDelivery,
 } from "../utils/branchWhatsappAccounts";
 import { buildCounselorTeamEntriesWithFallback, buildAddSecondaryCounselorPatch, buildCounselorTransferHistory, buildStudentCounselorRemovalPatch, wouldStudentHaveNoCounselorsAfterRemoval } from "../studentContactHelpers";
 import {
@@ -1015,7 +1018,8 @@ const StudentProfile = ({
   onSelectStudent,
   onCompleteStudentIntakeTask,
   counselorIdentitySet = null,
-  branchWhatsappEnabled = false
+  branchWhatsappEnabled = false,
+  adminChatEnabled = false
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [localStudent, setLocalStudent] = useState(student);
@@ -1064,6 +1068,12 @@ const StudentProfile = ({
     saving: false,
     error: ""
   });
+  const [primaryWhatsappConnectPrompt, setPrimaryWhatsappConnectPrompt] = useState({
+    open: false,
+    reason: "",
+    account: null,
+  });
+  const primaryWhatsappPromptStudentIdRef = useRef("");
   const [intakeDialog, setIntakeDialog] = useState({
     open: false,
     intakeMonth: "",
@@ -1640,6 +1650,38 @@ const StudentProfile = ({
   useEffect(() => {
     refreshWhatsappContactAccount();
   }, [refreshWhatsappContactAccount]);
+  useEffect(() => {
+    primaryWhatsappPromptStudentIdRef.current = "";
+    setPrimaryWhatsappConnectPrompt({ open: false, reason: "", account: null });
+  }, [localStudent?.id]);
+  useEffect(() => {
+    if (!branchWhatsappEnabled || userRole === "Student") return;
+    if (whatsappContactLoading) return;
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) return;
+    if (primaryWhatsappPromptStudentIdRef.current === studentId) return;
+    let cancelled = false;
+    (async () => {
+      const readiness = await getStudentPrimaryWhatsappSendReadiness(localStudent);
+      if (cancelled || readiness.ready) return;
+      primaryWhatsappPromptStudentIdRef.current = studentId;
+      setPrimaryWhatsappConnectPrompt({
+        open: true,
+        reason: readiness.reason || "",
+        account: readiness.account,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    branchWhatsappEnabled,
+    userRole,
+    localStudent,
+    whatsappContactLoading,
+    whatsappContactAccount?.connected,
+    whatsappContactAccount?.userId,
+  ]);
   const openCountryDialog = async () => {
     if (!canRequestCountryChange || countryChangePending) return;
     const branch = String(localStudent.branch || currentUser?.branch || "").trim();
@@ -2018,6 +2060,7 @@ const StudentProfile = ({
       const whatsapp = delivery.whatsapp || {};
       const emailSent = email.status === "sent";
       const whatsappSent = whatsapp.status === "sent";
+      const whatsappDisconnected = isStudentWhatsappNotConnectedDelivery(whatsapp);
       const formatChannelLine = (label, channel) => {
         if (channel.status === "sent") return `${label}: sent`;
         const reason = String(channel.reason || "").trim();
@@ -2026,7 +2069,10 @@ const StudentProfile = ({
         }
         return reason ? `${label}: failed — ${reason}` : `${label}: failed`;
       };
-      const detailLines = [formatChannelLine("Email", email), formatChannelLine("WhatsApp", whatsapp)];
+      const detailLines = [
+        formatChannelLine("Email", email),
+        ...(whatsappDisconnected ? [] : [formatChannelLine("WhatsApp", whatsapp)]),
+      ];
       if (emailSent && whatsappSent) {
         onNotify?.(
           "Login details sent",
@@ -3145,6 +3191,22 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitBranchChange, disabled: branchDialog.saving || !String(branchDialog.branch || "").trim() || !String(branchDialog.reason || "").trim(), children: branchDialog.saving ? "Submitting…" : "Submit request" })
           ] })
         ] }) }),
+        /* @__PURE__ */ jsx(PrimaryWhatsappConnectPrompt, {
+          open: primaryWhatsappConnectPrompt.open,
+          onClose: () => setPrimaryWhatsappConnectPrompt((prev) => ({ ...prev, open: false })),
+          studentName: localStudent?.name || "",
+          account: primaryWhatsappConnectPrompt.account || whatsappContactAccount,
+          reason: primaryWhatsappConnectPrompt.reason,
+          currentRole: userRole,
+          currentUserId: currentUser?.id || authenticatedUser?.id,
+          adminChatEnabled,
+          branchWhatsappEnabled,
+          onOpenIntegrations: typeof onNavigate === "function" ? () => onNavigate("integration") : undefined,
+          onOpenStudentProfile:
+            canRequestWhatsappContactChange && !whatsappContactChangePending
+              ? () => openWhatsappContactDialog()
+              : undefined,
+        }),
         whatsappContactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeWhatsappContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request WhatsApp contact change" }),

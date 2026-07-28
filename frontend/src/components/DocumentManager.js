@@ -11,7 +11,12 @@ import {
 import { useCountryDocConfig } from "../hooks/useCountryDocConfig";
 import { areAllTaskDocumentSlotsVerified } from "../taskDocumentRequests";
 import { isCounselorEquivalentPortalRole } from "../roles";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
+import {
+  MAX_DOCUMENTS_PER_UPLOAD,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_LABEL,
+  validateDocumentUploadFileList
+} from "../uploadLimits";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 
 function studentDocumentUrl(url) {
@@ -126,7 +131,7 @@ const DocumentManager = ({
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, doc: null });
   const [deleteDocumentModal, setDeleteDocumentModal] = useState({ isOpen: false, doc: null });
   const [rejectionReason, setRejectionReason] = useState("");
-  const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null });
+  const [uploadModal, setUploadModal] = useState({ isOpen: false, docType: null, pendingFiles: [] });
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [otherDocModal, setOtherDocModal] = useState({ open: false, slot: null, label: "", error: "", append: false });
@@ -191,78 +196,91 @@ const DocumentManager = ({
     setWhatsappNotification({ show: true, message });
     setTimeout(() => setWhatsappNotification({ show: false, message: "" }), 4e3);
   };
-  const handleUploadFileChange = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !uploadModal.docType) return;
+  const handlePipelineFilesSelected = (event) => {
+    const validated = validateDocumentUploadFileList(event.target.files);
+    event.target.value = "";
+    if (!validated.ok) {
+      setUploadError(validated.error);
+      return;
+    }
+    setUploadError("");
+    setUploadModal((prev) => ({ ...prev, pendingFiles: validated.files }));
+  };
+  const handlePipelineUploadDocuments = async () => {
+    const files = uploadModal.pendingFiles;
+    const docType = uploadModal.docType;
+    if (!files?.length || !docType) return;
     if (!onUploadDocument) {
       setUploadError("Document upload service is unavailable.");
-      event.target.value = "";
-      return;
-    }
-    const allowedTypes = new Set([
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ]);
-    if (!allowedTypes.has(file.type)) {
-      setUploadError("Unsupported format. Use PDF, JPG, PNG, DOC, or DOCX.");
-      event.target.value = "";
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setUploadError(`File must be under ${MAX_UPLOAD_LABEL}.`);
-      event.target.value = "";
       return;
     }
     setUploadError("");
     setIsUploading(true);
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("read_error"));
-      reader.readAsDataURL(file);
-    }).catch(() => "");
-    if (!dataUrl) {
-      setIsUploading(false);
-      setUploadError("Unable to read file. Try again.");
-      event.target.value = "";
-      return;
+    let lastResult = null;
+    let successCount = 0;
+    for (const file of files) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_error"));
+        reader.readAsDataURL(file);
+      }).catch(() => "");
+      if (!dataUrl) {
+        setIsUploading(false);
+        setUploadError(`Unable to read "${file.name}". Try again.`);
+        return;
+      }
+      const result = await onUploadDocument({
+        studentId: student.id,
+        dataUrl,
+        fileName: file.name,
+        docType,
+        phase: 1,
+        tier: "Global"
+      });
+      if (!result?.ok) {
+        setIsUploading(false);
+        setUploadError(
+          successCount > 0
+            ? `${result?.error || "Failed to upload document."} (${successCount} of ${files.length} uploaded.)`
+            : result?.error || "Failed to upload document."
+        );
+        return;
+      }
+      lastResult = result;
+      successCount += 1;
     }
-    const result = await onUploadDocument({
-      studentId: student.id,
-      dataUrl,
-      fileName: file.name,
-      docType: uploadModal.docType,
-      phase: 1,
-      tier: "Global"
-    });
     setIsUploading(false);
-    event.target.value = "";
-    if (!result?.ok) {
-      setUploadError(result?.error || "Failed to upload document.");
-      return;
-    }
     if (onUpdateTasks) {
       const linkedTask = tasks.find(
-        (t) => t.student_id === student.id && t.documentType === uploadModal.docType && t.status !== "Completed"
+        (t) => t.student_id === student.id && t.documentType === docType && t.status !== "Completed"
       );
       if (linkedTask) {
         onUpdateTasks([{ ...linkedTask, status: "In Review" }]);
       }
     }
-    setUploadModal({ isOpen: false, docType: null });
-    const wa = result?.documentUploadWhatsapp;
-    const docLabel = uploadModal.docType;
-    if (wa?.status === "sent") {
-      showWhatsappNotification(`Document "${docLabel}" uploaded. WhatsApp sent to the student from your counselor account.`);
+    setUploadModal({ isOpen: false, docType: null, pendingFiles: [] });
+    const wa = lastResult?.documentUploadWhatsapp;
+    if (successCount > 1) {
+      if (wa?.status === "sent") {
+        showWhatsappNotification(
+          `${successCount} documents for "${docType}" uploaded. WhatsApp sent for the latest file from your counselor account.`
+        );
+      } else if (wa?.status === "failed" || wa?.status === "skipped") {
+        const reason = wa.reason ? ` ${wa.reason}` : "";
+        showWhatsappNotification(
+          `${successCount} documents for "${docType}" uploaded. WhatsApp was not sent for the latest file.${reason}`
+        );
+      } else {
+        showWhatsappNotification(`${successCount} documents for "${docType}" uploaded successfully.`);
+      }
+    } else if (wa?.status === "sent") {
+      showWhatsappNotification(`Document "${docType}" uploaded. WhatsApp sent to the student from your counselor account.`);
     } else if (wa?.status === "failed" || wa?.status === "skipped") {
-      const reason = wa?.reason ? ` ${wa.reason}` : "";
-      showWhatsappNotification(`Document "${docLabel}" uploaded. WhatsApp was not sent.${reason}`);
+      const reason = wa.reason ? ` ${wa.reason}` : "";
+      showWhatsappNotification(`Document "${docType}" uploaded. WhatsApp was not sent.${reason}`);
     } else {
-      showWhatsappNotification(`Document "${docLabel}" uploaded successfully.`);
+      showWhatsappNotification(`Document "${docType}" uploaded successfully.`);
     }
   };
   const handleProfileOtherFileChange = async (event) => {
@@ -633,7 +651,7 @@ const DocumentManager = ({
             ] }),
             description ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-0.5", children: description }) : null
           ] }),
-          /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => setUploadModal({ isOpen: true, docType }), children: [
+          /* @__PURE__ */ jsxs(Button, { size: "sm", className: "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none", onClick: () => { setUploadError(""); setUploadModal({ isOpen: true, docType, pendingFiles: [] }); }, children: [
             /* @__PURE__ */ jsx(Upload, { size: 14, className: "mr-2" }),
             " Upload"
           ] })
@@ -938,27 +956,51 @@ const DocumentManager = ({
           /* @__PURE__ */ jsx("h3", { className: "font-semibold text-lg text-slate-900", children: "Upload Document" }),
             /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500 mt-1", children: [
             "Uploading: ",
-            /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: uploadModal.docType })
+            /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-700", children: uploadModal.docType }),
+            ` — up to ${MAX_DOCUMENTS_PER_UPLOAD} files per upload`
           ] })
         ] }),
-        !isUploading && /* @__PURE__ */ jsx("button", { onClick: () => setUploadModal({ isOpen: false, docType: null }), className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+        !isUploading && /* @__PURE__ */ jsx("button", { onClick: () => { setUploadModal({ isOpen: false, docType: null, pendingFiles: [] }); setUploadError(""); }, className: "p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors", children: /* @__PURE__ */ jsx(X, { size: 18 }) })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: "p-6", children: !isUploading ? /* @__PURE__ */ jsxs(
-        "label",
-        {
-          className: "border-2 border-dashed border-indigo-200 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group",
-          children: [
-            /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", className: "hidden", onChange: handleUploadFileChange }),
-            /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
-            /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Click to browse file" }),
-            /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Supports PDF, JPG, PNG, DOC, DOCX (Max ${MAX_UPLOAD_LABEL})` }),
-            uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-3", children: uploadError }) : null
-          ]
-        }
-      ) : /* @__PURE__ */ jsxs("div", { className: "py-8 flex flex-col items-center justify-center text-center", children: [
+      /* @__PURE__ */ jsx("div", { className: "p-6", children: !isUploading ? /* @__PURE__ */ jsxs("div", { className: "space-y-4", children: [
+        /* @__PURE__ */ jsxs(
+          "label",
+          {
+            className: "border-2 border-dashed border-indigo-200 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group",
+            children: [
+              /* @__PURE__ */ jsx("input", { type: "file", accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx", multiple: true, className: "hidden", onChange: handlePipelineFilesSelected }),
+              /* @__PURE__ */ jsx("div", { className: "w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
+              /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Choose up to 3 files" }),
+              /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+                "PDF, JPG, PNG, DOC, DOCX — max ",
+                MAX_UPLOAD_LABEL,
+                " each"
+              ] })
+            ]
+          }
+        ),
+        uploadModal.pendingFiles?.length > 0 && /* @__PURE__ */ jsxs("ul", { className: "text-xs text-slate-600 space-y-1 border border-slate-100 rounded-lg p-3 bg-slate-50", children: [
+          uploadModal.pendingFiles.map((file) => /* @__PURE__ */ jsx("li", { className: "truncate", title: file.name, children: file.name }, file.name)),
+          /* @__PURE__ */ jsxs("p", { className: "text-[10px] text-slate-400 pt-1", children: [
+            uploadModal.pendingFiles.length,
+            " of ",
+            MAX_DOCUMENTS_PER_UPLOAD,
+            " selected"
+          ] })
+        ] }),
+        uploadError ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: uploadError }) : null,
+        /* @__PURE__ */ jsx(Button, {
+          type: "button",
+          className: "w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-100 border-none",
+          size: "sm",
+          disabled: !uploadModal.pendingFiles?.length,
+          onClick: handlePipelineUploadDocuments,
+          children: uploadModal.pendingFiles?.length > 1 ? "Upload Documents" : "Upload Document"
+        })
+      ] }) : /* @__PURE__ */ jsxs("div", { className: "py-8 flex flex-col items-center justify-center text-center", children: [
         /* @__PURE__ */ jsx("div", { className: "w-16 h-16 rounded-full mb-6 bg-indigo-100 text-indigo-600 flex items-center justify-center animate-pulse", children: /* @__PURE__ */ jsx(FileUp, { size: 24 }) }),
-        /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Uploading Document..." }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your file." })
+        /* @__PURE__ */ jsx("h4", { className: "text-sm font-medium text-slate-900 mb-1", children: "Uploading Documents..." }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "Please wait while we process your files." })
       ] }) })
     ] }) }),
     whatsappNotification.show && /* @__PURE__ */ jsx("div", { key: "whatsapp-notification", className: "fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300", children: /* @__PURE__ */ jsxs("div", { className: "bg-white border border-emerald-100 shadow-xl rounded-lg p-4 flex items-start gap-3 max-w-sm", children: [
