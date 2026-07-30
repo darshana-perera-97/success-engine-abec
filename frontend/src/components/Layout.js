@@ -25,7 +25,8 @@ import {
   AlertTriangle,
   Plug,
   MapPin,
-  FormInput
+  FormInput,
+  FileBarChart
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
@@ -206,8 +207,10 @@ const Layout = ({
     }
     handleProfileClose();
   };
+  const reportNavItem = { id: "report", label: "Report", icon: /* @__PURE__ */ jsx(FileBarChart, { size: 20 }) };
   const counselorNavItems = [
     { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+    reportNavItem,
     { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
     { id: "students", label: "My Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }), badge: counselorStudentsBadge },
     { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
@@ -265,6 +268,7 @@ const Layout = ({
       case "Country Coordinator":
         return [
           { id: "dashboard", label: "My Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          reportNavItem,
           { id: "calendar", label: "Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "Country students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) },
@@ -278,12 +282,14 @@ const Layout = ({
       case "Accountant":
         return [
           { id: "dashboard", label: "Dashboard", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          reportNavItem,
           { id: "students", label: "Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
           { id: "finance", label: "Ledger & Payments", icon: /* @__PURE__ */ jsx(DollarSign, { size: 20 }) }
         ];
       case "Manager":
         return withStaffMessagingNav([
           { id: "dashboard", label: "Command Center", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          reportNavItem,
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
@@ -298,6 +304,7 @@ const Layout = ({
       case "Team Lead":
         return withStaffMessagingNav([
           { id: "dashboard", label: "Command Center", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          reportNavItem,
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },
@@ -311,6 +318,7 @@ const Layout = ({
       default: {
         const adminNavItems = [
           { id: "dashboard", label: "Global Overview", icon: /* @__PURE__ */ jsx(LayoutDashboard, { size: 20 }) },
+          reportNavItem,
           { id: "counselors", label: "Counselors", icon: /* @__PURE__ */ jsx(UserCog, { size: 20 }) },
           { id: "branch", label: "Branch Analytics", icon: /* @__PURE__ */ jsx(BarChart3, { size: 20 }) },
           { id: "students", label: "All Students", icon: /* @__PURE__ */ jsx(Users, { size: 20 }) },

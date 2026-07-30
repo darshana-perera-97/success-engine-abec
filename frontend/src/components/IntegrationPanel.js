@@ -47,6 +47,21 @@ function branchWhatsappStatusLabel(status, hasMessenger) {
   return BRANCH_STATUS_COPY[key] || key;
 }
 
+function accountWhatsappStatusLabel(account) {
+  if (!account) return "Not connected";
+  if (account.connected) {
+    return String(account.whatsappNumber || "").trim() ? account.whatsappNumber : "Connected";
+  }
+  const key = String(account.status || "disconnected");
+  return BRANCH_STATUS_COPY[key] || "Not connected";
+}
+
+function accountWhatsappStatusTextClass(account) {
+  if (!account) return "text-slate-400";
+  if (account.connected) return "text-slate-500";
+  return branchWhatsappStatusTextClass(account.status, true);
+}
+
 function branchWhatsappStatusTextClass(status, hasMessenger) {
   if (!hasMessenger) return "text-slate-500";
   const s = String(status || "").trim();
@@ -345,7 +360,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 {branchAccounts.map((row) => {
                   const accounts = Array.isArray(row?.accounts) ? row.accounts : [];
                   const connectedCount = accounts.filter((account) => account.connected).length;
-                  const hasMessenger = connectedCount > 0 || Boolean(row?.messengerUserId);
+                  const hasMessenger = accounts.length > 0 || connectedCount > 0 || Boolean(row?.messengerUserId);
                   const status = row?.status || "disconnected";
                   const isLive = status === "connected" || status === "authenticated";
                   return (
@@ -385,8 +400,13 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                                     <p className="text-xs text-slate-500 truncate">{account.whatsappNumber}</p>
                                   </>
                                 ) : (
-                                  <p className="text-xs text-slate-400 mt-0.5">Not connected</p>
+                                  <p className={`text-xs mt-0.5 ${accountWhatsappStatusTextClass(account)}`}>
+                                    {accountWhatsappStatusLabel(account)}
+                                  </p>
                                 )}
+                                {!account.connected && account.error ? (
+                                  <p className="text-[11px] text-rose-600 mt-1 line-clamp-2">{account.error}</p>
+                                ) : null}
                               </div>
                             ))}
                           </div>

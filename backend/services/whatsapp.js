@@ -52,6 +52,7 @@ const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 180 * 1000;
+const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 let isWhatsappShuttingDown = false;
@@ -113,6 +114,49 @@ function resolvePuppeteerExecutablePath() {
   }
 
   return "";
+}
+
+function buildWhatsappClientOptions(cleanUserId, webVersion) {
+  const cacheType = String(process.env.WHATSAPP_WEB_VERSION_CACHE || "local").trim().toLowerCase();
+  const options = {
+    authStrategy: new LocalAuth({
+      clientId: sanitizeUserIdForPath(cleanUserId),
+      dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
+    }),
+    webVersion,
+    authTimeoutMs: 120000,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 10000,
+    bypassCSP: true,
+    puppeteer: buildPuppeteerOptions(),
+  };
+  if (cacheType === "remote") {
+    options.webVersionCache = {
+      type: "remote",
+      remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
+      strict: false,
+    };
+  } else {
+    options.webVersionCache = { type: "local" };
+  }
+  return options;
+}
+
+function scheduleWhatsappAuthTimeoutRecovery(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId || isWhatsappShuttingDown) return;
+  const timer = setTimeout(async () => {
+    if (isWhatsappShuttingDown) return;
+    const state = ensureWhatsappState(cleanUserId);
+    if (state.status !== "error" || !state.authTimedOut) return;
+    logEvent("whatsapp", "auto-reconnect after QR sign-in timeout", { userId: cleanUserId });
+    try {
+      await regenerateWhatsappQrCode(cleanUserId);
+    } catch (error) {
+      console.warn(`WhatsApp auto-reconnect failed for ${cleanUserId}:`, error);
+    }
+  }, WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS);
+  if (typeof timer.unref === "function") timer.unref();
 }
 
 function buildPuppeteerOptions() {
@@ -371,6 +415,7 @@ function markWhatsappAuthenticatedTimeout(state, userId = "") {
   const cleanUserId = String(userId || "").trim();
   if (cleanUserId) {
     notifyWhatsappSessionDisconnected(cleanUserId);
+    scheduleWhatsappAuthTimeoutRecovery(cleanUserId);
   }
 }
 
@@ -431,23 +476,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   await terminateBrowserProcessesUsingProfile(sessionDataDir);
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
   const webVersion = await resolveWhatsappWebVersion();
-  const client = new Client({
-    authStrategy: new LocalAuth({
-      clientId: sanitizeUserIdForPath(cleanUserId),
-      dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
-    }),
-    webVersion,
-    webVersionCache: {
-      type: "remote",
-      remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
-      strict: false,
-    },
-    authTimeoutMs: 120000,
-    takeoverOnConflict: true,
-    takeoverTimeoutMs: 10000,
-    bypassCSP: true,
-    puppeteer: buildPuppeteerOptions(),
-  });
+  const client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion));
   state.client = client;
   state.status = "connecting";
   state.qrCodeDataUrl = "";
@@ -978,6 +1007,149 @@ function buildWhatsappIncomingRowKey(rowId) {
   return id ? `incoming-row:${id}` : "";
 }
 
+function normalizeWhatsappMessageId(message) {
+  if (!message?.id) return { serialized: "", rawId: "" };
+  const id = message.id;
+  if (!id._serialized) {
+    id._serialized = id._serialized || id.$1 || (typeof id === "string" ? id : null) || "";
+  }
+  const serialized = String(id._serialized || "").trim();
+  const rawId = String(id.$1 || id._serialized || "").trim();
+  return { serialized, rawId };
+}
+
+async function primeWhatsappMessageStoreForDownload(client, msgId, rawId) {
+  const page = client?.pupPage;
+  if (!page || typeof page.evaluate !== "function") return;
+  if (!msgId && !rawId) return;
+  try {
+    await page.evaluate(async (serializedId, alternateId) => {
+      try {
+        const MsgStore = window.Store && window.Store.Msg;
+        if (!MsgStore) return;
+
+        let targetMsg = MsgStore.get(serializedId) || MsgStore.get(alternateId);
+        if (!targetMsg && MsgStore.getMessagesById) {
+          const ids = [serializedId, alternateId].filter(Boolean);
+          const fetched = await MsgStore.getMessagesById(ids);
+          if (fetched && fetched.length > 0) targetMsg = fetched[0];
+        }
+
+        if (targetMsg?.id && !targetMsg.id._serialized && targetMsg.id.$1) {
+          targetMsg.id._serialized = targetMsg.id.$1;
+        }
+      } catch {
+        // Browser-side resolution is best-effort.
+      }
+    }, msgId, rawId);
+  } catch {
+    // Page may be unavailable during shutdown.
+  }
+}
+
+async function downloadWhatsappMessageMedia({
+  client,
+  message,
+  retries = 4,
+  timeoutMs = 30000,
+  retryDelaysMs = [3000, 5000, 8000],
+  onRetry,
+} = {}) {
+  if (!message?.hasMedia || typeof message.downloadMedia !== "function") return null;
+
+  const { serialized: serializedMsgId } = normalizeWhatsappMessageId(message);
+
+  const tryDownload = async (msg) => {
+    const { serialized, rawId } = normalizeWhatsappMessageId(msg);
+    if (client) {
+      await primeWhatsappMessageStoreForDownload(client, serialized, rawId);
+    }
+    return Promise.race([
+      msg.downloadMedia(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Media download timed out")), timeoutMs)
+      ),
+    ]);
+  };
+
+  const formatError = (err) =>
+    err instanceof Error
+      ? err.message
+      : typeof err === "object"
+        ? JSON.stringify(err)
+        : String(err);
+
+  let media = null;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    let targetMsg = message;
+    if (attempt > 1 && serializedMsgId && client?.getMessageById) {
+      try {
+        const refetched = await client.getMessageById(serializedMsgId);
+        if (refetched && typeof refetched.downloadMedia === "function") {
+          targetMsg = refetched;
+        }
+      } catch {
+        // Fall back to original message object.
+      }
+    }
+    try {
+      media = await tryDownload(targetMsg);
+      if (media?.data) return media;
+    } catch (downloadErr) {
+      const errDetail = formatError(downloadErr);
+      if (attempt < retries) {
+        if (typeof onRetry === "function") {
+          onRetry({ attempt, retries, error: errDetail, refetched: targetMsg !== message });
+        }
+        await new Promise((r) => setTimeout(r, retryDelaysMs[attempt - 1] || 5000));
+      } else if (typeof onRetry === "function") {
+        onRetry({ attempt, retries, error: errDetail, refetched: targetMsg !== message, final: true });
+      }
+    }
+  }
+  return media;
+}
+
+async function storeWhatsappMediaAsAttachment(media, { from = "", studentId = "" } = {}) {
+  if (!media?.data) return null;
+  let rawMime = String(media.mimetype || "").toLowerCase();
+  const semiIdx = rawMime.indexOf(";");
+  if (semiIdx !== -1) rawMime = rawMime.slice(0, semiIdx).trim();
+  const mediaFilename = String(media.filename || "whatsapp-media");
+  let effectiveMime = rawMime;
+  if (!effectiveMime || effectiveMime === "application/octet-stream") {
+    const fileExt = extensionFromFileName(mediaFilename);
+    if (fileExt) effectiveMime = mimeFromExtension(fileExt);
+  }
+  if (!isSupportedWhatsappMediaMime(effectiveMime)) {
+    logEvent("whatsapp", "media skipped (unsupported type)", {
+      from,
+      mime: effectiveMime || rawMime || "unknown",
+      filename: mediaFilename,
+    });
+    return null;
+  }
+  const stored = await storeChatAttachmentDataUrl(
+    `data:${effectiveMime};base64,${media.data}`,
+    mediaFilename
+  );
+  if (!stored || stored.error) return null;
+  const sizeKB = stored.size ? `${(stored.size / 1024).toFixed(1)} KB` : "unknown size";
+  logEvent("whatsapp", "media received", {
+    from,
+    studentId,
+    file: stored.name,
+    mime: stored.mime,
+    size: sizeKB,
+  });
+  return {
+    name: stored.name,
+    mime: stored.mime,
+    size: stored.size,
+    url: stored.url,
+  };
+}
+
 function isNativeWhatsappMessageId(value) {
   const id = String(value || "").trim();
   if (!id) return false;
@@ -1144,101 +1316,40 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   const content = String(message.body || "").trim();
   let attachment = null;
   if (message?.hasMedia === true && typeof message.downloadMedia === "function") {
-    const MEDIA_DOWNLOAD_RETRIES = 4;
-    const MEDIA_RETRY_DELAYS_MS = [3000, 5000, 8000];
-    const MEDIA_TIMEOUT_MS = 30000;
-    let media = null;
-    const serializedMsgId = String(message?.id?._serialized || "").trim();
     const senderState = ensureWhatsappState(counselorId);
-
-    const tryDownload = async (msg) => {
-      return Promise.race([
-        msg.downloadMedia(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Media download timed out")), MEDIA_TIMEOUT_MS)
-        ),
-      ]);
-    };
-
-    const formatError = (err) =>
-      err instanceof Error
-        ? err.message
-        : typeof err === "object"
-          ? JSON.stringify(err)
-          : String(err);
-
-    for (let attempt = 1; attempt <= MEDIA_DOWNLOAD_RETRIES; attempt++) {
-      let targetMsg = message;
-      if (attempt > 1 && serializedMsgId && senderState.client) {
-        try {
-          const refetched = await senderState.client.getMessageById(serializedMsgId);
-          if (refetched && typeof refetched.downloadMedia === "function") {
-            targetMsg = refetched;
+    let media = null;
+    try {
+      media = await downloadWhatsappMessageMedia({
+        client: senderState.client,
+        message,
+        onRetry: ({ attempt, retries, error, refetched, final }) => {
+          if (final) {
+            logEvent("whatsapp", "media download failed after retries", {
+              from: fromChatId,
+              attempts: retries,
+              error,
+            });
+            return;
           }
-        } catch {
-          // Fall back to original message object.
-        }
-      }
-      try {
-        media = await tryDownload(targetMsg);
-        if (media?.data) break;
-      } catch (downloadErr) {
-        const errDetail = formatError(downloadErr);
-        if (attempt < MEDIA_DOWNLOAD_RETRIES) {
-          logEvent("whatsapp", `media download attempt ${attempt}/${MEDIA_DOWNLOAD_RETRIES} failed, retrying`, {
+          logEvent("whatsapp", `media download attempt ${attempt}/${retries} failed, retrying`, {
             from: fromChatId,
-            error: errDetail,
-            refetched: targetMsg !== message,
+            error,
+            refetched,
           });
-          await new Promise((r) => setTimeout(r, MEDIA_RETRY_DELAYS_MS[attempt - 1] || 5000));
-        } else {
-          logEvent("whatsapp", "media download failed after retries", {
-            from: fromChatId,
-            attempts: MEDIA_DOWNLOAD_RETRIES,
-            error: errDetail,
-          });
-        }
-      }
+        },
+      });
+    } catch (storeErr) {
+      logEvent("whatsapp", "media download failed after retries", {
+        from: fromChatId,
+        error: String(storeErr?.message || storeErr),
+      });
     }
     if (media?.data) {
       try {
-        let rawMime = String(media.mimetype || "").toLowerCase();
-        const semiIdx = rawMime.indexOf(";");
-        if (semiIdx !== -1) rawMime = rawMime.slice(0, semiIdx).trim();
-        const mediaFilename = String(media.filename || "whatsapp-media");
-        let effectiveMime = rawMime;
-        if (!effectiveMime || effectiveMime === "application/octet-stream") {
-          const fileExt = extensionFromFileName(mediaFilename);
-          if (fileExt) effectiveMime = mimeFromExtension(fileExt);
-        }
-        if (isSupportedWhatsappMediaMime(effectiveMime)) {
-          const stored = await storeChatAttachmentDataUrl(
-            `data:${effectiveMime};base64,${media.data}`,
-            mediaFilename
-          );
-          if (stored && !stored.error) {
-            attachment = {
-              name: stored.name,
-              mime: stored.mime,
-              size: stored.size,
-              url: stored.url,
-            };
-            const sizeKB = stored.size ? `${(stored.size / 1024).toFixed(1)} KB` : "unknown size";
-            logEvent("whatsapp", "media received", {
-              from: fromChatId,
-              studentId: String(student?.id || ""),
-              file: stored.name,
-              mime: stored.mime,
-              size: sizeKB,
-            });
-          }
-        } else {
-          logEvent("whatsapp", "media skipped (unsupported type)", {
-            from: fromChatId,
-            mime: effectiveMime || rawMime || "unknown",
-            filename: mediaFilename,
-          });
-        }
+        attachment = await storeWhatsappMediaAsAttachment(media, {
+          from: fromChatId,
+          studentId: String(student?.id || ""),
+        });
       } catch (storeErr) {
         logEvent("whatsapp", "media store failed", {
           from: fromChatId,
@@ -1654,36 +1765,12 @@ async function syncWhatsappChatHistoryForStudent(counselorUserId, studentId) {
     let attachment = null;
     if (msg.hasMedia === true && typeof msg.downloadMedia === "function") {
       try {
-        const media = await Promise.race([
-          msg.downloadMedia(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Media download timed out")), 30000)
-          ),
-        ]);
+        const media = await downloadWhatsappMessageMedia({
+          client: state.client,
+          message: msg,
+        });
         if (media?.data) {
-          let rawMime = String(media.mimetype || "").toLowerCase();
-          const semiIdx = rawMime.indexOf(";");
-          if (semiIdx !== -1) rawMime = rawMime.slice(0, semiIdx).trim();
-          const mediaFilename = String(media.filename || "whatsapp-media");
-          let effectiveMime = rawMime;
-          if (!effectiveMime || effectiveMime === "application/octet-stream") {
-            const fileExt = extensionFromFileName(mediaFilename);
-            if (fileExt) effectiveMime = mimeFromExtension(fileExt);
-          }
-          if (isSupportedWhatsappMediaMime(effectiveMime)) {
-            const stored = await storeChatAttachmentDataUrl(
-              `data:${effectiveMime};base64,${media.data}`,
-              mediaFilename
-            );
-            if (stored && !stored.error) {
-              attachment = {
-                name: stored.name,
-                mime: stored.mime,
-                size: stored.size,
-                url: stored.url,
-              };
-            }
-          }
+          attachment = await storeWhatsappMediaAsAttachment(media, { from: waChatId });
         }
       } catch {
         // Skip media if download fails during history sync.

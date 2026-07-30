@@ -95,6 +95,45 @@ function buildBranchWhatsappAccountRow(manager, primaryUserId) {
     whatsappNumber: connected ? String(state?.whatsappNumber || "").trim() : "",
     connectedAt: connected ? String(state?.connectedAt || "").trim() : "",
     isPrimary: Boolean(primaryUserId && userId === primaryUserId),
+    error: connected ? "" : String(state?.error || "").trim(),
+  };
+}
+
+const BRANCH_WHATSAPP_STATUS_PRIORITY = [
+  "connected",
+  "authenticated",
+  "awaiting_qr_scan",
+  "connecting",
+  "error",
+  "auth_failed",
+  "disconnected",
+];
+
+function summarizeBranchWhatsappStatus(accounts) {
+  const rows = Array.isArray(accounts) ? accounts : [];
+  const connected = rows.filter((row) => row.connected);
+  if (connected.length > 0) {
+    const primaryAccount =
+      connected.find((row) => row.isPrimary) || connected[0] || null;
+    return {
+      status: String(primaryAccount?.status || "connected"),
+      primaryAccount,
+      connectedCount: connected.length,
+    };
+  }
+  for (const statusKey of BRANCH_WHATSAPP_STATUS_PRIORITY) {
+    if (statusKey === "connected" || statusKey === "authenticated") continue;
+    const match = rows.find((row) => String(row?.status || "") === statusKey);
+    if (match) {
+      return { status: statusKey, primaryAccount: match, connectedCount: 0 };
+    }
+  }
+  const primaryAccount =
+    rows.find((row) => row.isPrimary) || rows[0] || null;
+  return {
+    status: String(primaryAccount?.status || "disconnected"),
+    primaryAccount,
+    connectedCount: 0,
   };
 }
 
@@ -446,4 +485,5 @@ module.exports = {
   onWhatsappSessionReady,
   onWhatsappSessionDisconnected,
   syncBranchWhatsappMessengersFromSessions,
+  summarizeBranchWhatsappStatus,
 };

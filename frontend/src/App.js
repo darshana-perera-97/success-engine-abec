@@ -6,6 +6,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
 import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getBranchChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { ReportPage } from "./components/ReportPage";
 import { ManagerDashboard } from "./components/ManagerDashboard";
 import { StudentList } from "./components/StudentList";
 import { StudentProfile } from "./components/StudentProfile";
@@ -126,7 +127,8 @@ const VIEW_TO_PATH = {
   "my-requests": "/my-requests",
   "stage-escalations": "/stage-escalations",
   maps: "/maps",
-  "web-forms": "/web-forms"
+  "web-forms": "/web-forms",
+  report: "/report"
 };
 
 function App({ initialView = "dashboard" }) {
@@ -177,6 +179,7 @@ function App({ initialView = "dashboard" }) {
   const [notificationHistory, setNotificationHistory] = useState([]);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [studentMessagesInitialPeerId, setStudentMessagesInitialPeerId] = useState(null);
+  const [profileChatPeerId, setProfileChatPeerId] = useState(null);
   const [studentCalendarFocusCounselorId, setStudentCalendarFocusCounselorId] = useState(null);
   const [whatsappConnectionStatus, setWhatsappConnectionStatus] = useState("disconnected");
   const [requestedStudentsCount, setRequestedStudentsCount] = useState(0);
@@ -586,6 +589,26 @@ function App({ initialView = "dashboard" }) {
   const countryCoordinatorScopedStudents = useMemo(() => {
     return students;
   }, [students]);
+  const chatStudents = useMemo(() => {
+    if (isCounselorEquivalentPortalRole(currentRole)) {
+      return counselorScopedStudents;
+    }
+    if (currentRole === "Country Coordinator" && countryCoordinatorScope.active) {
+      return countryCoordinatorScopedStudents;
+    }
+    if ((currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active) {
+      return managerScopedStudents;
+    }
+    return students;
+  }, [
+    currentRole,
+    counselorScopedStudents,
+    countryCoordinatorScope.active,
+    countryCoordinatorScopedStudents,
+    managerDataScope.active,
+    managerScopedStudents,
+    students,
+  ]);
   const countryCoordinatorStudentIds = useMemo(
     () => new Set(countryCoordinatorScopedStudents.map((s) => s.id)),
     [countryCoordinatorScopedStudents]
@@ -1379,6 +1402,9 @@ function App({ initialView = "dashboard" }) {
     if (view === "counselors" && currentView === "counselors") {
       setCounselorListResetSignal((prev) => prev + 1);
     }
+    if (view !== "student-detail") {
+      setProfileChatPeerId(null);
+    }
     const counselorNav = String(options?.counselorId ?? "").trim();
     const chatPeerNav = String(options?.chatPeerId ?? "").trim();
     const messagesPeerNav = chatPeerNav || counselorNav || "";
@@ -1410,6 +1436,14 @@ function App({ initialView = "dashboard" }) {
       setSelectedTaskId(null);
     }
   };
+  const handleOpenProfileChat = useCallback((peerId) => {
+    const id = String(peerId || "").trim();
+    if (!id) return;
+    setProfileChatPeerId(id);
+  }, []);
+  const handleCloseProfileChat = useCallback(() => {
+    setProfileChatPeerId(null);
+  }, []);
   const handleSelectStudent = async (student, options) => {
     if (!student) return;
     const sid = String(student.id ?? "").trim();
@@ -2552,14 +2586,6 @@ function App({ initialView = "dashboard" }) {
       }
     }
     if (currentView === "messages") {
-      const chatStudents =
-        isCounselorEquivalentPortalRole(currentRole)
-          ? counselorScopedStudents
-          : currentRole === "Country Coordinator" && countryCoordinatorScope.active
-            ? countryCoordinatorScopedStudents
-            : (currentRole === "Manager" || currentRole === "Admin") && managerDataScope.active
-              ? managerScopedStudents
-              : students;
       return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled, branchWhatsappEnabled });
     }
     if (currentView === "resume") {
@@ -2612,6 +2638,7 @@ function App({ initialView = "dashboard" }) {
     const studentProfileProps = {
       onBack: () => handleNavigate("students"),
       onNavigate: handleNavigate,
+      onOpenStudentChat: handleOpenProfileChat,
       onUpdateStudent: handleUpdateStudent,
       onAddActivity: handleAddActivity,
       onNotify: addNotification,
@@ -2654,6 +2681,52 @@ function App({ initialView = "dashboard" }) {
       branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
       adminChatEnabled: systemData.adminChatEnabled === true,
     };
+    if (currentView === "report") {
+      let reportStudents = students;
+      let reportEmployees = employees;
+      let reportAppointments = appointments;
+      let reportScopeLabel = null;
+      let reportScopeBranch = null;
+      if (isCounselorEquivalentPortalRole(currentRole)) {
+        reportStudents = counselorScopedStudents;
+        reportScopeLabel = String(currentUser?.name || currentUser?.username || "").trim() || "your assigned students";
+      } else if (currentRole === "Country Coordinator") {
+        reportStudents = countryCoordinatorScopedStudents;
+        if (countryCoordinatorScope.active) {
+          reportScopeLabel = `${countryCoordinatorScope.countryLabel} students`;
+        }
+        reportAppointments =
+          countryCoordinatorScope.active ? countryCoordinatorScopedAppointments : appointments;
+      } else if (currentRole === "Manager" || currentRole === "Accountant") {
+        if (managerDataScope.active) {
+          reportStudents = managerScopedStudents;
+          reportEmployees = managerScopedEmployees;
+          reportAppointments = managerScopedAppointments;
+          reportScopeLabel = `${managerDataScope.branchLabel} branch`;
+          reportScopeBranch = managerDataScope.branchLabel;
+        }
+      } else if (currentRole === "Admin" && managerDataScope.active) {
+        reportStudents = managerScopedStudents;
+        reportEmployees = managerScopedEmployees;
+        reportAppointments = managerScopedAppointments;
+        reportScopeLabel = `${managerDataScope.branchLabel} branch`;
+        reportScopeBranch = managerDataScope.branchLabel;
+      }
+      const reportStudentIds = new Set(
+        (reportStudents || []).map((s) => String(s?.id || "").trim()).filter(Boolean)
+      );
+      const scopedAppointments = (reportAppointments || []).filter((apt) =>
+        reportStudentIds.has(String(apt?.studentId || "").trim())
+      );
+      return /* @__PURE__ */ jsx(ReportPage, {
+        students: reportStudents,
+        employees: reportEmployees,
+        appointments: scopedAppointments,
+        scopeLabel: reportScopeLabel,
+        scopeBranch: reportScopeBranch,
+        onSelectStudent: handleSelectStudent,
+      });
+    }
     if (currentRole === "Student") {
       const studentUser = currentUser;
       const studentVisibleTasks = tasks.filter((task) => !task.isPrivate);
@@ -3099,6 +3172,7 @@ function App({ initialView = "dashboard" }) {
         children: renderContent()
       }
     ),
+    profileChatPeerId && currentView === "student-detail" && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[200] flex justify-end bg-slate-900/40 backdrop-blur-sm", onClick: handleCloseProfileChat, children: /* @__PURE__ */ jsx("div", { className: "h-full w-full max-w-3xl bg-white shadow-2xl border-l border-gray-200 flex flex-col", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: profileChatPeerId, adminChatEnabled, branchWhatsappEnabled, overlayMode: true, onClose: handleCloseProfileChat }) }) }),
     isCreateTaskModalOpen && /* @__PURE__ */ jsx(
       CreateTaskModal,
       {

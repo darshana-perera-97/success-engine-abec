@@ -37,7 +37,7 @@ const formatMessageDateTime = (timestamp) => {
   return `${dateLabel}, ${timeLabel}`;
 };
 
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false }) => {
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false, overlayMode = false, onClose = null }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -641,15 +641,18 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       return;
     }
   };
-  if (!isChatsLoading && allConversations.length === 0) {
+  const shellClassName = overlayMode
+    ? "h-full min-h-0 bg-white flex overflow-hidden"
+    : "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex overflow-hidden animate-in fade-in duration-500";
+  if (!isChatsLoading && allConversations.length === 0 && !overlayMode) {
     return /* @__PURE__ */ jsx("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center animate-in fade-in duration-500", children: /* @__PURE__ */ jsxs("div", { className: "text-center max-w-md px-6 text-slate-500", children: [
       /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mx-auto mb-4 text-slate-300" }),
       /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-800", children: currentRole === "Student" ? "No counselors to message yet" : "No conversations yet" }),
       /* @__PURE__ */ jsx("p", { className: "text-sm mt-2", children: currentRole === "Student" ? "Your counselor team will appear here once assigned. You can still receive messages when they contact you." : "Students in your scope will appear here. Open a student profile or wait for the first message." })
     ] }) });
   }
-  return /* @__PURE__ */ jsxs("div", { className: "h-[calc(100vh-140px)] bg-white border border-gray-200 rounded-xl shadow-sm flex overflow-hidden animate-in fade-in duration-500", children: [
-    /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
+  return /* @__PURE__ */ jsxs("div", { className: shellClassName, children: [
+    !overlayMode && /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-200 bg-white", children: [
         /* @__PURE__ */ jsxs("h2", { className: "font-bold text-slate-900 mb-3 flex items-center justify-between", children: [
           /* @__PURE__ */ jsx("span", { children: "Inbox" }),
@@ -731,7 +734,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         );
       }) })
     ] }),
-    /* @__PURE__ */ jsxs("div", { className: "flex-1 flex flex-col bg-white relative", children: [
+    /* @__PURE__ */ jsxs("div", { className: "flex-1 flex flex-col bg-white relative min-w-0", children: [
       !activeConversationId ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center flex-1 text-slate-400 px-6", children: [
         /* @__PURE__ */ jsx(MessageCircle, { size: 56, className: "mb-4 text-slate-300" }),
         /* @__PURE__ */ jsx("p", { className: "font-semibold text-slate-700", children: "Select a conversation" }),
@@ -756,6 +759,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
             /* @__PURE__ */ jsx("div", { className: `w-2 h-2 rounded-full ${whatsappSyncDotClass}` }),
             whatsappSyncLabel
           ] }),
+          typeof onClose === "function" && /* @__PURE__ */ jsx("button", {
+            type: "button",
+            title: "Close chat",
+            onClick: onClose,
+            className: "p-2 rounded-full border border-gray-100 bg-slate-50 text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors outline-none focus:outline-none",
+            children: /* @__PURE__ */ jsx(X, { size: 18 })
+          }),
           !isGhostMode && isWhatsappConnected && /* @__PURE__ */ jsx("button", {
             type: "button",
             title: isSyncingWhatsapp ? "Syncing WhatsApp messages..." : "Sync WhatsApp messages",

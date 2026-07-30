@@ -55,6 +55,52 @@ export async function loadAllBranchWhatsappAccountGroups() {
   );
 }
 
+/** All branch WhatsApp account rows (connected and disconnected). */
+export async function loadAllBranchWhatsappAccountRows() {
+  const result = await getBranchWhatsappConnectivity("");
+  if (!result.ok || !result.data?.enabled) return [];
+  const rows = Array.isArray(result.data.branches) ? result.data.branches : [];
+  return rows.flatMap((row) => (Array.isArray(row?.accounts) ? row.accounts : []));
+}
+
+function findWhatsappAccountByUserId(accounts, userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  return (Array.isArray(accounts) ? accounts : []).find((row) => String(row?.userId || "") === id) || null;
+}
+
+async function enrichWhatsappAccountFromStatus(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  const statusResult = await getWhatsappStatus(id);
+  const connected = statusResult.ok && isWhatsappSessionStatusConnected(statusResult.data?.status);
+  return {
+    userId: id,
+    connected,
+    name: "",
+    whatsappName: connected ? String(statusResult.data?.whatsappName || "").trim() : "",
+    whatsappNumber: connected ? String(statusResult.data?.whatsappNumber || "").trim() : "",
+  };
+}
+
+/**
+ * Resolves the WhatsApp contact card for a student, including cross-branch assignments.
+ */
+export async function resolveStudentWhatsappContactAccount(student, scopeBranch = "") {
+  const branchLabel = resolveStudentBranchLabel(student, scopeBranch);
+  const branchAccounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
+  const account = resolveStudentBranchWhatsappAccount(branchAccounts, student);
+  const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
+  if (!assignedId || String(account?.userId || "") !== assignedId) {
+    return account;
+  }
+  const inBranch = findWhatsappAccountByUserId(branchAccounts, assignedId);
+  if (inBranch) return inBranch;
+  const crossBranch = findWhatsappAccountByUserId(await loadAllBranchWhatsappAccountRows(), assignedId);
+  if (crossBranch) return crossBranch;
+  return (await enrichWhatsappAccountFromStatus(assignedId)) || account;
+}
+
 export function pickDefaultAccountIdFromGroups(groups, preferredBranch = "") {
   const list = Array.isArray(groups) ? groups : [];
   const key = String(preferredBranch || "").trim().toLowerCase();
@@ -117,7 +163,7 @@ export async function getStudentPrimaryWhatsappSendReadiness(student) {
   }
   const branchLabel = resolveStudentBranchLabel(student);
   const accounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
-  const account = resolveStudentBranchWhatsappAccount(accounts, student);
+  const account = await resolveStudentWhatsappContactAccount(student);
   const messengerUserId = resolvePrimaryWhatsappMessengerUserId(student, accounts);
   if (!messengerUserId) {
     return {

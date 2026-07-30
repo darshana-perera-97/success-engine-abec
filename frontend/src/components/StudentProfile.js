@@ -85,9 +85,8 @@ import { PrimaryWhatsappConnectPrompt } from "./PrimaryWhatsappConnectPrompt";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import {
   formatWhatsappContactCardTitle,
-  loadBranchWhatsappAccounts,
   loadAllBranchWhatsappAccountGroups,
-  resolveStudentBranchWhatsappAccount,
+  resolveStudentWhatsappContactAccount,
   getStudentPrimaryWhatsappSendReadiness,
   isStudentWhatsappNotConnectedDelivery,
 } from "../utils/branchWhatsappAccounts";
@@ -988,6 +987,7 @@ const StudentProfile = ({
   student,
   onBack,
   onNavigate,
+  onOpenStudentChat,
   userRole = "Admin",
   onUpdateStudent,
   onAddActivity,
@@ -1608,10 +1608,15 @@ const StudentProfile = ({
       return;
     }
     setWhatsappContactLoading(true);
-    const accounts = await loadBranchWhatsappAccounts(branchLabel);
-    setWhatsappContactAccount(resolveStudentBranchWhatsappAccount(accounts, localStudentRef.current));
+    const account = await resolveStudentWhatsappContactAccount(localStudentRef.current);
+    setWhatsappContactAccount(account);
     setWhatsappContactLoading(false);
-  }, [branchWhatsappEnabled, localStudent?.branch, localStudent?.id]);
+  }, [
+    branchWhatsappEnabled,
+    localStudent?.branch,
+    localStudent?.id,
+    localStudent?.branchWhatsappMessengerUserId,
+  ]);
   const refreshDetailChangePending = useCallback(async () => {
     const studentId = String(localStudent?.id || "").trim();
     if (!studentId) {
@@ -1653,7 +1658,7 @@ const StudentProfile = ({
   useEffect(() => {
     primaryWhatsappPromptStudentIdRef.current = "";
     setPrimaryWhatsappConnectPrompt({ open: false, reason: "", account: null });
-  }, [localStudent?.id]);
+  }, [localStudent?.id, localStudent?.branchWhatsappMessengerUserId]);
   useEffect(() => {
     if (!branchWhatsappEnabled || userRole === "Student") return;
     if (whatsappContactLoading) return;
@@ -2823,10 +2828,16 @@ const StudentProfile = ({
                   removalPending ? " Remove pending" : " Remove"
                 ]
               }),
-              /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => onNavigate("messages", {
-                chatPeerId: localStudent.id,
-                counselorId: localStudent.counselor
-              }), size: "sm", children: [
+              /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => {
+                if (typeof onOpenStudentChat === "function") {
+                  onOpenStudentChat(localStudent.id);
+                  return;
+                }
+                onNavigate("messages", {
+                  chatPeerId: localStudent.id,
+                  counselorId: localStudent.counselor
+                });
+              }, size: "sm", children: [
                 /* @__PURE__ */ jsx(MessageSquare, { size: 16, strokeWidth: 1.5, className: "mr-2" }),
                 " Message"
               ] }),

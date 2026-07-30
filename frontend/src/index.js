@@ -13,6 +13,7 @@ applyCompanyBrandingToDocument();
 
 const ROUTE_VIEWS = [
   { path: "/dashboard", view: "dashboard" },
+  { path: "/report", view: "report" },
   { path: "/students", view: "students" },
   { path: "/requested-students", view: "requested-students" },
   { path: "/team-requests", view: "team-requests" },

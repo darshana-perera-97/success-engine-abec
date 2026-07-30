@@ -3,9 +3,9 @@ module.exports = {
   ROLE_DISPLAY_NAMES: {
     Manager: "Manager Level",
   },
-  COMPANY_NAME: "hms",
-  COMPANY_SHORT_NAME: "hms",
+  COMPANY_NAME: "Demo",
+  COMPANY_SHORT_NAME: "Demo",
   PRODUCT_TAGLINE: "The Success Engine",
-  COMPANY_AI_BRAND: "hms AI Assist",
-  DEFAULT_SMTP_FROM_NAME: "hms",
+  COMPANY_AI_BRAND: "Demo AI Assist",
+  DEFAULT_SMTP_FROM_NAME: "Demo",
 };

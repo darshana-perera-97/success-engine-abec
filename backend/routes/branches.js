@@ -11,7 +11,7 @@ const { readInvoices } = require("../models/invoices");
 const { readStudemts } = require("../models/students");
 const { readUsers, splitAdminRecord } = require("../models/users");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
-const { isBranchWhatsappEnabled, listBranchWhatsappAccounts, validateStudentBranchWhatsappMessengerUserId } = require("../services/branchWhatsapp");
+const { isBranchWhatsappEnabled, listBranchWhatsappAccounts, summarizeBranchWhatsappStatus, validateStudentBranchWhatsappMessengerUserId } = require("../services/branchWhatsapp");
 
 const financeSummaryCache = new Map();
 
@@ -323,15 +323,11 @@ async function handle(req, res, url) {
           const name = String(branch?.location || "").trim();
           const accounts = await listBranchWhatsappAccounts(branch);
           const connectedAccounts = accounts.filter((row) => row.connected);
-          const primaryAccount =
-            connectedAccounts.find((row) => row.isPrimary) ||
-            connectedAccounts[0] ||
-            accounts.find((row) => row.isPrimary) ||
-            accounts[0] ||
-            null;
+          const summary = summarizeBranchWhatsappStatus(accounts);
+          const primaryAccount = summary.primaryAccount;
           const messengerUserId = String(primaryAccount?.userId || "").trim();
           const messengerName = String(primaryAccount?.name || "").trim();
-          const status = String(primaryAccount?.status || "disconnected");
+          const status = String(summary.status || "disconnected");
           const whatsappName = String(primaryAccount?.whatsappName || "").trim();
           const whatsappNumber = String(primaryAccount?.whatsappNumber || "").trim();
           const connectedAt = String(primaryAccount?.connectedAt || "").trim();

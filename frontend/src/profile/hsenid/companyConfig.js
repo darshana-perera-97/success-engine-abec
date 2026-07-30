@@ -7,13 +7,13 @@ export const ROLE_DISPLAY_NAMES = {
   Manager: "Manager Level",
 };
 
-export const COMPANY_NAME = "hSenid";
-export const COMPANY_SHORT_NAME = "hSenid";
+export const COMPANY_NAME = "Demo";
+export const COMPANY_SHORT_NAME = "Demo";
 export const PRODUCT_TAGLINE = "The Success Engine";
 export const APP_TITLE = `${COMPANY_NAME} | ${PRODUCT_TAGLINE}`;
 export const COMPANY_AI_BRAND = `${COMPANY_NAME} AI`;
 export const COMPANY_LOGO_ALT = `${COMPANY_NAME} Logo`;
-export const RESUME_BUILDER_TITLE = "hSenid Resume Builder";
+export const RESUME_BUILDER_TITLE = "Demo Resume Builder";
 
 export const API_BASE = resolveApiBase("https://success-engine-dev.nexgenai.lk");
 export const DEFAULT_USER_AVATAR = companyIcon;
