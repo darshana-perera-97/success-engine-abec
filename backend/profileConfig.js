@@ -7,7 +7,7 @@ const nexgenai = require("./profile/nexgenai/companyConfig");
 // Change this single value to switch backend branding between company profiles.
 // Keep in sync with frontend/src/profileConfig.js ACTIVE_PROFILE.
 // Supported values: "abec" | "beacanadian" | "ds" | "hsenid" | "nexgenai"
-const ACTIVE_PROFILE = "beacanadian";
+const ACTIVE_PROFILE = "abec";
 
 const profiles = { abec, beacanadian, ds, hsenid, nexgenai };
 const config = profiles[ACTIVE_PROFILE];
