@@ -245,6 +245,46 @@ export async function downloadReportSectionPdf({ sectionId, sectionTitle, ...opt
   pdf.save(`${slugify(section.title)}-report-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
+export async function downloadReportMetricPdf({
+  metricLabel,
+  rows = [],
+  filters = {},
+  scopeLabel,
+  filteredStudentsCount = 0,
+  filteredReqStudentsCount = 0,
+}) {
+  const { jsPDF } = await import("jspdf");
+  const pdf = new jsPDF("l", "mm", "a4");
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const marginX = 12;
+  const contentWidth = pageWidth - marginX * 2;
+  const lineHeight = 5;
+
+  const y = drawReportHeader(pdf, {
+    title: String(metricLabel || "Report").trim(),
+    filters,
+    scopeLabel,
+    filteredStudentsCount,
+    filteredReqStudentsCount,
+    marginX,
+    lineHeight,
+  });
+
+  drawMetricTable(pdf, {
+    metricLabel,
+    rows,
+    marginX,
+    pageWidth,
+    pageHeight,
+    contentWidth,
+    lineHeight,
+    startY: y,
+  });
+
+  pdf.save(`${slugify(metricLabel)}-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
 export async function openReportPdfPreview(options) {
   const pdf = await createReportPdf(options);
   const blob = pdf.output("blob");

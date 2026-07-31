@@ -9,7 +9,7 @@ import {
   computeReportMetrics,
   collectReportFilterOptions,
 } from "../utils/reportMetrics";
-import { downloadReportPdf, openReportPdfPreview, downloadReportSectionPdf } from "../utils/reportPdf";
+import { downloadReportPdf, openReportPdfPreview, downloadReportSectionPdf, downloadReportMetricPdf } from "../utils/reportPdf";
 const SECTION_ICONS = {
   leads: Users,
   offers: FileCheck,
@@ -68,6 +68,7 @@ const ReportPage = ({
   const [isExporting, setIsExporting] = React.useState(false);
   const [isPreviewing, setIsPreviewing] = React.useState(false);
   const [exportingSectionId, setExportingSectionId] = React.useState("");
+  const [exportingMetricId, setExportingMetricId] = React.useState("");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -149,6 +150,21 @@ const ReportPage = ({
     }
   };
 
+  const handleDownloadMetricPdf = async (metric) => {
+    try {
+      setExportingMetricId(metric.id);
+      await downloadReportMetricPdf({
+        ...pdfExportOptions,
+        metricLabel: metric.label,
+        rows: lists[metric.id] || [],
+      });
+    } finally {
+      setExportingMetricId("");
+    }
+  };
+
+  const exportBusy = isExporting || isPreviewing || !!exportingSectionId || !!exportingMetricId;
+
   React.useEffect(() => {
     if (!filtersOpen) return;
     const onKey = (e) => {
@@ -195,7 +211,7 @@ const ReportPage = ({
           /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 shrink-0", children: [
             /* @__PURE__ */ jsxs(Button, {
               onClick: handlePreviewPdf,
-              disabled: isPreviewing || isExporting || !!exportingSectionId,
+              disabled: exportBusy,
               className: "bg-indigo-600 hover:bg-indigo-700 text-white",
               children: [
                 /* @__PURE__ */ jsx(Eye, { size: 16, className: "mr-1.5" }),
@@ -205,7 +221,7 @@ const ReportPage = ({
             /* @__PURE__ */ jsxs(Button, {
               variant: "secondary",
               onClick: handleDownloadPdf,
-              disabled: isExporting || isPreviewing || !!exportingSectionId,
+              disabled: exportBusy,
               children: [
                 /* @__PURE__ */ jsx(Download, { size: 16, className: "mr-1.5" }),
                 isExporting ? "Exporting…" : "Download full report",
@@ -378,7 +394,7 @@ const ReportPage = ({
                   variant: "secondary",
                   size: "sm",
                   onClick: () => handleDownloadSectionPdf(section),
-                  disabled: !!exportingSectionId || isExporting || isPreviewing,
+                  disabled: exportBusy,
                   children: [
                     /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1.5" }),
                     exportingSectionId === section.id ? "Exporting…" : "Download section",
@@ -401,13 +417,28 @@ const ReportPage = ({
                 /* @__PURE__ */ jsxs("div", {
                   className: "space-y-3",
                   children: [
-                    /* @__PURE__ */ jsxs("h3", {
-                      className: "text-sm font-bold text-slate-800",
+                    /* @__PURE__ */ jsxs("div", {
+                      className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2",
                       children: [
-                        metric.label,
-                        /* @__PURE__ */ jsxs("span", {
-                          className: "ml-2 text-xs font-semibold text-slate-400 tabular-nums",
-                          children: ["(", counts[metric.id] ?? 0, ")"],
+                        /* @__PURE__ */ jsxs("h3", {
+                          className: "text-sm font-bold text-slate-800",
+                          children: [
+                            metric.label,
+                            /* @__PURE__ */ jsxs("span", {
+                              className: "ml-2 text-xs font-semibold text-slate-400 tabular-nums",
+                              children: ["(", counts[metric.id] ?? 0, ")"],
+                            }),
+                          ],
+                        }),
+                        /* @__PURE__ */ jsxs(Button, {
+                          variant: "secondary",
+                          size: "sm",
+                          onClick: () => handleDownloadMetricPdf(metric),
+                          disabled: exportBusy,
+                          children: [
+                            /* @__PURE__ */ jsx(Download, { size: 14, className: "mr-1.5" }),
+                            exportingMetricId === metric.id ? "Exporting…" : "Download table",
+                          ],
                         }),
                       ],
                     }),

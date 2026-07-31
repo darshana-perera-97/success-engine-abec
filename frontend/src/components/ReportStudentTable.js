@@ -62,9 +62,14 @@ const ReportStudentTable = ({
 }) => {
   const [page, setPage] = useState(1);
 
+  const rowsResetKey = useMemo(
+    () => rows.map((row) => row.key).join("|"),
+    [rows]
+  );
+
   useEffect(() => {
     setPage(1);
-  }, [rows]);
+  }, [rowsResetKey]);
 
   const totalRows = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize) || 1);
@@ -145,7 +150,7 @@ const ReportStudentTable = ({
             : "Showing 0 students",
           metricLabel ? ` · ${metricLabel}` : "",
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 flex-wrap justify-end", children: [
           /* @__PURE__ */ jsx("span", {
             className: "text-slate-400 tabular-nums",
             children: totalRows ? `Page ${currentPage} of ${totalPages}` : "Page 1 of 1",
