@@ -7,6 +7,12 @@ import {
 const defaultFieldClass =
   "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500";
 
+const invalidFieldHighlight = "border-rose-500 ring-2 ring-rose-200 bg-rose-50/40 focus:border-rose-500";
+
+function fieldClassWithError(baseClass, hasError) {
+  return hasError ? `${baseClass} ${invalidFieldHighlight}` : baseClass;
+}
+
 export function IntakeFields({
   intakeMonth = "",
   intakeYear = "",
@@ -14,6 +20,8 @@ export function IntakeFields({
   onIntakeYearChange,
   required = false,
   fieldClassName = defaultFieldClass,
+  monthHasError = false,
+  yearHasError = false,
   className = "grid grid-cols-1 sm:grid-cols-2 gap-3",
   monthLabel = "Intake month",
   yearLabel = "Intake year",
@@ -35,7 +43,7 @@ export function IntakeFields({
         </label>
         <select
           required={required}
-          className={fieldClassName}
+          className={fieldClassWithError(fieldClassName, monthHasError)}
           value={intakeMonth}
           onChange={(e) => onIntakeMonthChange?.(e.target.value)}
         >
@@ -54,7 +62,7 @@ export function IntakeFields({
         </label>
         <select
           required={required}
-          className={fieldClassName}
+          className={fieldClassWithError(fieldClassName, yearHasError)}
           value={intakeYear}
           onChange={(e) => onIntakeYearChange?.(e.target.value)}
         >

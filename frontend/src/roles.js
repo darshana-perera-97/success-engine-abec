@@ -5,6 +5,28 @@ export const VISA_OFFICER_COUNSELOR_ROLE = "Visa Officer & Counselor";
 /** Branch-scoped finance role: dashboard, students, and invoices only. */
 export const ACCOUNTANT_ROLE = "Accountant";
 
+/** Staff and students who may upload invoice payment evidence (receipts, bank slips, cash). */
+export function canUploadInvoicePaymentEvidencePortalRole(role) {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (
+    normalized === "student" ||
+    normalized === "country coordinator" ||
+    normalized === "accountant"
+  ) {
+    return true;
+  }
+  return isCounselorEquivalentPortalRole(role);
+}
+
+/** Staff who may approve or reject uploaded invoice payment evidence. */
+export function canReviewInvoicePaymentPortalRole(role, counselorCanAcceptPayments = false) {
+  const normalized = String(role || "").trim().toLowerCase();
+  if (normalized === "admin" || normalized === "manager" || normalized === "accountant") {
+    return true;
+  }
+  return isCounselorEquivalentAccountRole(role) && counselorCanAcceptPayments === true;
+}
+
 export const COUNSELOR_EQUIVALENT_PORTAL_ROLES = new Set([
   "Counselor",
   VISA_OFFICER_ROLE,

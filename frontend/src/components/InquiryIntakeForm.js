@@ -1,10 +1,11 @@
 import React from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { PhoneWhatsappFields } from "./PhoneWhatsappFields";
 import { IntakeFields } from "./IntakeFields";
-import { resolveFormWhatsappNumber, validateWhatsappFields } from "../utils/phoneWhatsapp";
+import { resolveFormWhatsappNumber, validateWhatsappFields, isValidStudentPhone } from "../utils/phoneWhatsapp";
 import { intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { INQUIRY_SOURCE_OPTIONS, isValidInquirySource, normalizeInquirySource } from "../utils/inquirySource";
@@ -83,14 +84,58 @@ export function sanitizeInquiryExamResults(examResults) {
     .filter((row) => row.examName || row.result);
 }
 
-export function validateInquiryFormRequired(form, { requireBudget = true, requireSource = false } = {}) {
+export function getInquiryFormFieldErrors(form, { requireBudget = true, requireSource = false } = {}) {
+  const errors = {};
   if (requireSource && !isValidInquirySource(form.inquirySource)) {
-    return { ok: false, error: "Please select how this student heard about us." };
+    errors.inquirySource = true;
   }
-  if (
+  if (!String(form.name || "").trim()) errors.name = true;
+  if (!String(form.email || "").trim()) errors.email = true;
+  if (!String(form.countryToVisit || "").trim()) errors.countryToVisit = true;
+  if (!String(form.nearestOffice || "").trim()) errors.nearestOffice = true;
+  if (!String(form.livingStatus || "").trim()) errors.livingStatus = true;
+  if (requireBudget && !String(form.budget || "").trim()) errors.budget = true;
+  if (requireBudget && !String(form.budgetCurrency || "").trim()) errors.budgetCurrency = true;
+  if (!String(form.visaRejectionAnyCountry || "").trim()) errors.visaRejectionAnyCountry = true;
+  if (!String(form.currentEducationLevel || "").trim()) errors.currentEducationLevel = true;
+  if (!String(form.intendedProgram || "").trim()) errors.intendedProgram = true;
+
+  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: true });
+  if (!intakeValidation.ok) {
+    errors.intakeMonth = true;
+    errors.intakeYear = true;
+  }
+
+  const whatsappValidation = validateWhatsappFields(form);
+  if (!whatsappValidation.ok) {
+    const phone = String(form?.phone || "").trim();
+    if (!phone || !isValidStudentPhone(phone)) {
+      errors.phone = true;
+    }
+    if (form?.whatsappSameAsPhone === false) {
+      errors.whatsappNumber = true;
+    }
+  }
+
+  return errors;
+}
+
+export function validateInquiryFormRequired(form, { requireBudget = true, requireSource = false } = {}) {
+  const fieldErrors = getInquiryFormFieldErrors(form, { requireBudget, requireSource });
+  if (requireSource && !isValidInquirySource(form.inquirySource)) {
+    return { ok: false, error: "Please select how this student heard about us.", fieldErrors };
+  }
+  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: true });
+  if (!intakeValidation.ok) {
+    return { ...intakeValidation, fieldErrors };
+  }
+  const whatsappValidation = validateWhatsappFields(form);
+  if (!whatsappValidation.ok) {
+    return { ...whatsappValidation, fieldErrors };
+  }
+  const hasMissingRequired =
     !String(form.name || "").trim() ||
     !String(form.email || "").trim() ||
-    !String(form.phone || "").trim() ||
     !String(form.countryToVisit || "").trim() ||
     !String(form.nearestOffice || "").trim() ||
     !String(form.livingStatus || "").trim() ||
@@ -98,15 +143,11 @@ export function validateInquiryFormRequired(form, { requireBudget = true, requir
     (requireBudget && !String(form.budgetCurrency || "").trim()) ||
     !String(form.visaRejectionAnyCountry || "").trim() ||
     !String(form.currentEducationLevel || "").trim() ||
-    !String(form.intendedProgram || "").trim()
-  ) {
-    return { ok: false, error: "Please fill all required interest form fields." };
+    !String(form.intendedProgram || "").trim();
+  if (hasMissingRequired) {
+    return { ok: false, error: "Please fill all required interest form fields.", fieldErrors };
   }
-  const intakeValidation = validateIntakeFields(form.intakeMonth, form.intakeYear, { required: true });
-  if (!intakeValidation.ok) return intakeValidation;
-  const whatsappValidation = validateWhatsappFields(form);
-  if (!whatsappValidation.ok) return whatsappValidation;
-  return { ok: true };
+  return { ok: true, fieldErrors: {} };
 }
 
 export function inquiryFormToStudentFields(form, baseStudent = {}, { requireIntake = true } = {}) {
@@ -191,13 +232,21 @@ export function mergeInquiryFormForScheduleLater(form, baseStudent = {}) {
 const fieldClass =
   "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500";
 
-export function InquirySourceField({ value, onChange, className = fieldClass }) {
+const invalidFieldHighlight = "border-rose-500 ring-2 ring-rose-200 bg-rose-50/40 focus:border-rose-500";
+
+function fieldClassWithError(baseClass, hasError) {
+  return hasError ? `${baseClass} ${invalidFieldHighlight}` : baseClass;
+}
+
+export function InquirySourceField({ value, onChange, className = fieldClass, hasError = false }) {
   return (
     <div className="sm:col-span-2">
-      <label className="text-xs font-semibold text-slate-700 mb-1 block">Source</label>
+      <label className="text-xs font-semibold text-slate-700 mb-1 block">
+        Source <span className="text-rose-500">*</span>
+      </label>
       <select
         required
-        className={className}
+        className={fieldClassWithError(className, hasError)}
         value={value || ""}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -229,9 +278,11 @@ export function InquiryIntakeForm({
   scheduleLaterLabel = "Schedule Later",
   showBudgetField = true,
   showSourceField = false,
-  intakeCountry = ""
+  intakeCountry = "",
+  fieldErrors = {}
 }) {
   const intakeOptions = useIntakeOptionsForCountry(intakeCountry);
+  const fieldError = (key) => Boolean(fieldErrors?.[key]);
   const updateInquiryExamRow = (id, field, value) => {
     setForm((prev) => ({
       ...prev,
@@ -256,6 +307,16 @@ export function InquiryIntakeForm({
     });
   };
 
+  const examRows = form.examResults || [];
+  const {
+    pageItems: paginatedExamRows,
+    page: examPage,
+    setPage: setExamPage,
+    pageSize: examPageSize,
+    setPageSize: setExamPageSize,
+    totalRows: examTotalRows,
+  } = useClientPagination(examRows, examRows.length);
+
   return (
     <form onSubmit={onSubmit} noValidate className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
       {error ? (
@@ -265,6 +326,7 @@ export function InquiryIntakeForm({
         {showSourceField ? (
           <InquirySourceField
             value={form.inquirySource}
+            hasError={fieldError("inquirySource")}
             onChange={(nextValue) => setForm((prev) => ({ ...prev, inquirySource: nextValue }))}
           />
         ) : null}
@@ -273,7 +335,7 @@ export function InquiryIntakeForm({
           <input
             type="text"
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("name"))}
             value={form.name}
             onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
           />
@@ -283,7 +345,7 @@ export function InquiryIntakeForm({
           <input
             type="email"
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("email"))}
             value={form.email}
             onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
           />
@@ -308,12 +370,14 @@ export function InquiryIntakeForm({
             }))
           }
           fieldClassName={fieldClass}
+          phoneHasError={fieldError("phone")}
+          whatsappHasError={fieldError("whatsappNumber")}
         />
         <div>
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Country you wish to visit</label>
           <select
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("countryToVisit"))}
             value={form.countryToVisit}
             onChange={(e) => setForm((prev) => ({ ...prev, countryToVisit: e.target.value }))}
           >
@@ -339,7 +403,7 @@ export function InquiryIntakeForm({
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Preferred branch</label>
           <select
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("nearestOffice"))}
             value={form.nearestOffice}
             onChange={(e) => setForm((prev) => ({ ...prev, nearestOffice: e.target.value }))}
           >
@@ -371,10 +435,12 @@ export function InquiryIntakeForm({
           />
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-700 mb-1 block">Living status</label>
+          <label className="text-xs font-semibold text-slate-700 mb-1 block">
+            Living status <span className="text-rose-500">*</span>
+          </label>
           <select
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("livingStatus"))}
             value={form.livingStatus}
             onChange={(e) => setForm((prev) => ({ ...prev, livingStatus: e.target.value }))}
           >
@@ -397,14 +463,17 @@ export function InquiryIntakeForm({
                 min="0"
                 step="any"
                 required
-                className={`min-w-0 flex-1 ${fieldClass}`}
+                className={`min-w-0 flex-1 ${fieldClassWithError(fieldClass, fieldError("budget"))}`}
                 value={form.budget}
                 onChange={(e) => setForm((prev) => ({ ...prev, budget: e.target.value }))}
                 placeholder="e.g. 25000"
               />
               <select
                 required
-                className="w-28 shrink-0 px-2 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500"
+                className={fieldClassWithError(
+                  "w-28 shrink-0 px-2 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+                  fieldError("budgetCurrency")
+                )}
                 aria-label="Currency"
                 value={form.budgetCurrency}
                 onChange={(e) => setForm((prev) => ({ ...prev, budgetCurrency: e.target.value }))}
@@ -422,7 +491,7 @@ export function InquiryIntakeForm({
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Any visa rejection for any country</label>
           <select
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("visaRejectionAnyCountry"))}
             value={form.visaRejectionAnyCountry}
             onChange={(e) => setForm((prev) => ({ ...prev, visaRejectionAnyCountry: e.target.value }))}
           >
@@ -452,7 +521,7 @@ export function InquiryIntakeForm({
           <label className="text-xs font-semibold text-slate-700 mb-1 block">Current education level</label>
           <select
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("currentEducationLevel"))}
             value={form.currentEducationLevel}
             onChange={(e) => setForm((prev) => ({ ...prev, currentEducationLevel: e.target.value }))}
           >
@@ -471,7 +540,7 @@ export function InquiryIntakeForm({
           <input
             type="text"
             required
-            className={fieldClass}
+            className={fieldClassWithError(fieldClass, fieldError("intendedProgram"))}
             value={form.intendedProgram}
             onChange={(e) => setForm((prev) => ({ ...prev, intendedProgram: e.target.value }))}
           />
@@ -484,6 +553,8 @@ export function InquiryIntakeForm({
             onIntakeYearChange={(value) => setForm((prev) => ({ ...prev, intakeYear: value }))}
             required
             fieldClassName={fieldClass}
+            monthHasError={fieldError("intakeMonth")}
+            yearHasError={fieldError("intakeYear")}
             monthOptions={intakeOptions.months}
             yearOptions={intakeOptions.years}
           />
@@ -518,7 +589,7 @@ export function InquiryIntakeForm({
                 </tr>
               </thead>
               <tbody className={dt.body}>
-                {(form.examResults || []).map((row) => (
+                {paginatedExamRows.map((row) => (
                   <tr key={row.id}>
                     <td className="px-2 py-1.5 align-middle">
                       <input
@@ -552,6 +623,17 @@ export function InquiryIntakeForm({
                 ))}
               </tbody>
             </table>
+            {examRows.length > 0 ? (
+              <DataTablePagination
+                page={examPage}
+                pageSize={examPageSize}
+                totalRows={examTotalRows}
+                onPageChange={setExamPage}
+                onPageSizeChange={setExamPageSize}
+                rowLabel="rows"
+                className="border-t-0 bg-white"
+              />
+            ) : null}
           </div>
         </div>
       </div>

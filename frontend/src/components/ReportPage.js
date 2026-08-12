@@ -3,9 +3,14 @@ import React from "react";
 import { Filter, BarChart3, Users, FileCheck, MessageSquare, DollarSign, Plane, X, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
 import { ReportStudentTable } from "./ReportStudentTable";
-import { getReqStudents } from "../authApi";
+import { ReportOffersTable } from "./ReportOffersTable";
+import { ReportInterviewsTable } from "./ReportInterviewsTable";
+import { getReqStudents, getStudents } from "../authApi";
+import { POLL_MS } from "../runtimeConfig";
 import {
   REPORT_SECTIONS,
+  OFFERS_SECTION_ID,
+  INTERVIEWS_SECTION_ID,
   computeReportMetrics,
   collectReportFilterOptions,
 } from "../utils/reportMetrics";
@@ -55,6 +60,8 @@ function MetricTile({ label, count }) {
 
 const ReportPage = ({
   students = [],
+  studentScopeParams = {},
+  scopedStudentIds = null,
   employees = [],
   appointments = [],
   scopeLabel = null,
@@ -65,10 +72,48 @@ const ReportPage = ({
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [reqStudents, setReqStudents] = React.useState([]);
   const [reqLoading, setReqLoading] = React.useState(true);
+  const [metricStudents, setMetricStudents] = React.useState([]);
+  const [metricStudentsLoading, setMetricStudentsLoading] = React.useState(true);
   const [isExporting, setIsExporting] = React.useState(false);
   const [isPreviewing, setIsPreviewing] = React.useState(false);
   const [exportingSectionId, setExportingSectionId] = React.useState("");
   const [exportingMetricId, setExportingMetricId] = React.useState("");
+
+  const scopedStudentIdKey = React.useMemo(() => {
+    if (!Array.isArray(scopedStudentIds)) return "";
+    return scopedStudentIds
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+      .sort()
+      .join("|");
+  }, [scopedStudentIds]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadMetricStudents = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setMetricStudentsLoading(true);
+      const result = await getStudents({ ...studentScopeParams });
+      if (cancelled) return;
+      let rows = result.ok ? result.data || [] : [];
+      if (Array.isArray(scopedStudentIds) && scopedStudentIds.length > 0) {
+        const idSet = new Set(
+          scopedStudentIds.map((id) => String(id || "").trim()).filter(Boolean)
+        );
+        rows = rows.filter((student) => idSet.has(String(student?.id || "").trim()));
+      }
+      setMetricStudents(rows);
+      setMetricStudentsLoading(false);
+    };
+    loadMetricStudents();
+    const intervalId = window.setInterval(loadMetricStudents, POLL_MS.students);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [studentScopeParams, scopedStudentIdKey]);
+
+  const studentsForMetrics = metricStudentsLoading ? students : metricStudents;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -87,13 +132,13 @@ const ReportPage = ({
   }, [scopeBranch]);
 
   const filterOptions = React.useMemo(
-    () => collectReportFilterOptions(students, employees, reqStudents),
-    [students, employees, reqStudents]
+    () => collectReportFilterOptions(studentsForMetrics, employees, reqStudents),
+    [studentsForMetrics, employees, reqStudents]
   );
 
   const { counts, lists, filteredStudents, filteredReqStudents } = React.useMemo(
-    () => computeReportMetrics(students, appointments, reqStudents, filters, employees),
-    [students, appointments, reqStudents, filters, employees]
+    () => computeReportMetrics(studentsForMetrics, appointments, reqStudents, filters, employees),
+    [studentsForMetrics, appointments, reqStudents, filters, employees]
   );
 
   const activeFilterCount = React.useMemo(() => countActiveFilters(filters), [filters]);
@@ -205,6 +250,7 @@ const ReportPage = ({
                 filteredReqStudents.length > 0
                   ? ` · ${filteredReqStudents.length} requested leads`
                   : "",
+                metricStudentsLoading ? " · Loading student records…" : "",
               ],
             }),
           ] }),
@@ -442,12 +488,26 @@ const ReportPage = ({
                         }),
                       ],
                     }),
-                    /* @__PURE__ */ jsx(ReportStudentTable, {
-                      rows: lists[metric.id] || [],
-                      employees,
-                      onSelectStudent,
-                      metricLabel: metric.label,
-                    }),
+                    section.id === OFFERS_SECTION_ID
+                      ? /* @__PURE__ */ jsx(ReportOffersTable, {
+                          rows: lists[metric.id] || [],
+                          employees,
+                          onSelectStudent,
+                          metricLabel: metric.label,
+                        })
+                      : section.id === INTERVIEWS_SECTION_ID
+                        ? /* @__PURE__ */ jsx(ReportInterviewsTable, {
+                            rows: lists[metric.id] || [],
+                            employees,
+                            onSelectStudent,
+                            metricLabel: metric.label,
+                          })
+                        : /* @__PURE__ */ jsx(ReportStudentTable, {
+                          rows: lists[metric.id] || [],
+                          employees,
+                          onSelectStudent,
+                          metricLabel: metric.label,
+                        }),
                   ],
                 }, `${section.id}-${metric.id}`)
               ),

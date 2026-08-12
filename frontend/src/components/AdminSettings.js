@@ -1,11 +1,12 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Globe, Save, Settings, Landmark, Trash2, Wallet, MessageSquare } from "lucide-react";
 import { Button } from "./Button";
 import { createCountry, createPaymentAccount, deleteCountry, deletePaymentAccount, getBranches, getCountries, getPaymentAccounts, updateBranchCountries } from "../authApi";
 import { getStoredBranchCountries } from "../utils/branchCountries";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onSaveSystemData, paymentAccounts = [], onPaymentAccountsChange }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -176,6 +177,35 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   const isBranchCountrySelected = (countryName) =>
     branchCountrySelection.some((c) => c.toLowerCase() === String(countryName || "").trim().toLowerCase());
 
+  const dayScheduleRows = useMemo(
+    () => dayNames.map((dayName, dayIdx) => ({ dayName, dayIdx })),
+    [dayNames]
+  );
+  const {
+    pageItems: paginatedDayRows,
+    page: dayPage,
+    setPage: setDayPage,
+    pageSize: dayPageSize,
+    setPageSize: setDayPageSize,
+    totalRows: dayTotalRows,
+  } = useClientPagination(dayScheduleRows, "schedule");
+  const {
+    pageItems: paginatedCountries,
+    page: countryPage,
+    setPage: setCountryPage,
+    pageSize: countryPageSize,
+    setPageSize: setCountryPageSize,
+    totalRows: countryTotalRows,
+  } = useClientPagination(countries, countries.length);
+  const {
+    pageItems: paginatedPaymentAccounts,
+    page: paymentPage,
+    setPage: setPaymentPage,
+    pageSize: paymentPageSize,
+    setPageSize: setPaymentPageSize,
+    totalRows: paymentTotalRows,
+  } = useClientPagination(localPaymentAccounts, localPaymentAccounts.length);
+
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxs("div", { children: [
       /* @__PURE__ */ jsx("h2", { className: "text-xl font-bold text-slate-900 tracking-tight", children: "Settings" }),
@@ -195,7 +225,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           /* @__PURE__ */ jsx("option", { value: 30, children: "30 minutes" })
         ] })
       ] }) }),
-      /* @__PURE__ */ jsx("div", { className: dt.embedded, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+      /* @__PURE__ */ jsxs("div", { className: dt.embedded, children: [
+      /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Day" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Open" }),
@@ -203,7 +234,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "End" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: dayNames.map((dayName, dayIdx) => {
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: paginatedDayRows.map(({ dayName, dayIdx }) => {
           const day = meetingForm.daySchedules[dayIdx] || defaultDaySchedules[dayIdx];
           return /* @__PURE__ */ jsxs("tr", { className: "bg-white", children: [
             /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-700 font-medium", children: dayName }),
@@ -246,7 +277,17 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
             /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-xs", children: /* @__PURE__ */ jsx("span", { className: day.isOpen === false ? "text-rose-600" : "text-emerald-600", children: day.isOpen === false ? "Closed" : "Open" }) })
           ] }, dayName);
         }) })
-      ] }) }),
+      ] }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page: dayPage,
+        pageSize: dayPageSize,
+        totalRows: dayTotalRows,
+        onPageChange: setDayPage,
+        onPageSizeChange: setDayPageSize,
+        rowLabel: "days",
+        className: "border-t-0 bg-white",
+      })
+      ] }),
       /* @__PURE__ */ jsx("div", { className: "text-[11px] text-slate-500", children: "Configure open/close windows per day. Calendar slots are generated from this schedule." }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end", children: /* @__PURE__ */ jsxs(Button, { type: "button", isLoading: isSavingMeetingSettings, onClick: async () => {
         setMeetingError("");
@@ -299,7 +340,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         }),
         /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Allow counselors to accept payments" }),
-          "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission."
+          "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission and can upload payment evidence on a student's Payments tab."
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
@@ -534,12 +575,13 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           children: "Add country"
         })
       ] }),
-      /* @__PURE__ */ jsx("div", { className: `${dt.embedded} max-w-xl`, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+      /* @__PURE__ */ jsxs("div", { className: `${dt.embedded} max-w-xl`, children: [
+      /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Country" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 2, compact: true }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: dt.emptyRow, children: "No global countries loaded." }) }) : countries.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !countriesReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 2, compact: true }) : countries.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 2, className: dt.emptyRow, children: "No global countries loaded." }) }) : paginatedCountries.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: c }),
           /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-right", children: /* @__PURE__ */ jsx(Button, {
             type: "button",
@@ -563,7 +605,17 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
             children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
           }) })
         ] }, `global-${c}`)) })
-      ] }) }),
+      ] }),
+      countriesReady && countries.length > 0 ? /* @__PURE__ */ jsx(DataTablePagination, {
+        page: countryPage,
+        pageSize: countryPageSize,
+        totalRows: countryTotalRows,
+        onPageChange: setCountryPage,
+        onPageSizeChange: setCountryPageSize,
+        rowLabel: "countries",
+        className: "border-t-0 bg-white",
+      }) : null
+      ] }),
       /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 max-w-xl", children: countriesReady ? `${countries.length} global countr${countries.length === 1 ? "y" : "ies"} in the list.` : "Loading countries…" })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
@@ -646,13 +698,14 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         },
         children: "Add payment account"
       }) }),
-      /* @__PURE__ */ jsx("div", { className: `${dt.embedded} max-w-3xl`, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+      /* @__PURE__ */ jsxs("div", { className: `${dt.embedded} max-w-3xl`, children: [
+      /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Label" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Bank / Account" }),
           /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !paymentAccountsReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 3, compact: true }) : localPaymentAccounts.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: dt.emptyRow, children: "No payment accounts yet. Add one above for invoice creators to select." }) }) : localPaymentAccounts.map((acct) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !paymentAccountsReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 3, compact: true }) : localPaymentAccounts.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 3, className: dt.emptyRow, children: "No payment accounts yet. Add one above for invoice creators to select." }) }) : paginatedPaymentAccounts.map((acct) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
           /* @__PURE__ */ jsxs("td", { className: "px-3 py-2.5 text-slate-800 font-medium", children: [
             acct.label,
             /* @__PURE__ */ jsxs("div", { className: "text-xs text-slate-500 font-normal", children: [acct.currency || "LKR"] })
@@ -686,7 +739,17 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
             children: /* @__PURE__ */ jsx(Trash2, { size: 14 })
           }) })
         ] }, acct.id)) })
-      ] }) })
+      ] }),
+      paymentAccountsReady && localPaymentAccounts.length > 0 ? /* @__PURE__ */ jsx(DataTablePagination, {
+        page: paymentPage,
+        pageSize: paymentPageSize,
+        totalRows: paymentTotalRows,
+        onPageChange: setPaymentPage,
+        onPageSizeChange: setPaymentPageSize,
+        rowLabel: "accounts",
+        className: "border-t-0 bg-white",
+      }) : null
+      ] })
     ] })
   ] });
 };

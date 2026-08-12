@@ -15,6 +15,7 @@ import {
   downloadFileFromUrl,
   resolveGeneratedCvPdfDownload,
 } from "../utils/cvPdf";
+import { getCvTemplateMeta } from "../utils/cvTemplates";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { StudentSummaries } from "./StudentSummaries";
 const formatRegisteredDate = (student) => {
@@ -234,7 +235,11 @@ const StudentDashboard = ({
                   student.generatedCV.name,
                   "_Resume.pdf"
                 ] }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: "AI-Enhanced \u2022 Professional Template" })
+                /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+                  "AI-Enhanced \u2022 ",
+                  getCvTemplateMeta(student.generatedCV?.templateId).name,
+                  " Template"
+                ] })
               ] })
             ] }),
             /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [

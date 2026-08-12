@@ -67,6 +67,7 @@ const AddStudentModal = ({
   const [optionsReady, setOptionsReady] = useState(false);
   const [form, setForm] = useState(() => emptyInquiryForm());
   const [formError, setFormError] = useState("");
+  const [formFieldErrors, setFormFieldErrors] = useState({});
   const [isSaving, setIsSaving] = useState(false);
   const [assignedCounselorId, setAssignedCounselorId] = useState("");
   const [branchWhatsappMessengerUserId, setBranchWhatsappMessengerUserId] = useState("");
@@ -115,6 +116,7 @@ const AddStudentModal = ({
     wasOpenRef.current = isOpen;
     if (!justOpened) return;
     setFormError("");
+    setFormFieldErrors({});
     setForm(emptyInquiryForm({ countries, offices }));
     setAssignedCounselorId("");
     setBranchWhatsappMessengerUserId("");
@@ -164,11 +166,18 @@ const AddStudentModal = ({
     return assignedCounselorId || resolveCounselorId(userRole, currentUser, counselorOptions) || "Unassigned";
   };
 
+  const updateForm = (updater) => {
+    setFormFieldErrors({});
+    setForm(updater);
+  };
+
   const handleFinalSubmit = async () => {
     setFormError("");
+    setFormFieldErrors({});
     const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
+      setFormFieldErrors(validation.fieldErrors || {});
       return;
     }
     if (showAssignStep && !String(assignedCounselorId || "").trim()) {
@@ -249,9 +258,11 @@ const AddStudentModal = ({
   const handleStep1Continue = (e) => {
     e.preventDefault();
     setFormError("");
+    setFormFieldErrors({});
     const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
+      setFormFieldErrors(validation.fieldErrors || {});
       return;
     }
     if (showAssignStep) {
@@ -315,10 +326,11 @@ const AddStudentModal = ({
         ) : step === 1 ? (
           <InquiryIntakeForm
             form={form}
-            setForm={setForm}
+            setForm={updateForm}
             countries={countries}
             offices={offices}
             error={formError}
+            fieldErrors={formFieldErrors}
             isSaving={isSaving}
             onSubmit={handleStep1Continue}
             onCancel={handleClose}
@@ -399,6 +411,7 @@ const AddStudentModal = ({
                 variant="ghost"
                 onClick={() => {
                   setFormError("");
+                  setFormFieldErrors({});
                   setStep(1);
                 }}
                 disabled={isSaving}

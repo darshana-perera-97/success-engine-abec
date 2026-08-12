@@ -1,10 +1,15 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DollarSign, CheckCircle, Clock, FileText, Plus, Upload, X, MessageCircle, Link2 } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { formatLKR, formatRawLKR } from "../utils";
-import { isCounselorEquivalentAccountRole } from "../roles";
+import {
+  canReviewInvoicePaymentPortalRole,
+  canUploadInvoicePaymentEvidencePortalRole,
+  isCounselorEquivalentAccountRole,
+} from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
 import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp, getRefundRequests, createRefundRequest } from "../authApi";
 import { RefundRequestModal } from "./RefundRequestModal";
@@ -951,12 +956,8 @@ const FinanceModule = ({
     setIsCreateOpen(true);
     onOpenCreateInvoiceConsumed?.();
   }, [openCreateInvoice, isStaff, onOpenCreateInvoiceConsumed]);
-  const canAcceptPayment =
-    roleNorm === "admin" ||
-    roleNorm === "manager" ||
-    roleNorm === "accountant" ||
-    (isCounselorStaff && counselorCanAcceptPayments);
-  const canUploadEvidence = roleNorm === "student" || roleNorm === "country coordinator" || isCounselorStaff;
+  const canAcceptPayment = canReviewInvoicePaymentPortalRole(userRole, counselorCanAcceptPayments);
+  const canUploadEvidence = canUploadInvoicePaymentEvidencePortalRole(userRole);
   const isStudentView = roleNorm === "student";
   const invoiceHasDeliveryDetails = (inv) => Boolean(
     inv?.paymentAccount || inv?.attachmentLink || inv?.attachmentFileUrl || inv?.generatedReceiptUrl
@@ -973,6 +974,30 @@ const FinanceModule = ({
     const evidence = row.evidence;
     return evidence.isCurrent && String(inv?.status || "").trim() === "Verifying";
   }).length;
+  const {
+    pageItems: paginatedLedgerInvoices,
+    page: ledgerPage,
+    setPage: setLedgerPage,
+    pageSize: ledgerPageSize,
+    setPageSize: setLedgerPageSize,
+    totalRows: ledgerTotalRows,
+  } = useClientPagination(ledgerInvoices, ledgerInvoices.length);
+  const {
+    pageItems: paginatedPaymentRows,
+    page: paymentPage,
+    setPage: setPaymentPage,
+    pageSize: paymentPageSize,
+    setPageSize: setPaymentPageSize,
+    totalRows: paymentTotalRows,
+  } = useClientPagination(paymentRows, paymentRows.length);
+  const {
+    pageItems: paginatedRefundRows,
+    page: refundPage,
+    setPage: setRefundPage,
+    pageSize: refundPageSize,
+    setPageSize: setRefundPageSize,
+    totalRows: refundTotalRows,
+  } = useClientPagination(refundRows, refundRows.length);
   const openEvidenceModal = (inv, evidence = null) => {
     const claimed = evidence?.claimedAmount ?? inv?.paymentProofClaimedAmount;
     const approved = evidence?.approvedAmount;
@@ -1281,7 +1306,7 @@ const FinanceModule = ({
       /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsx("tr", { children: LEDGER_TABLE_COLUMNS.map((col) => /* @__PURE__ */ jsx("th", { scope: "col", className: `whitespace-nowrap ${dt.th} ${col.className || ""}`, children: col.label }, col.key)) }) }),
         /* @__PURE__ */ jsxs("tbody", { className: dt.body, children: [
-          invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : ledgerInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : ledgerInvoices.map((inv) => {
+          invoicesLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : ledgerInvoices.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: LEDGER_TABLE_COLUMNS.length, className: "text-center py-8 text-slate-400", children: "No invoices found." }) }) : paginatedLedgerInvoices.map((inv) => {
             const balanceDue = invoiceBalanceDue(inv);
             const invoiceStatus = String(inv?.status || "—").trim() || "—";
             return /* @__PURE__ */ jsxs("tr", {
@@ -1317,7 +1342,16 @@ const FinanceModule = ({
             /* @__PURE__ */ jsx("span", { className: "font-semibold text-amber-700", children: formatRawLKR(totalPending) })
           ] }) }) : null
         ] })
-      ] }) })
+      ] }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page: ledgerPage,
+        pageSize: ledgerPageSize,
+        totalRows: ledgerTotalRows,
+        onPageChange: setLedgerPage,
+        onPageSizeChange: setLedgerPageSize,
+        rowLabel: "invoices",
+        loading: invoicesLoading,
+      })
     ] }),
     pendingPaymentCount > 0 && canAcceptPayment ? /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900", children: [
       /* @__PURE__ */ jsx("span", { className: "font-semibold", children: pendingPaymentCount }),
@@ -1352,7 +1386,7 @@ const FinanceModule = ({
             /* @__PURE__ */ jsx(Upload, { size: 16, className: "mr-1.5" }),
             isStudentView ? "Add receipt" : "Add evidence"
           ] }) : null
-        ] }) }) }) : paymentRows.map((row) => {
+        ] }) }) }) : paginatedPaymentRows.map((row) => {
           const inv = row.invoice;
           const evidence = row.evidence;
           const approvalLabel = getEvidenceApprovalLabel(evidence, inv);
@@ -1383,7 +1417,16 @@ const FinanceModule = ({
             ] }) })
           ] }, row.rowKey);
         }) })
-      ] }) })
+      ] }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page: paymentPage,
+        pageSize: paymentPageSize,
+        totalRows: paymentTotalRows,
+        onPageChange: setPaymentPage,
+        onPageSizeChange: setPaymentPageSize,
+        rowLabel: "payments",
+        loading: invoicesLoading,
+      })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "space-y-2 pt-4", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
@@ -1410,13 +1453,22 @@ const FinanceModule = ({
           /* @__PURE__ */ jsx("th", { scope: "col", className: dt.th, children: "Status" }),
           /* @__PURE__ */ jsx("th", { scope: "col", className: `${dt.th} text-right`, children: "Reason" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: refundsLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : refundRows.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No refund requests yet." }) }) : refundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80", children: [
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: refundsLoading ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "Loading…" }) }) : refundRows.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: "text-center py-8 text-slate-400", children: "No refund requests yet." }) }) : paginatedRefundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80", children: [
           /* @__PURE__ */ jsx("td", { className: "px-4 py-3 whitespace-nowrap text-slate-600 text-sm", children: String(row.requestedAt || "").slice(0, 10) || "—" }),
           /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono font-semibold text-slate-900 tabular-nums", children: /* @__PURE__ */ jsxs("span", { children: [row.currency || "LKR", " ", Number(row.amount || 0).toLocaleString()] }) }),
           /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border whitespace-nowrap ${requestStatusBadgeClass(row.status)}`, children: requestStatusLabel(row.status) }) }),
           /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-right text-sm text-slate-600 max-w-[240px] truncate", title: row.reason || "", children: row.reason || "—" })
         ] }, row.id)) })
-      ] }) })
+      ] }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page: refundPage,
+        pageSize: refundPageSize,
+        totalRows: refundTotalRows,
+        onPageChange: setRefundPage,
+        onPageSizeChange: setRefundPageSize,
+        rowLabel: "refunds",
+        loading: refundsLoading,
+      })
     ] }),
     isDetailsModalOpen && detailsInvoice && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-100 shadow-2xl p-6 w-full max-w-lg scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
       /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [

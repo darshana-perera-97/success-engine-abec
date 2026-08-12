@@ -10,7 +10,8 @@ import {
   ArrowRight
 } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { formatRawLKR, formatLKR } from "../utils";
 import { useExchangeRates } from "../useExchangeRates";
 import { isPaidInvoice, invoiceAmountLkr } from "../pipeline";
@@ -85,6 +86,102 @@ const DashboardCard = ({ title, value, icon, trend, trendColor, highlight, onCli
       ]
     }
   );
+
+function PaginatedInvoiceTable({ rows, emptyMessage, invoicesLoading, studentById, onSelectStudent }) {
+  const {
+    pageItems,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, rows.length);
+
+  return /* @__PURE__ */ jsxs("div", {
+    className: dt.card,
+    children: [
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", {
+        className: dt.table,
+        children: [
+          /* @__PURE__ */ jsx("thead", {
+            className: dt.head,
+            children: /* @__PURE__ */ jsxs("tr", { children: [
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Invoice" }),
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Student" }),
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Amount" }),
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Due" }),
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Status" }),
+              /* @__PURE__ */ jsx("th", { className: "px-4 py-3 text-right", children: " " })
+            ] })
+          }),
+          /* @__PURE__ */ jsx("tbody", {
+            className: dt.body,
+            children: invoicesLoading
+              ? /* @__PURE__ */ jsx("tr", {
+                  children: /* @__PURE__ */ jsx("td", {
+                    colSpan: 6,
+                    className: "px-4 py-10 text-center text-sm text-slate-500",
+                    children: "Loading…"
+                  })
+                })
+              : rows.length === 0
+              ? /* @__PURE__ */ jsx("tr", {
+                  children: /* @__PURE__ */ jsx("td", {
+                    colSpan: 6,
+                    className: "px-4 py-10 text-center text-sm text-slate-500",
+                    children: emptyMessage
+                  })
+                })
+              : pageItems.map((inv) => {
+                  const sid = String(inv.studentId || "").trim();
+                  const student = studentById.get(sid);
+                  const studentName = String(student?.name || "").trim() || sid || "—";
+                  const amountLabel = formatLKR(
+                    typeof inv.amount === "string" ? parseFloat(inv.amount) : inv.amount,
+                    inv.currency || "LKR"
+                  );
+                  return /* @__PURE__ */ jsxs(
+                    "tr",
+                    { className: "hover:bg-slate-50/80", children: [
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono text-xs text-slate-800", children: inv.id }),
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-medium text-slate-900", children: studentName }),
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 tabular-nums text-slate-700", children: amountLabel }),
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-slate-600", children: inv.dueDate || "—" }),
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx(
+                        "span",
+                        {
+                          className: `inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusBadgeClass(inv.status)}`,
+                          children: inv.status || "—"
+                        }
+                      ) }),
+                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-right", children: student && onSelectStudent
+                        ? /* @__PURE__ */ jsx(Button, {
+                            size: "sm",
+                            variant: "outline",
+                            className: "text-xs h-8",
+                            onClick: () => onSelectStudent(student, { profileTab: "ledger" }),
+                            children: "Ledger"
+                          })
+                        : null })
+                    ] },
+                    String(inv.id)
+                  );
+                })
+          })
+        ]
+      }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page,
+        pageSize,
+        totalRows,
+        onPageChange: setPage,
+        onPageSizeChange: setPageSize,
+        rowLabel: "invoices",
+        loading: invoicesLoading,
+      })
+    ]
+  });
+}
 
 const AccountantDashboard = ({
   branchLabel = "",
@@ -239,78 +336,12 @@ const AccountantDashboard = ({
   }
 
   const renderInvoiceTable = (rows, emptyMessage) =>
-    /* @__PURE__ */ jsx("div", {
-      className: dt.card,
-      children: /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", {
-        className: dt.table,
-        children: [
-          /* @__PURE__ */ jsx("thead", {
-            className: dt.head,
-            children: /* @__PURE__ */ jsxs("tr", { children: [
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Invoice" }),
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Student" }),
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Amount" }),
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Due" }),
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3", children: "Status" }),
-              /* @__PURE__ */ jsx("th", { className: "px-4 py-3 text-right", children: " " })
-            ] })
-          }),
-          /* @__PURE__ */ jsx("tbody", {
-            className: dt.body,
-            children: invoicesLoading
-              ? /* @__PURE__ */ jsx("tr", {
-                  children: /* @__PURE__ */ jsx("td", {
-                    colSpan: 6,
-                    className: "px-4 py-10 text-center text-sm text-slate-500",
-                    children: "Loading…"
-                  })
-                })
-              : rows.length === 0
-              ? /* @__PURE__ */ jsx("tr", {
-                  children: /* @__PURE__ */ jsx("td", {
-                    colSpan: 6,
-                    className: "px-4 py-10 text-center text-sm text-slate-500",
-                    children: emptyMessage
-                  })
-                })
-              : rows.map((inv) => {
-                  const sid = String(inv.studentId || "").trim();
-                  const student = studentById.get(sid);
-                  const studentName = String(student?.name || "").trim() || sid || "—";
-                  const amountLabel = formatLKR(
-                    typeof inv.amount === "string" ? parseFloat(inv.amount) : inv.amount,
-                    inv.currency || "LKR"
-                  );
-                  return /* @__PURE__ */ jsxs(
-                    "tr",
-                    { className: "hover:bg-slate-50/80", children: [
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono text-xs text-slate-800", children: inv.id }),
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-medium text-slate-900", children: studentName }),
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 tabular-nums text-slate-700", children: amountLabel }),
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-slate-600", children: inv.dueDate || "—" }),
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx(
-                        "span",
-                        {
-                          className: `inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusBadgeClass(inv.status)}`,
-                          children: inv.status || "—"
-                        }
-                      ) }),
-                      /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-right", children: student && onSelectStudent
-                        ? /* @__PURE__ */ jsx(Button, {
-                            size: "sm",
-                            variant: "outline",
-                            className: "text-xs h-8",
-                            onClick: () => onSelectStudent(student, { profileTab: "ledger" }),
-                            children: "Ledger"
-                          })
-                        : null })
-                    ] },
-                    String(inv.id)
-                  );
-                })
-          })
-        ]
-      }) })
+    /* @__PURE__ */ jsx(PaginatedInvoiceTable, {
+      rows,
+      emptyMessage,
+      invoicesLoading,
+      studentById,
+      onSelectStudent,
     });
 
   return /* @__PURE__ */ jsxs("div", { className: "space-y-8 animate-in fade-in duration-500 pb-10", children: [

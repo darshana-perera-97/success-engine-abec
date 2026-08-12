@@ -6,6 +6,18 @@ function normalizeOfferStatus(status) {
   return UNIVERSITY_OFFER_STATUSES.has(s) ? s : "Conditional";
 }
 
+function isValidUniversityOfferLetterEntry(entry) {
+  return Boolean(entry && typeof entry === "object" && String(entry.url || "").trim());
+}
+
+function listUniversityOfferLetters(student) {
+  const raw = student?.universityOfferLetters;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(isValidUniversityOfferLetterEntry)
+    .sort((a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime());
+}
+
 function resolveStudentCounselorDisplayName(student, employees) {
   const match = (employees || []).find((e) => e && e.id === student?.counselor);
   return String(match?.name || match?.username || student?.counselorName || "").trim() || "—";
@@ -20,13 +32,10 @@ function offerStatusBadgeClass(status) {
 function buildUniversityOfferLetterRows(students, employees) {
   const rows = [];
   for (const student of students || []) {
-    const raw = student?.universityOfferLetters;
-    if (!Array.isArray(raw)) continue;
     const sid = String(student?.id || "").trim();
     const studentName = String(student?.name || "").trim() || sid || "Unknown student";
     const counselorLabel = resolveStudentCounselorDisplayName(student, employees);
-    for (const entry of raw) {
-      if (!entry || typeof entry !== "object" || !String(entry.url || "").trim()) continue;
+    for (const entry of listUniversityOfferLetters(student)) {
       const offerStatus = normalizeOfferStatus(entry.offerStatus);
       rows.push({
         key: `${sid}-${entry.id || entry.name || rows.length}`,
@@ -42,4 +51,10 @@ function buildUniversityOfferLetterRows(students, employees) {
   return rows;
 }
 
-export { offerStatusBadgeClass, buildUniversityOfferLetterRows, normalizeOfferStatus };
+export {
+  offerStatusBadgeClass,
+  buildUniversityOfferLetterRows,
+  normalizeOfferStatus,
+  isValidUniversityOfferLetterEntry,
+  listUniversityOfferLetters,
+};

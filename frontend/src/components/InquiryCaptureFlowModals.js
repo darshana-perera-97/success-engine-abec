@@ -124,6 +124,7 @@ const InquiryCaptureFlowModals = ({
     examResults: [newInquiryExamResultRow()]
   });
   const [inquiryError, setInquiryError] = useState("");
+  const [inquiryFieldErrors, setInquiryFieldErrors] = useState({});
   const [isSavingInquiry, setIsSavingInquiry] = useState(false);
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -194,6 +195,7 @@ const InquiryCaptureFlowModals = ({
     modalFlowRef.current = "inquiry";
     setDismissAlertId(target.assignmentAlert?.id != null ? String(target.assignmentAlert.id) : null);
     setInquiryError("");
+    setInquiryFieldErrors({});
     setSummaryError("");
     setInquiryOpen(true);
     setSummaryOpen(false);
@@ -275,7 +277,13 @@ const InquiryCaptureFlowModals = ({
     modalFlowRef.current = "inquiry";
     setInquiryOpen(false);
     setInquiryError("");
+    setInquiryFieldErrors({});
     onClear?.();
+  };
+
+  const updateInquiryForm = (updater) => {
+    setInquiryFieldErrors({});
+    setInquiryForm(updater);
   };
 
   const saveInquiryForm = async () => {
@@ -287,7 +295,7 @@ const InquiryCaptureFlowModals = ({
     }
     const validation = validateInquiryFormRequired(inquiryForm, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
-      return { ok: false, error: validation.error };
+      return { ok: false, error: validation.error, fieldErrors: validation.fieldErrors || {} };
     }
     const updatedStudent = inquiryFormToStudentFields(inquiryForm, {
       ...existingStudent,
@@ -328,9 +336,11 @@ const InquiryCaptureFlowModals = ({
     e.preventDefault();
     setIsSavingInquiry(true);
     setInquiryError("");
+    setInquiryFieldErrors({});
     const result = await saveInquiryForm();
     if (!result.ok) {
       setInquiryError(result.error || "Failed to save student details.");
+      setInquiryFieldErrors(result.fieldErrors || {});
       setIsSavingInquiry(false);
       return;
     }
@@ -629,10 +639,11 @@ const InquiryCaptureFlowModals = ({
               }),
               /* @__PURE__ */ jsx(InquiryIntakeForm, {
                 form: inquiryForm,
-                setForm: setInquiryForm,
+                setForm: updateInquiryForm,
                 countries,
                 offices,
                 error: inquiryError,
+                fieldErrors: inquiryFieldErrors,
                 isSaving: isSavingInquiry,
                 onSubmit: handleSaveInquiry,
                 onCancel: closeInquiryPopup,

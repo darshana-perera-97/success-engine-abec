@@ -3,6 +3,7 @@ import { ClipboardList, Eye, FileUp, Info, Pencil, RefreshCw, Trash2, UserPlus, 
 import { bulkImportReqStudents, deleteReqStudent, getAccounts, getBranches, getCountries, getReqStudents } from "../authApi";
 import { Button } from "./Button";
 import {
+  DataTablePagination,
   DataTable,
   DataTableBody,
   DataTableHead,
@@ -13,6 +14,7 @@ import {
   DataTableTh,
   dt,
 } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { MultiSelect } from "./MultiSelect";
 import { isStudentContactStaffAccountRole } from "../roles";
@@ -222,6 +224,37 @@ export function RequestedStudents({
       return branchesMatch(scopeBranch, office);
     });
   }, [rows, applyManagerBranchFilter, branchCountriesLimited, scopeBranch, branchRecords, globalCountries]);
+
+  const {
+    pageItems: paginatedDisplayRows,
+    page: leadsPage,
+    setPage: setLeadsPage,
+    pageSize: leadsPageSize,
+    setPageSize: setLeadsPageSize,
+    totalRows: leadsTotalRows,
+  } = useClientPagination(displayRows, displayRows.length);
+
+  const detailTableRows = useMemo(
+    () => (detailRow ? buildFullDetailRows(detailRow) : []),
+    [detailRow]
+  );
+  const {
+    pageItems: paginatedDetailRows,
+    page: detailPage,
+    setPage: setDetailPage,
+    pageSize: detailPageSize,
+    setPageSize: setDetailPageSize,
+    totalRows: detailTotalRows,
+  } = useClientPagination(detailTableRows, detailRow?.id || "");
+
+  const {
+    pageItems: paginatedImportRows,
+    page: importPage,
+    setPage: setImportPage,
+    pageSize: importPageSize,
+    setPageSize: setImportPageSize,
+    totalRows: importTotalRows,
+  } = useClientPagination(importRows, importRows.length);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -655,6 +688,7 @@ export function RequestedStudents({
               : "."}
           </div>
         ) : (
+          <>
           <DataTableScroll>
             <DataTableTable>
               <DataTableHead>
@@ -668,7 +702,7 @@ export function RequestedStudents({
                 </tr>
               </DataTableHead>
               <DataTableBody>
-                {displayRows.map((row) => (
+                {paginatedDisplayRows.map((row) => (
                   <DataTableRow key={row.id}>
                     <DataTableTd variant="primary" className="max-w-[160px] truncate" title={row.name || ""}>
                       {row.name || "—"}
@@ -743,6 +777,15 @@ export function RequestedStudents({
               </DataTableBody>
             </DataTableTable>
           </DataTableScroll>
+          <DataTablePagination
+            page={leadsPage}
+            pageSize={leadsPageSize}
+            totalRows={leadsTotalRows}
+            onPageChange={setLeadsPage}
+            onPageSizeChange={setLeadsPageSize}
+            rowLabel="leads"
+          />
+          </>
         )}
       </DataTable>
 
@@ -780,7 +823,7 @@ export function RequestedStudents({
                   </tr>
                 </thead>
                 <tbody className={dt.body}>
-                  {buildFullDetailRows(detailRow).map((cell, idx) => (
+                  {paginatedDetailRows.map((cell, idx) => (
                     <tr key={`${cell.label}-${idx}`} className="align-top">
                       <td className={`${dt.tdCompact} text-xs font-medium text-slate-500`}>{cell.label}</td>
                       <td className={`${dt.tdCompact} text-slate-900 break-words whitespace-pre-wrap`}>{cell.value}</td>
@@ -789,6 +832,15 @@ export function RequestedStudents({
                 </tbody>
               </table>
             </div>
+            <DataTablePagination
+              page={detailPage}
+              pageSize={detailPageSize}
+              totalRows={detailTotalRows}
+              onPageChange={setDetailPage}
+              onPageSizeChange={setDetailPageSize}
+              rowLabel="fields"
+              className="border-t-0 bg-white px-5"
+            />
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
               <Button type="button" variant="secondary" onClick={() => setDetailRow(null)}>
                 Close
@@ -880,7 +932,7 @@ export function RequestedStudents({
                     </tr>
                   </thead>
                   <tbody className={dt.body}>
-                    {importRows.map((row) => (
+                    {paginatedImportRows.map((row) => (
                       <tr key={row.importKey} className={`align-top ${dt.row}`}>
                         <td className={`${dt.tdCompact} font-medium text-slate-900`}>{row.name || "—"}</td>
                         <td className={`${dt.tdCompact} whitespace-nowrap`}>{row.phone || "—"}</td>
@@ -905,6 +957,18 @@ export function RequestedStudents({
                 </table>
               )}
             </div>
+
+            {importRows.length > 0 ? (
+              <DataTablePagination
+                page={importPage}
+                pageSize={importPageSize}
+                totalRows={importTotalRows}
+                onPageChange={setImportPage}
+                onPageSizeChange={setImportPageSize}
+                rowLabel="leads"
+                className="border-t-0 bg-white px-5"
+              />
+            ) : null}
 
             {importError ? (
               <div className="mx-5 mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">

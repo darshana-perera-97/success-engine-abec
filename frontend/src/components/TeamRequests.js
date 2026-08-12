@@ -20,6 +20,7 @@ import {
 } from "../authApi";
 import { Button } from "./Button";
 import {
+  DataTablePagination,
   DataTable,
   DataTableBody,
   DataTableHead,
@@ -30,6 +31,7 @@ import {
   DataTableTh,
   dt,
 } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { RequestDetailModal } from "./RequestDetailModal";
 import {
@@ -120,6 +122,15 @@ export function TeamRequests({
   useEffect(() => {
     loadRows();
   }, [loadRows]);
+
+  const {
+    pageItems: paginatedRows,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, filter);
 
   const handleDecide = async (row, decision, reviewNote = "", extra = {}) => {
     if (!canReview || !row?.id) return;
@@ -272,6 +283,7 @@ export function TeamRequests({
             {filter === "pending" ? "No pending change requests." : "No change requests yet."}
           </div>
         ) : (
+          <>
           <DataTableScroll>
             <DataTableTable>
               <DataTableHead>
@@ -284,7 +296,7 @@ export function TeamRequests({
                 </tr>
               </DataTableHead>
               <DataTableBody>
-                {rows.map((row) => {
+                {paginatedRows.map((row) => {
                   const busyKey = `${row.requestType}-${row.id}`;
                   return (
                     <DataTableRow key={busyKey}>
@@ -320,6 +332,15 @@ export function TeamRequests({
               </DataTableBody>
             </DataTableTable>
           </DataTableScroll>
+          <DataTablePagination
+            page={page}
+            pageSize={pageSize}
+            totalRows={totalRows}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            rowLabel="requests"
+          />
+          </>
         )}
       </DataTable>
 

@@ -1,50 +1,13 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Trophy, Medal, TrendingUp, Star, Crown } from "lucide-react";
-import { normalizePipelineStatus } from "../pipeline";
-import { isCounselorEquivalentAccountRole } from "../roles";
+import { buildCounselorWeeklyLeaderboard, findCounselorWeeklyRank } from "../utils/counselorWeeklyPerformance";
 const LeaderboardWidget = ({ students = [], employees = [], currentUserId = "", currentUserEmail = "" }) => {
-  const normalize = (value) => String(value || "").trim().toLowerCase();
-  const counselors = employees.filter((employee) => isCounselorEquivalentAccountRole(employee.role));
-  const leaderboard = counselors.map((counselor) => {
-    const counselorId = normalize(counselor.id);
-    const counselorEmail = normalize(counselor.email);
-    const counselorName = normalize(counselor.name || counselor.username);
-    const myStudents = students.filter((student) => {
-      const studentCounselorId = normalize(student.counselor || student.inquiryCounselorId);
-      const studentCounselorName = normalize(student.counselorName);
-      if (studentCounselorId && studentCounselorId === counselorId) return true;
-      if (studentCounselorName && counselorName && studentCounselorName === counselorName) return true;
-      if (Array.isArray(student.counselorHistory) && counselorId) {
-        return student.counselorHistory.some((id) => normalize(id) === counselorId);
-      }
-      if (studentCounselorName && counselorEmail) {
-        return studentCounselorName === counselorEmail;
-      }
-      return false;
-    });
-    let score = 0;
-    let visas = 0;
-    myStudents.forEach((s) => {
-      const x = normalizePipelineStatus(s.status);
-      const hasVisaOutcome = x === "Visa" || x === "Enrolled" || s.status === "Visa Pilot";
-      if (hasVisaOutcome) {
-        score += 50;
-        visas++;
-      } else if (x === "Interview training" || s.status === "Offer Received") score += 10;
-      else if (x === "Application" || s.status === "Uni Application") score += 5;
-      else if (x === "Documentation") score += 2;
-    });
-    return {
-      ...counselor,
-      score,
-      visas,
-      activeCount: myStudents.length
-    };
-  }).sort((a, b) => b.score - a.score || b.visas - a.visas || b.activeCount - a.activeCount);
+  const leaderboard = buildCounselorWeeklyLeaderboard(students, employees);
   const top3 = leaderboard.slice(0, 3);
-  const currentUserRank = leaderboard.findIndex(
-    (c) => String(c.id || "") === String(currentUserId || "") || String(c.email || "").toLowerCase() === String(currentUserEmail || "").toLowerCase()
-  ) + 1;
+  const currentUserRank = findCounselorWeeklyRank(leaderboard, {
+    id: currentUserId,
+    email: currentUserEmail
+  });
   return /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden", children: [
     /* @__PURE__ */ jsxs("div", { className: "bg-[#0F172A] p-4 text-white flex justify-between items-center", children: [
       /* @__PURE__ */ jsxs("div", { children: [

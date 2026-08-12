@@ -14,7 +14,8 @@ import { MultiSelect } from "./MultiSelect";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useServerPagination } from "../hooks/usePagination";
 
 import { SLA_CLOCK_INTERVAL_MS } from "../runtimeConfig";
 
@@ -263,6 +264,21 @@ const StudentList = ({
     return params;
   }, [userRole, authenticatedUser?.id, authenticatedUser?.country, currentUser?.id, currentUser?.country, scopeBranch, debouncedFilter, counselorFilter, countryFilters, branchFilters, stageFilter, sortBy, sortDirection]);
 
+  const paginationResetKey = useMemo(() => JSON.stringify(searchParams), [searchParams]);
+  const {
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    limit,
+    offset,
+  } = useServerPagination(paginationResetKey);
+
+  const paginatedSearchParams = useMemo(
+    () => ({ ...searchParams, limit, offset }),
+    [searchParams, limit, offset]
+  );
+
   const fetchStudents = useCallback(async (params) => {
     const id = ++fetchIdRef.current;
     setSearchLoading(true);
@@ -278,8 +294,8 @@ const StudentList = ({
   }, []);
 
   useEffect(() => {
-    fetchStudents(searchParams);
-  }, [searchParams, fetchStudents]);
+    fetchStudents(paginatedSearchParams);
+  }, [paginatedSearchParams, fetchStudents]);
 
   useEffect(() => {
     if (!students.length) return;
@@ -688,19 +704,15 @@ const StudentList = ({
           student.id
         )) : /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 8, cols: 7 }) })
       ] }) }),
-      /* @__PURE__ */ jsxs("div", { className: "px-6 py-3 border-t border-gray-200 bg-gray-50 text-xs text-slate-500 flex justify-between items-center", children: [
-        /* @__PURE__ */ jsxs("span", { children: [
-          "Showing ",
-          (counselorMetaReady && !searchLoading) ? sortedFilteredStudents.length : "—",
-          " of ",
-          (counselorMetaReady && !searchLoading) ? searchTotal : "—",
-          " students"
-        ] }),
-        /* @__PURE__ */ jsxs("div", { className: "flex gap-2", children: [
-          /* @__PURE__ */ jsx("button", { className: "disabled:opacity-50", disabled: true, children: "Previous" }),
-          /* @__PURE__ */ jsx("button", { className: "disabled:opacity-50", children: "Next" })
-        ] })
-      ] })
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page,
+        pageSize,
+        totalRows: counselorMetaReady && !searchLoading ? searchTotal : null,
+        onPageChange: setPage,
+        onPageSizeChange: setPageSize,
+        rowLabel: "students",
+        loading: !counselorMetaReady || searchLoading,
+      })
     ] }),
     /* @__PURE__ */ jsx(
       AddStudentModal,

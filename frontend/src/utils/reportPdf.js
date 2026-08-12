@@ -71,6 +71,22 @@ function drawReportHeader(pdf, { title, filters, scopeLabel, filteredStudentsCou
   return y;
 }
 
+function resolveRowReceived(row) {
+  const raw = String(row?.receivedAt || row?.completedAt || "").trim();
+  if (!raw) return "—";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleDateString();
+}
+
+function isOfferTableRow(row) {
+  return row?.tableVariant === "offer";
+}
+
+function isInterviewTableRow(row) {
+  return row?.tableVariant === "interview";
+}
+
 function drawMetricTable(pdf, {
   metricLabel,
   rows = [],
@@ -95,13 +111,35 @@ function drawMetricTable(pdf, {
   pdf.text(`${metricLabel} (${rows.length})`, marginX, y);
   y += lineHeight + 1;
 
-  const columns = [
-    { label: "Student", width: 52 },
-    { label: "Country", width: 34 },
-    { label: "Branch", width: 34 },
-    { label: "Stage", width: 36 },
-    { label: "Counselor", width: 42 },
-  ];
+  const useOfferColumns = rows.some(isOfferTableRow);
+  const useInterviewColumns = !useOfferColumns && rows.some(isInterviewTableRow);
+  const columns = useOfferColumns
+    ? [
+        { label: "Student", width: 40 },
+        { label: "Country", width: 24 },
+        { label: "Branch", width: 24 },
+        { label: "Offer letter", width: 36 },
+        { label: "Status", width: 22 },
+        { label: "Received", width: 22 },
+        { label: "Counselor", width: 30 },
+      ]
+    : useInterviewColumns
+      ? [
+          { label: "Student", width: 40 },
+          { label: "Country", width: 24 },
+          { label: "Branch", width: 24 },
+          { label: "Interview", width: 36 },
+          { label: "Outcome", width: 28 },
+          { label: "Completed", width: 22 },
+          { label: "Counselor", width: 30 },
+        ]
+      : [
+        { label: "Student", width: 52 },
+        { label: "Country", width: 34 },
+        { label: "Branch", width: 34 },
+        { label: "Stage", width: 36 },
+        { label: "Counselor", width: 42 },
+      ];
 
   ensureSpace(lineHeight + 2);
   pdf.setFillColor(241, 245, 249);
@@ -127,13 +165,33 @@ function drawMetricTable(pdf, {
   for (const row of rows) {
     ensureSpace(lineHeight + 1);
     x = marginX + 1;
-    const cells = [
-      truncate(row.name, 44),
-      truncate(row.country, 28),
-      truncate(row.branch, 28),
-      truncate(resolveRowStatus(row), 30),
-      truncate(row.counselor, 36),
-    ];
+    const cells = useOfferColumns
+      ? [
+          truncate(row.name, 34),
+          truncate(row.country, 20),
+          truncate(row.branch, 20),
+          truncate(row.offerName, 30),
+          truncate(row.offerStatus, 18),
+          truncate(resolveRowReceived(row), 18),
+          truncate(row.counselor, 26),
+        ]
+      : useInterviewColumns
+        ? [
+            truncate(row.name, 34),
+            truncate(row.country, 20),
+            truncate(row.branch, 20),
+            truncate(row.interviewType, 30),
+            truncate(row.interviewOutcome, 24),
+            truncate(resolveRowReceived(row), 18),
+            truncate(row.counselor, 26),
+          ]
+        : [
+          truncate(row.name, 44),
+          truncate(row.country, 28),
+          truncate(row.branch, 28),
+          truncate(resolveRowStatus(row), 30),
+          truncate(row.counselor, 36),
+        ];
     for (let i = 0; i < columns.length; i += 1) {
       pdf.text(String(cells[i] || "—"), x, y);
       x += columns[i].width;

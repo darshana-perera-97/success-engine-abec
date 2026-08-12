@@ -3,6 +3,7 @@ import { Eye, FileText, RefreshCw } from "lucide-react";
 import { getCountryChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getIntakeChangeRequests, getBranchChangeRequests, getBranchWhatsappMessengerChangeRequests, getRefundRequests } from "../authApi";
 import { Button } from "./Button";
 import {
+  DataTablePagination,
   DataTable,
   DataTableBody,
   DataTableHead,
@@ -13,6 +14,7 @@ import {
   DataTableTh,
   dt,
 } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { InlineLoading } from "./LoadingPlaceholder";
 import { RequestDetailModal } from "./RequestDetailModal";
 import {
@@ -76,6 +78,15 @@ export function MyRequests({
     loadRows();
   }, [loadRows]);
 
+  const {
+    pageItems: paginatedRows,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, rows.length);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -108,6 +119,7 @@ export function MyRequests({
             No requests yet. Submit a change from a student profile (Edit details, Change country, or Remove).
           </div>
         ) : (
+          <>
           <DataTableScroll>
             <DataTableTable>
               <DataTableHead>
@@ -120,7 +132,7 @@ export function MyRequests({
                 </tr>
               </DataTableHead>
               <DataTableBody>
-                {rows.map((row) => (
+                {paginatedRows.map((row) => (
                   <DataTableRow key={`${row.requestType}-${row.id}`}>
                     <DataTableTd
                       variant="primary"
@@ -153,6 +165,15 @@ export function MyRequests({
               </DataTableBody>
             </DataTableTable>
           </DataTableScroll>
+          <DataTablePagination
+            page={page}
+            pageSize={pageSize}
+            totalRows={totalRows}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            rowLabel="requests"
+          />
+          </>
         )}
       </DataTable>
 

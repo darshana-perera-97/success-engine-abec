@@ -2,7 +2,8 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import React from "react";
 import { Download, Filter, User, X } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { offerStatusBadgeClass } from "../utils/universityOfferLetters";
 import {
   MILESTONE_TYPES,
@@ -88,6 +89,16 @@ const StudentMilestonesTable = ({
     () => filterMilestoneRecords(allRows, filters),
     [allRows, filters]
   );
+
+  const milestonePaginationResetKey = React.useMemo(() => JSON.stringify(filters), [filters]);
+  const {
+    pageItems: paginatedMilestoneRows,
+    page: milestonePage,
+    setPage: setMilestonePage,
+    pageSize: milestonePageSize,
+    setPageSize: setMilestonePageSize,
+    totalRows: milestoneTotalRows,
+  } = useClientPagination(filteredRows, milestonePaginationResetKey);
 
   const updateFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -448,8 +459,11 @@ const StudentMilestonesTable = ({
               ? "No offer letters, visas, COE, or CAS records yet."
               : "No records match the current filters.",
           })
-        : /* @__PURE__ */ jsx("div", {
-            className: `${dt.scrollY} max-h-[520px] rounded-lg border border-slate-200`,
+        : /* @__PURE__ */ jsxs("div", {
+            className: dt.card,
+            children: [
+            /* @__PURE__ */ jsx("div", {
+            className: `${dt.scrollY} max-h-[520px]`,
             children: /* @__PURE__ */ jsxs("table", {
               className: dt.table,
               children: [
@@ -470,7 +484,7 @@ const StudentMilestonesTable = ({
                 }),
                 /* @__PURE__ */ jsx("tbody", {
                   className: dt.body,
-                  children: filteredRows.map((row) =>
+                  children: paginatedMilestoneRows.map((row) =>
                     /* @__PURE__ */ jsxs(
                       "tr",
                       {
@@ -533,6 +547,16 @@ const StudentMilestonesTable = ({
                 }),
               ],
             }),
+          }),
+          /* @__PURE__ */ jsx(DataTablePagination, {
+            page: milestonePage,
+            pageSize: milestonePageSize,
+            totalRows: milestoneTotalRows,
+            onPageChange: setMilestonePage,
+            onPageSizeChange: setMilestonePageSize,
+            rowLabel: "records",
+          }),
+          ],
           }),
     ],
   });

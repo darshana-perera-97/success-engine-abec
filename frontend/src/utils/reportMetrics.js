@@ -1,6 +1,6 @@
 import { documentTypeMatchesRequirement } from "../docMappingConfig";
 import { normalizePipelineStatus, isVisaGrantedStatus, PIPELINE_STEPS } from "../pipeline";
-import { normalizeOfferStatus } from "./universityOfferLetters";
+import { normalizeOfferStatus, listUniversityOfferLetters } from "./universityOfferLetters";
 import { getAssignedCounselorIds } from "../studentContactHelpers";
 
 export const REPORT_SECTIONS = [
@@ -83,6 +83,18 @@ const VISA_REFUSAL_DOC_TYPES = ["Visa Refusal", "Visa Refused", "Refusal Letter"
 const COE_DOC_TYPES = ["CoE", "COE"];
 const CAS_DOC_TYPES = ["CAS"];
 
+export const OFFERS_SECTION_ID = "offers";
+export const INTERVIEWS_SECTION_ID = "interviews";
+
+const OFFER_METRIC_IDS = new Set(["conditionalOffer", "unconditionalOffer", "coeReceivedJapan"]);
+const INTERVIEW_METRIC_IDS = new Set([
+  "preCasInterviewCompleted",
+  "preInterviewCompletedJapan",
+  "preInterviewPassedJapan",
+  "regularInterviewCompletedJapan",
+  "regularInterviewFailedJapan",
+]);
+
 function norm(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -131,12 +143,20 @@ function hasDocMatching(student, docTypes, { verifiedOnly = false, pendingOnly =
 }
 
 function hasOfferStatus(student, targetStatus) {
-  for (const entry of student?.universityOfferLetters || []) {
-    if (!entry || typeof entry !== "object" || !String(entry.url || "").trim()) continue;
+  return listUniversityOfferLetters(student).some((entry) => {
     const status = normalizeOfferStatus(entry.offerStatus);
-    if (status === targetStatus) return true;
-  }
-  return false;
+    return status !== "Rejected" && status === targetStatus;
+  });
+}
+
+function sortReportRows(rows) {
+  return [...rows].sort((a, b) => {
+    const nameCmp = String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
+      sensitivity: "base",
+    });
+    if (nameCmp !== 0) return nameCmp;
+    return String(a?.key || "").localeCompare(String(b?.key || ""));
+  });
 }
 
 function visaItemCompleted(student, itemName) {
@@ -167,23 +187,55 @@ function stageIndex(status) {
   return idx >= 0 ? idx : -1;
 }
 
-function studentMatchesAppointment(student, appointments, { type, status = "Completed", countryFilter = null, passedOnly = false, failedOnly = false }) {
+function appointmentOutcomeNotesMatch(apt, { passedOnly = false, failedOnly = false } = {}) {
+  const notes = norm(apt?.outcomeNotes);
+  if (passedOnly && (notes.includes("fail") || notes.includes("failed"))) return false;
+  if (failedOnly && !(notes.includes("fail") || notes.includes("failed"))) return false;
+  return true;
+}
+
+function listMatchingAppointments(student, appointments, { type, status = "Completed", countryFilter = null, passedOnly = false, failedOnly = false }) {
   const sid = String(student?.id || "").trim();
-  if (!sid) return false;
-  if (countryFilter && !countryFilter(student)) return false;
+  if (!sid) return [];
+  if (countryFilter && !countryFilter(student)) return [];
+  const matches = [];
   for (const apt of appointments || []) {
     if (String(apt?.studentId || "").trim() !== sid) continue;
     if (norm(apt?.type) !== norm(type)) continue;
     if (norm(apt?.status) !== norm(status)) continue;
-    const notes = norm(apt?.outcomeNotes);
-    if (passedOnly && (notes.includes("fail") || notes.includes("failed"))) continue;
-    if (failedOnly && !(notes.includes("fail") || notes.includes("failed"))) continue;
-    return true;
+    if (!appointmentOutcomeNotesMatch(apt, { passedOnly, failedOnly })) continue;
+    matches.push(apt);
   }
-  return false;
+  return matches;
 }
 
-function studentMatchesFilters(student, filters, employees) {
+function studentMatchesAppointment(student, appointments, criteria) {
+  return listMatchingAppointments(student, appointments, criteria).length > 0;
+}
+
+function getAppointmentCompletedAt(apt) {
+  const updatedAt = String(apt?.updatedAt || "").trim();
+  if (updatedAt) return updatedAt;
+  const date = String(apt?.date || "").trim();
+  const time = String(apt?.time || "").trim();
+  if (date && time) return `${date}T${time}`;
+  if (date) return date;
+  return "";
+}
+
+function appointmentMatchesDateFilter(apt, filters) {
+  if (!filters.dateFrom && !filters.dateTo) return true;
+  return inDateRange(getAppointmentCompletedAt(apt), filters.dateFrom, filters.dateTo);
+}
+
+function deriveInterviewOutcome(apt) {
+  const notes = String(apt?.outcomeNotes || "").trim();
+  if (notes) return notes;
+  const status = String(apt?.status || "").trim();
+  return status || "Completed";
+}
+
+function studentMatchesFilters(student, filters, employees, { skipDate = false } = {}) {
   const counselor = String(filters.counselor || "All");
   if (counselor !== "All") {
     const ids = getAssignedCounselorIds(student);
@@ -194,8 +246,58 @@ function studentMatchesFilters(student, filters, employees) {
   if (branch !== "All" && studentBranch(student) !== branch) return false;
   const country = String(filters.country || "All");
   if (country !== "All" && String(student?.country || "").trim() !== country) return false;
-  if (!inDateRange(student?.createdAt, filters.dateFrom, filters.dateTo)) return false;
+  if (!skipDate && !inDateRange(student?.createdAt, filters.dateFrom, filters.dateTo)) return false;
   return true;
+}
+
+function getMatchingOfferEntries(student, targetStatus) {
+  return listUniversityOfferLetters(student).filter((entry) => {
+    const status = normalizeOfferStatus(entry.offerStatus);
+    return status !== "Rejected" && status === targetStatus;
+  });
+}
+
+function offerEntryMatchesDateFilter(entry, filters) {
+  if (!filters.dateFrom && !filters.dateTo) return true;
+  return inDateRange(entry?.uploadedAt, filters.dateFrom, filters.dateTo);
+}
+
+function getLatestVerifiedCoeDoc(student) {
+  let best = null;
+  let bestMs = -1;
+  for (const doc of student?.documents || []) {
+    if (!doc || typeof doc !== "object") continue;
+    const docType = String(doc.type || "").trim();
+    const status = norm(doc.status);
+    if (status !== "verified") continue;
+    if (!COE_DOC_TYPES.some((t) => documentTypeMatchesRequirement(docType, t))) continue;
+    const ms = parseDateMs(doc.verifiedAt || doc.uploadedAt) || 0;
+    if (ms >= bestMs) {
+      bestMs = ms;
+      best = doc;
+    }
+  }
+  return best;
+}
+
+function getOfferMetricEventDate(student, metricId) {
+  if (metricId === "conditionalOffer") {
+    return getMatchingOfferEntries(student, "Conditional")[0]?.uploadedAt || "";
+  }
+  if (metricId === "unconditionalOffer") {
+    return getMatchingOfferEntries(student, "Unconditional")[0]?.uploadedAt || "";
+  }
+  if (metricId === "coeReceivedJapan") {
+    const doc = getLatestVerifiedCoeDoc(student);
+    return doc ? String(doc.verifiedAt || doc.uploadedAt || "").trim() : "";
+  }
+  return "";
+}
+
+function studentMatchesOfferDateFilter(student, metricId, filters) {
+  if (!filters.dateFrom && !filters.dateTo) return true;
+  const eventDate = getOfferMetricEventDate(student, metricId);
+  return inDateRange(eventDate, filters.dateFrom, filters.dateTo);
 }
 
 function reqStudentMatchesFilters(entry, filters) {
@@ -327,8 +429,8 @@ function computeMetricForStudent(metricId, student, appointments) {
   }
 }
 
-export function filterReportStudents(students, filters = {}, employees = []) {
-  return (students || []).filter((student) => studentMatchesFilters(student, filters, employees));
+export function filterReportStudents(students, filters = {}, employees = [], options = {}) {
+  return (students || []).filter((student) => studentMatchesFilters(student, filters, employees, options));
 }
 
 export function filterReportReqStudents(reqStudents, filters = {}) {
@@ -367,28 +469,212 @@ export function buildReportRowFromReqStudent(entry) {
   };
 }
 
-function getMetricRows(metricId, filteredStudents, filteredReqStudents, appointments, employees) {
+export function buildOfferReportRowFromStudent(student, employees = [], metricId) {
+  const base = buildReportRowFromStudent(student, employees);
+  if (metricId === "coeReceivedJapan") {
+    const doc = getLatestVerifiedCoeDoc(student);
+    const status = String(doc?.status || "").trim();
+    return {
+      ...base,
+      tableVariant: "offer",
+      offerName: String(doc?.name || doc?.type || "COE").trim() || "COE",
+      offerStatus: status ? status.charAt(0).toUpperCase() + status.slice(1) : "Verified",
+      receivedAt: String(doc?.verifiedAt || doc?.uploadedAt || "").trim(),
+    };
+  }
+  return { ...base, tableVariant: "offer" };
+}
+
+function buildOfferLetterReportRows(students, employees, targetStatus, filters) {
+  const rows = [];
+  for (const student of students || []) {
+    if (!studentMatchesFilters(student, filters, employees, { skipDate: true })) continue;
+    const sid = String(student?.id || "").trim();
+    for (const entry of listUniversityOfferLetters(student)) {
+      const status = normalizeOfferStatus(entry.offerStatus);
+      if (status === "Rejected" || status !== targetStatus) continue;
+      if (!offerEntryMatchesDateFilter(entry, filters)) continue;
+      const base = buildReportRowFromStudent(student, employees);
+      rows.push({
+        ...base,
+        key: `offer-${sid}-${String(entry.id || entry.name || rows.length).trim()}`,
+        tableVariant: "offer",
+        offerName: String(entry.name || "Offer letter").trim() || "Offer letter",
+        offerStatus: status,
+        receivedAt: String(entry.uploadedAt || "").trim(),
+      });
+    }
+  }
+  return rows;
+}
+
+function getOfferMetricStudents(students, metricId, appointments, filters) {
+  return students.filter((student) => {
+    if (!computeMetricForStudent(metricId, student, appointments)) return false;
+    return studentMatchesOfferDateFilter(student, metricId, filters);
+  });
+}
+
+function finalizeMetricRows(rows) {
+  return sortReportRows(rows);
+}
+
+function sortOfferLetterReportRows(rows) {
+  return [...rows].sort((a, b) => {
+    const dateCmp = (parseDateMs(b.receivedAt) || 0) - (parseDateMs(a.receivedAt) || 0);
+    if (dateCmp !== 0) return dateCmp;
+    return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function sortInterviewReportRows(rows) {
+  return [...rows].sort((a, b) => {
+    const dateCmp = (parseDateMs(b.completedAt) || 0) - (parseDateMs(a.completedAt) || 0);
+    if (dateCmp !== 0) return dateCmp;
+    return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function buildInterviewReportRowFromAppointment(student, employees, apt, keySuffix) {
+  const sid = String(student?.id || "").trim();
+  const base = buildReportRowFromStudent(student, employees);
+  const aptId = String(apt?.id || keySuffix || "").trim();
+  return {
+    ...base,
+    key: `interview-${sid}-${aptId || keySuffix}`,
+    tableVariant: "interview",
+    interviewType: String(apt?.type || apt?.title || "Interview").trim() || "Interview",
+    interviewOutcome: deriveInterviewOutcome(apt),
+    completedAt: getAppointmentCompletedAt(apt),
+  };
+}
+
+function buildInterviewReportRowFromVisaItem(student, employees, itemName) {
+  const sid = String(student?.id || "").trim();
+  const base = buildReportRowFromStudent(student, employees);
+  return {
+    ...base,
+    key: `interview-visa-${sid}-${norm(itemName)}`,
+    tableVariant: "interview",
+    interviewType: `${itemName} (Visa checklist)`,
+    interviewOutcome: "Completed",
+    completedAt: "",
+  };
+}
+
+function buildPreCasInterviewReportRows(students, appointments, employees, filters) {
+  const rows = [];
+  for (const student of students || []) {
+    if (!studentMatchesFilters(student, filters, employees, { skipDate: true })) continue;
+    if (!isUk(student?.country)) continue;
+    const appointmentTypes = ["Pre Cas Interview", "Mock Interview"];
+    for (const type of appointmentTypes) {
+      for (const apt of listMatchingAppointments(student, appointments, { type, status: "Completed" })) {
+        if (!appointmentMatchesDateFilter(apt, filters)) continue;
+        rows.push(buildInterviewReportRowFromAppointment(student, employees, apt, type));
+      }
+    }
+    if (visaItemCompleted(student, "CAS Issuance")) {
+      const visaRow = buildInterviewReportRowFromVisaItem(student, employees, "CAS Issuance");
+      if (inDateRange(visaRow.completedAt, filters.dateFrom, filters.dateTo)) {
+        rows.push(visaRow);
+      }
+    }
+  }
+  return rows;
+}
+
+function buildJapanInterviewReportRows(students, appointments, employees, filters, { type, passedOnly = false, failedOnly = false }) {
+  const rows = [];
+  const countryFilter = (s) => isJapan(s?.country);
+  for (const student of students || []) {
+    if (!studentMatchesFilters(student, filters, employees, { skipDate: true })) continue;
+    for (const apt of listMatchingAppointments(student, appointments, {
+      type,
+      status: "Completed",
+      countryFilter,
+      passedOnly,
+      failedOnly,
+    })) {
+      if (!appointmentMatchesDateFilter(apt, filters)) continue;
+      rows.push(buildInterviewReportRowFromAppointment(student, employees, apt, type));
+    }
+  }
+  return rows;
+}
+
+function buildInterviewReportRows(students, appointments, employees, metricId, filters) {
+  if (metricId === "preCasInterviewCompleted") {
+    return buildPreCasInterviewReportRows(students, appointments, employees, filters);
+  }
+  if (metricId === "preInterviewCompletedJapan") {
+    return buildJapanInterviewReportRows(students, appointments, employees, filters, { type: "Pre interview" });
+  }
+  if (metricId === "preInterviewPassedJapan") {
+    return buildJapanInterviewReportRows(students, appointments, employees, filters, {
+      type: "Pre interview",
+      passedOnly: true,
+    });
+  }
+  if (metricId === "regularInterviewCompletedJapan") {
+    return buildJapanInterviewReportRows(students, appointments, employees, filters, { type: "Regular Interview" });
+  }
+  if (metricId === "regularInterviewFailedJapan") {
+    return buildJapanInterviewReportRows(students, appointments, employees, filters, {
+      type: "Regular Interview",
+      failedOnly: true,
+    });
+  }
+  return [];
+}
+
+function getMetricRows(metricId, filteredStudents, filteredReqStudents, appointments, employees, filters = {}, studentsWithoutDateFilter = []) {
   if (metricId === "totalLeadsAllocated") {
-    return [
+    return finalizeMetricRows([
       ...filteredStudents.map((s) => buildReportRowFromStudent(s, employees)),
       ...filteredReqStudents.map((e) => buildReportRowFromReqStudent(e)),
-    ];
+    ]);
   }
   if (metricId === "prospectiveLeads") {
-    return [
+    return finalizeMetricRows([
       ...filteredStudents
         .filter((s) => computeMetricForStudent("prospectiveLeads", s, appointments))
         .map((s) => buildReportRowFromStudent(s, employees)),
       ...filteredReqStudents.map((e) => buildReportRowFromReqStudent(e)),
-    ];
+    ]);
   }
-  return filteredStudents
-    .filter((s) => computeMetricForStudent(metricId, s, appointments))
-    .map((s) => buildReportRowFromStudent(s, employees));
+  if (OFFER_METRIC_IDS.has(metricId)) {
+    if (metricId === "conditionalOffer") {
+      return sortOfferLetterReportRows(
+        buildOfferLetterReportRows(studentsWithoutDateFilter, employees, "Conditional", filters)
+      );
+    }
+    if (metricId === "unconditionalOffer") {
+      return sortOfferLetterReportRows(
+        buildOfferLetterReportRows(studentsWithoutDateFilter, employees, "Unconditional", filters)
+      );
+    }
+    return finalizeMetricRows(
+      getOfferMetricStudents(studentsWithoutDateFilter, metricId, appointments, filters).map((s) =>
+        buildOfferReportRowFromStudent(s, employees, metricId)
+      )
+    );
+  }
+  if (INTERVIEW_METRIC_IDS.has(metricId)) {
+    return sortInterviewReportRows(
+      buildInterviewReportRows(studentsWithoutDateFilter, appointments, employees, metricId, filters)
+    );
+  }
+  return finalizeMetricRows(
+    filteredStudents
+      .filter((s) => computeMetricForStudent(metricId, s, appointments))
+      .map((s) => buildReportRowFromStudent(s, employees))
+  );
 }
 
 export function computeReportMetrics(students, appointments = [], reqStudents = [], filters = {}, employees = []) {
   const filteredStudents = filterReportStudents(students, filters, employees);
+  const filteredStudentsNoDate = filterReportStudents(students, filters, employees, { skipDate: true });
   const filteredReqStudents = filterReportReqStudents(reqStudents, filters);
   const counts = {};
   const lists = {};
@@ -400,7 +686,9 @@ export function computeReportMetrics(students, appointments = [], reqStudents = 
         filteredStudents,
         filteredReqStudents,
         appointments,
-        employees
+        employees,
+        filters,
+        filteredStudentsNoDate
       );
       lists[metric.id] = rows;
       counts[metric.id] = rows.length;

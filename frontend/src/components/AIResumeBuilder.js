@@ -37,6 +37,8 @@ import { Button } from "./Button";
 import { COMPANY_AI_BRAND, COMPANY_NAME, RESUME_BUILDER_TITLE } from "../companyConfig";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "../uploadLimits";
 import { buildAiCvPdfFileName, captureElementToPdfBlob, triggerBlobDownload } from "../utils/cvPdf";
+import { DEFAULT_CV_TEMPLATE_ID, buildCvTemplateMockData, resolveCvTemplateId } from "../utils/cvTemplates";
+import { CvTemplateGallery, CvTemplatePicker, CvTemplatePreview } from "./CvTemplatePreview";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 function parseNotesForProgramEducation(notes) {
   const n = String(notes || "");
@@ -140,6 +142,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
   const [finalUploadError, setFinalUploadError] = useState("");
   const [isFinalUploading, setIsFinalUploading] = useState(false);
   const cvPdfCaptureRef = useRef(null);
+  const [cvTemplateId, setCvTemplateId] = useState(() => resolveCvTemplateId(currentStudent?.generatedCV?.templateId));
   const initialExtractedData = useMemo(() => ({
     name: "Nirash Dilshan Jayantha",
     role: `CO-Founder | ${COMPANY_NAME}`,
@@ -159,6 +162,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     profilePicture: null,
     customSections: []
   }), [COMPANY_NAME]);
+  const templateMockData = useMemo(() => buildCvTemplateMockData(COMPANY_NAME), [COMPANY_NAME]);
   const [editableData, setEditableData] = useState(initialExtractedData);
   const reset = useCallback(() => {
     setStep("initial");
@@ -166,6 +170,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     setProgress(0);
     setUploadedFile(null);
     setEditableData(initialExtractedData);
+    setCvTemplateId(DEFAULT_CV_TEMPLATE_ID);
     setFinalUploadError("");
     setIsFinalUploading(false);
     setIsOpeningPdfTab(false);
@@ -271,13 +276,18 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
   const startAssistFlow = useCallback(() => {
     if (currentStudent) {
       setEditableData(buildResumeDataFromStudent(currentStudent));
+      setCvTemplateId(resolveCvTemplateId(currentStudent.generatedCV?.templateId));
     } else {
       setEditableData(initialExtractedData);
+      setCvTemplateId(DEFAULT_CV_TEMPLATE_ID);
     }
     setActiveFlow("assist");
+    setStep("choose-template");
+  }, [currentStudent, initialExtractedData]);
+  const confirmTemplateAndContinue = useCallback(() => {
     setStep("processing");
     setProgress(0);
-  }, [currentStudent, initialExtractedData]);
+  }, []);
   const uploadCvToSystem = async (file, { advanceToUploading = false } = {}) => {
     if (!onUploadStudentCv || !currentStudent?.id) {
       return { ok: false, error: "Student CV upload is not available." };
@@ -366,6 +376,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     setFinalUploadError("");
     const cvData = {
       ...editableData,
+      templateId: cvTemplateId,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     let mergeBase = null;
@@ -428,7 +439,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
       await Promise.resolve(onSaveCV(cvData, mergeBase));
     }
     setStep("success");
-  }, [editableData, onSaveCV, onUploadStudentCv, onUploadStudentDocument, currentStudent]);
+  }, [editableData, cvTemplateId, onSaveCV, onUploadStudentCv, onUploadStudentDocument, currentStudent]);
   const handleOpenCvInNewTab = useCallback(async () => {
     setFinalUploadError("");
     const el = cvPdfCaptureRef.current;
@@ -529,7 +540,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                   ] }),
                   /* @__PURE__ */ jsxs("li", { className: "flex items-center gap-2 text-sm text-slate-600", children: [
                     /* @__PURE__ */ jsx(CheckCircle, { size: 16, className: "text-emerald-500" }),
-                    " Modern Editorial Layout"
+                    " Multiple professional CV templates"
                   ] })
                 ] }),
                 /* @__PURE__ */ jsxs(
@@ -538,7 +549,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                     onClick: startAssistFlow,
                     className: "w-full h-14 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-100 group-hover:gap-4 transition-all",
                     children: [
-                      "Generate CV ",
+                      "Choose template ",
                       /* @__PURE__ */ jsx(ArrowRight, { size: 20 })
                     ]
                   }
@@ -548,6 +559,44 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
           ]
         },
         "initial"
+      ),
+      step === "choose-template" && /* @__PURE__ */ jsxs(
+        motion.div,
+        {
+          initial: { opacity: 0, y: 16 },
+          animate: { opacity: 1, y: 0 },
+          exit: { opacity: 0, y: -16 },
+          className: "space-y-6",
+          children: [
+            /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-3xl p-6 md:p-8 shadow-sm", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6", children: [
+                /* @__PURE__ */ jsxs("div", { children: [
+                  /* @__PURE__ */ jsxs("h2", { className: "text-2xl font-bold text-slate-900 flex items-center gap-2", children: [
+                    /* @__PURE__ */ jsx(Layout, { size: 22, className: "text-indigo-600" }),
+                    " Choose Your CV Template"
+                  ] }),
+                  /* @__PURE__ */ jsx("p", { className: "text-slate-500 mt-2 max-w-2xl", children: "Pick a layout before entering your details. Each card shows a sample preview with mock data so you can compare styles." })
+                ] }),
+                /* @__PURE__ */ jsxs(Button, { variant: "outline", onClick: () => setStep("initial"), className: "shrink-0", children: [
+                  "Back"
+                ] })
+              ] }),
+              /* @__PURE__ */ jsx(CvTemplateGallery, { value: cvTemplateId, onChange: setCvTemplateId, mockData: templateMockData })
+            ] }),
+            /* @__PURE__ */ jsx("div", { className: "flex justify-end", children: /* @__PURE__ */ jsxs(
+              Button,
+              {
+                onClick: confirmTemplateAndContinue,
+                className: "h-12 px-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-base font-bold shadow-lg shadow-indigo-100",
+                children: [
+                  "Continue with this template ",
+                  /* @__PURE__ */ jsx(ArrowRight, { size: 18, className: "ml-1" })
+                ]
+              }
+            ) })
+          ]
+        },
+        "choose-template"
       ),
       step === "upload-cv" && /* @__PURE__ */ jsx(
         motion.div,
@@ -1097,6 +1146,10 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
               ] }),
               finalUploadError ? /* @__PURE__ */ jsx("p", { className: "text-sm text-rose-600 text-right", children: finalUploadError }) : null
             ] }),
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-1", children: [
+              /* @__PURE__ */ jsx("p", { className: "text-xs font-bold text-slate-500 uppercase tracking-wider", children: "Template" }),
+              /* @__PURE__ */ jsx(CvTemplatePicker, { value: cvTemplateId, onChange: setCvTemplateId, compact: true })
+            ] }),
             /* @__PURE__ */ jsxs("div", { ref: cvPdfCaptureRef, className: "bg-white border border-gray-200 rounded-3xl shadow-2xl overflow-hidden max-w-4xl mx-auto", children: [
               /* @__PURE__ */ jsxs("div", { className: "h-12 bg-slate-900 flex items-center justify-between px-6", children: [
                 /* @__PURE__ */ jsxs("div", { className: "flex gap-1.5", children: [
@@ -1107,135 +1160,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                 /* @__PURE__ */ jsx("span", { className: "text-[10px] text-slate-400 font-mono uppercase tracking-widest", children: `${COMPANY_AI_BRAND} CV Preview` }),
                 /* @__PURE__ */ jsx("div", { className: "w-12" })
               ] }),
-              /* @__PURE__ */ jsxs("div", { className: "p-12 bg-white min-h-[800px]", children: [
-                /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-start border-b-2 border-slate-900 pb-8 mb-8", children: [
-                  /* @__PURE__ */ jsxs("div", { className: "flex gap-6 items-start", children: [
-                    editableData.profilePicture && /* @__PURE__ */ jsx("div", { className: "w-24 h-24 rounded-2xl overflow-hidden border-2 border-slate-900 flex-shrink-0", children: /* @__PURE__ */ jsx("img", { src: editableData.profilePicture, alt: "Profile", className: "w-full h-full object-cover" }) }),
-                    /* @__PURE__ */ jsxs("div", { children: [
-                      /* @__PURE__ */ jsx("h1", { className: "text-4xl font-black text-slate-900 uppercase tracking-tighter", children: editableData.name }),
-                      /* @__PURE__ */ jsx("p", { className: "text-indigo-600 font-bold mt-1", children: editableData.role })
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ jsxs("div", { className: "text-right text-xs text-slate-500 space-y-1", children: [
-                    /* @__PURE__ */ jsx("p", { children: editableData.email }),
-                    /* @__PURE__ */ jsx("p", { children: editableData.phone }),
-                    /* @__PURE__ */ jsx("p", { children: "Colombo, Sri Lanka" })
-                  ] })
-                ] }),
-                /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-12 gap-8", children: [
-                  /* @__PURE__ */ jsxs("div", { className: "col-span-4 space-y-8 border-r border-slate-100 pr-8", children: [
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsx("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4", children: "Contact" }),
-                      /* @__PURE__ */ jsxs("div", { className: "space-y-2 text-[11px] text-slate-600 font-medium", children: [
-                        /* @__PURE__ */ jsxs("p", { className: "flex items-center gap-2", children: [
-                          /* @__PURE__ */ jsx(Mail, { size: 12, className: "text-indigo-400" }),
-                          " ",
-                          editableData.email
-                        ] }),
-                        /* @__PURE__ */ jsxs("p", { className: "flex items-center gap-2", children: [
-                          /* @__PURE__ */ jsx(Phone, { size: 12, className: "text-indigo-400" }),
-                          " ",
-                          editableData.phone
-                        ] }),
-                        /* @__PURE__ */ jsxs("p", { className: "flex items-center gap-2", children: [
-                          /* @__PURE__ */ jsx(MapPin, { size: 12, className: "text-indigo-400" }),
-                          " Colombo, Sri Lanka"
-                        ] })
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsx("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4", children: "Skills" }),
-                      /* @__PURE__ */ jsx("div", { className: "flex flex-wrap gap-1.5", children: ["AI Product Design", "GTM Strategy", "B2B Growth", "UI/UX", "SaaS", "Framer", "Product Management"].map((skill) => /* @__PURE__ */ jsx("span", { className: "text-[9px] font-bold bg-slate-50 text-slate-700 px-2 py-1 rounded border border-slate-100 uppercase", children: skill }, skill)) })
-                    ] }),
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsx("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4", children: "Test Scores" }),
-                      /* @__PURE__ */ jsx("div", { className: "space-y-3", children: editableData.testScores.map((score, i) => /* @__PURE__ */ jsxs("div", { className: "bg-slate-50 p-3 rounded-xl border border-slate-100", children: [
-                        /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-[10px] font-bold mb-1", children: [
-                          /* @__PURE__ */ jsx("span", { children: score.name }),
-                          /* @__PURE__ */ jsxs("span", { className: "text-indigo-600", children: [
-                            score.score,
-                            " Overall"
-                          ] })
-                        ] }),
-                        /* @__PURE__ */ jsx("div", { className: "w-full bg-slate-200 h-1 rounded-full overflow-hidden", children: /* @__PURE__ */ jsx("div", { className: "bg-indigo-500 h-full", style: { width: `${Math.min(100, parseFloat(score.score) / 9 * 100)}%` } }) })
-                      ] }, i)) })
-                    ] }),
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsx("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4", children: "Languages" }),
-                      /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
-                        /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-[10px] font-bold", children: [
-                          /* @__PURE__ */ jsx("span", { className: "text-slate-600", children: "English" }),
-                          /* @__PURE__ */ jsx("span", { className: "text-indigo-600", children: "Native" })
-                        ] }),
-                        /* @__PURE__ */ jsxs("div", { className: "flex justify-between text-[10px] font-bold", children: [
-                          /* @__PURE__ */ jsx("span", { className: "text-slate-600", children: "Sinhala" }),
-                          /* @__PURE__ */ jsx("span", { className: "text-indigo-600", children: "Native" })
-                        ] })
-                      ] })
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ jsxs("div", { className: "col-span-8 space-y-10", children: [
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsxs("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-6 flex items-center gap-2", children: [
-                        /* @__PURE__ */ jsx("span", { className: "w-6 h-[1px] bg-slate-900" }),
-                        " Professional Experience"
-                      ] }),
-                      /* @__PURE__ */ jsx("div", { className: "space-y-8", children: editableData.experience.map((exp, i) => /* @__PURE__ */ jsxs("div", { className: "relative pl-6 border-l border-slate-100", children: [
-                        /* @__PURE__ */ jsx("div", { className: "absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-indigo-600" }),
-                        /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-baseline mb-1", children: [
-                          /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-base", children: exp.title }),
-                          /* @__PURE__ */ jsx("span", { className: "text-[10px] font-black text-slate-400 uppercase tracking-wider", children: exp.period })
-                        ] }),
-                        /* @__PURE__ */ jsx("p", { className: "text-sm text-indigo-600 font-bold mb-3", children: exp.company }),
-                        /* @__PURE__ */ jsxs("ul", { className: "space-y-2", children: [
-                          /* @__PURE__ */ jsxs("li", { className: "text-xs text-slate-600 leading-relaxed flex gap-2", children: [
-                            /* @__PURE__ */ jsx("span", { className: "text-indigo-400 mt-1.5 w-1 h-1 rounded-full bg-indigo-400 shrink-0" }),
-                            "Spearheaded GTM strategies resulting in 40% market share growth within the first year."
-                          ] }),
-                          /* @__PURE__ */ jsxs("li", { className: "text-xs text-slate-600 leading-relaxed flex gap-2", children: [
-                            /* @__PURE__ */ jsx("span", { className: "text-indigo-400 mt-1.5 w-1 h-1 rounded-full bg-indigo-400 shrink-0" }),
-                            "Orchestrated cross-functional teams to deliver AI-driven B2B solutions for global clients."
-                          ] })
-                        ] })
-                      ] }, i)) })
-                    ] }),
-                    /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsxs("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-6 flex items-center gap-2", children: [
-                        /* @__PURE__ */ jsx("span", { className: "w-6 h-[1px] bg-slate-900" }),
-                        " Education"
-                      ] }),
-                      /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 gap-6", children: [
-                        activeFlow === "update" && /* @__PURE__ */ jsxs(
-                          motion.div,
-                          {
-                            initial: { opacity: 0, x: -10 },
-                            animate: { opacity: 1, x: 0 },
-                            className: "p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl relative overflow-hidden",
-                            children: [
-                              /* @__PURE__ */ jsx("div", { className: "absolute top-0 right-0 p-2", children: /* @__PURE__ */ jsx("span", { className: "text-[8px] font-black bg-indigo-600 text-white px-2 py-0.5 rounded-full uppercase", children: "New" }) }),
-                              /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: "Master of Business Administration (MBA)" }),
-                              /* @__PURE__ */ jsx("p", { className: "text-xs text-indigo-600 font-bold", children: "In Progress - 2026" }),
-                              /* @__PURE__ */ jsx("p", { className: "text-[10px] text-slate-500 mt-1 italic", children: "Specializing in AI Strategy & Digital Transformation" })
-                            ]
-                          }
-                        ),
-                        editableData.education.map((edu, i) => /* @__PURE__ */ jsxs("div", { className: "pl-6 border-l border-slate-100", children: [
-                          /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: edu.degree }),
-                          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 font-medium", children: edu.school })
-                        ] }, i))
-                      ] })
-                    ] }),
-                    editableData.customSections.map((section) => /* @__PURE__ */ jsxs("section", { children: [
-                      /* @__PURE__ */ jsxs("h2", { className: "text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-6 flex items-center gap-2", children: [
-                        /* @__PURE__ */ jsx("span", { className: "w-6 h-[1px] bg-slate-900" }),
-                        " ",
-                        section.title
-                      ] }),
-                      /* @__PURE__ */ jsx("div", { className: "pl-6 border-l border-slate-100", children: /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 leading-relaxed whitespace-pre-wrap", children: section.content }) })
-                    ] }, section.id))
-                  ] })
-                ] })
-              ] })
+              /* @__PURE__ */ jsx(CvTemplatePreview, { templateId: cvTemplateId, data: editableData, activeFlow })
             ] })
           ]
         },

@@ -3,6 +3,12 @@ import React from "react";
 const fieldClass =
   "w-full px-3 py-2 text-sm bg-slate-50 border border-gray-200 rounded-md outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20";
 
+const invalidFieldHighlight = "border-rose-500 ring-2 ring-rose-200 bg-rose-50/40 focus:border-rose-500";
+
+function fieldClassWithError(baseClass, hasError) {
+  return hasError ? `${baseClass} ${invalidFieldHighlight}` : baseClass;
+}
+
 export function PhoneWhatsappFields({
   phone,
   whatsappNumber,
@@ -14,6 +20,8 @@ export function PhoneWhatsappFields({
   whatsappLabel = "WhatsApp number",
   phoneRequired = true,
   fieldClassName = fieldClass,
+  phoneHasError = false,
+  whatsappHasError = false,
   compactLabels = false
 }) {
   const labelClass = compactLabels
@@ -33,7 +41,7 @@ export function PhoneWhatsappFields({
           type="tel"
           required={phoneRequired}
           autoComplete="tel"
-          className={fieldClassName}
+          className={fieldClassWithError(fieldClassName, phoneHasError)}
           value={phone}
           onChange={(e) => onPhoneChange(e.target.value)}
           placeholder="e.g. +94771234567, 0771234567, or 771234567"
@@ -48,7 +56,7 @@ export function PhoneWhatsappFields({
           type="tel"
           required={!sameAsPhone}
           autoComplete="tel"
-          className={`${fieldClassName}${sameAsPhone ? " opacity-70" : ""}`}
+          className={`${fieldClassWithError(fieldClassName, whatsappHasError)}${sameAsPhone ? " opacity-70" : ""}`}
           value={displayedWhatsapp}
           onChange={(e) => onWhatsappNumberChange(e.target.value)}
           disabled={sameAsPhone}

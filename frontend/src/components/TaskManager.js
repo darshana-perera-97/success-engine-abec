@@ -2,7 +2,8 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { AlertCircle, Plus, Upload, CheckCircle, Hourglass, Filter, X } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { filterTasksForCounselor, formatCalendarDaysRemainingLabel, isTaskDirectlyAssignedToIdentities, isTaskOverdueByDate, resolveCounselorIdentitySet } from "../counselorTaskScope";
 import { getCurrentStageSlaDisplay } from "../pipeline";
@@ -362,6 +363,25 @@ const TaskManager = ({
     if (userRole === "Student") return (a.phase || 9) - (b.phase || 9);
     return 0;
   });
+  const taskPaginationResetKey = useMemo(
+    () =>
+      JSON.stringify({
+        filters: taskFilters,
+        showCompletedTasks,
+        onlyMyAssignedTasks,
+        studentId: student?.id || "",
+        count: studentTasks.length,
+      }),
+    [taskFilters, showCompletedTasks, onlyMyAssignedTasks, student?.id, studentTasks.length]
+  );
+  const {
+    pageItems: paginatedStudentTasks,
+    page: taskPage,
+    setPage: setTaskPage,
+    pageSize: taskPageSize,
+    setPageSize: setTaskPageSize,
+    totalRows: taskTotalRows,
+  } = useClientPagination(studentTasks, taskPaginationResetKey);
   useEffect(() => {
     if (!selectedTaskId || typeof document === "undefined") return;
     const safe = String(selectedTaskId).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -676,7 +696,7 @@ const TaskManager = ({
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap hidden sm:table-cell", children: "Priority" }),
           /* @__PURE__ */ jsx("th", { className: "px-6 py-3 whitespace-nowrap", children: "Status" })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: dt.emptyRow, children: emptyTasksMessage }) }) : studentTasks.map((task) => {
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: studentTasks.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: tableColSpan, className: dt.emptyRow, children: emptyTasksMessage }) }) : paginatedStudentTasks.map((task) => {
           const studentContext = getStudentContextForTask(task);
           const studentLabel = getStudentLabelForTask(task, studentContext);
           const isLocked = userRole === "Student" && (task.phase || 1) > 1 && task.status === "Pending";
@@ -801,7 +821,15 @@ const TaskManager = ({
             ] }) })
           ] }, task.id);
         }) })
-      ] }) })
+      ] }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page: taskPage,
+        pageSize: taskPageSize,
+        totalRows: taskTotalRows,
+        onPageChange: setTaskPage,
+        onPageSizeChange: setTaskPageSize,
+        rowLabel: "tasks",
+      })
     ] }),
     /* @__PURE__ */ jsx(
       CreateTaskModal,

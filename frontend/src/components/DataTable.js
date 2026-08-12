@@ -1,4 +1,12 @@
 import { cn } from "../utils";
+import {
+  PAGE_SIZE_OPTIONS,
+  computePagination,
+  loadStoredPageSize,
+  saveStoredPageSize,
+} from "../hooks/usePagination";
+
+export { PAGE_SIZE_OPTIONS, loadStoredPageSize, saveStoredPageSize };
 
 /**
  * Shared table design tokens. Use in jsx()-style files for consistent styling
@@ -158,5 +166,97 @@ export function DataTableEmpty({ colSpan, children, className }) {
         {children}
       </td>
     </tr>
+  );
+}
+
+export function DataTablePagination({
+  page,
+  pageSize,
+  totalRows,
+  onPageChange,
+  onPageSizeChange,
+  rowLabel = "rows",
+  suffix = "",
+  loading = false,
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
+  className,
+}) {
+  const { totalPages, currentPage, startIndex, endIndex } = computePagination(
+    totalRows,
+    page,
+    pageSize
+  );
+
+  const rangeText =
+    loading || totalRows == null
+      ? "—"
+      : totalRows
+        ? `${startIndex + 1}–${endIndex}`
+        : "0";
+
+  const totalText =
+    loading || totalRows == null ? "—" : String(totalRows);
+
+  const label = totalRows === 1 ? rowLabel.replace(/s$/, "") : rowLabel;
+
+  return (
+    <div
+      className={cn(
+        "px-4 sm:px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2",
+        className
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>
+          {loading
+            ? `Loading ${rowLabel}…`
+            : totalRows
+              ? `Showing ${rangeText} of ${totalText} ${label}`
+              : `Showing 0 ${label}`}
+          {suffix ? ` · ${suffix}` : ""}
+        </span>
+        <label className="inline-flex items-center gap-1.5 text-slate-500">
+          <span className="text-slate-400">Rows per page</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            disabled={loading}
+            className="rounded border border-slate-200 bg-white px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-50"
+            aria-label="Rows per page"
+          >
+            {pageSizeOptions.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap justify-end">
+        <span className="text-slate-400 tabular-nums">
+          {loading || totalRows == null
+            ? "—"
+            : totalRows
+              ? `Page ${currentPage} of ${totalPages}`
+              : "Page 1 of 1"}
+        </span>
+        <button
+          type="button"
+          className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={loading || currentPage <= 1 || !totalRows}
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          className="px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={loading || currentPage >= totalPages || !totalRows}
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { formatLKR, formatRawLKR, EXCHANGE_RATES } from "../utils";
 import { getAccounts, getBranches, getInvoices } from "../authApi";
 import { isCounselorEquivalentAccountRole } from "../roles";
@@ -23,14 +23,19 @@ import {
   MapPin,
   Phone,
   KeyRound,
+  Camera,
 } from "lucide-react";
 import { Button } from "./Button";
+import { AvatarImageCropModal } from "./AvatarImageCropModal";
+import { readImageFileAsDataUrl } from "../utils/avatarImage";
 import { QuietPageSkeleton } from "./LoadingPlaceholder";
-import { dt } from "./DataTable";
-import { normalizePipelineStatus, PIPELINE_STEPS, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice } from "../pipeline";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
+import { normalizePipelineStatus, PIPELINE_STEPS, countOpenSlaRequirementViolations, computePipelineEscalations, invoiceAmountLkr, isPaidInvoice, studentMatchesCounselorIdentitySet } from "../pipeline";
 import { resolveCountryDocConfig } from "../countryDocConfigStore";
 import { buildPipelineHealthRows } from "../docMappingConfig";
 import { filterTasksForCounselorIdentities, isTaskOverdueByDate } from "../counselorTaskScope";
+import { computeWeeklyPerformanceScore } from "../utils/counselorWeeklyPerformance";
 import {
   XAxis,
   YAxis,
@@ -70,6 +75,10 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
   const [accounts, setAccounts] = useState([]);
   const [targetCounselorId, setTargetCounselorId] = useState("");
   const [newCounselor, setNewCounselor] = useState({ name: "", email: "", branch: "", role: "Senior Counselor", phone: "", password: "" });
+  const [newCounselorAvatar, setNewCounselorAvatar] = useState("");
+  const [avatarCropSource, setAvatarCropSource] = useState("");
+  const [isAvatarCropOpen, setIsAvatarCropOpen] = useState(false);
+  const avatarFileInputRef = useRef(null);
   const [invoices, setInvoices] = useState([]);
   const [pageLoads, setPageLoads] = useState({ accounts: false, branches: false, invoices: false });
   const counselorPageReady = pageLoads.accounts && pageLoads.branches && pageLoads.invoices;
@@ -125,7 +134,9 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
     if (!newCounselor.name || !newCounselor.email || !newCounselor.branch || !newCounselor.password) return;
     setAddCounselorError("");
     setIsAddingCounselor(true);
-    const result = onAddCounselor ? await onAddCounselor(newCounselor) : { ok: true };
+    const result = onAddCounselor
+      ? await onAddCounselor({ ...newCounselor, avatar: newCounselorAvatar || "" })
+      : { ok: true };
     setIsAddingCounselor(false);
     if (!result?.ok) {
       setAddCounselorError(result?.error || "Failed to add counselor.");
@@ -152,7 +163,42 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       phone: "",
       password: ""
     });
+    setNewCounselorAvatar("");
+    setAvatarCropSource("");
+    setIsAvatarCropOpen(false);
     setAddCounselorError("");
+  };
+  const resetAddCounselorModal = () => {
+    setIsAddModalOpen(false);
+    setAddCounselorError("");
+    setNewCounselorAvatar("");
+    setAvatarCropSource("");
+    setIsAvatarCropOpen(false);
+  };
+  const handleCounselorAvatarFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setAddCounselorError("Please choose an image file.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setAddCounselorError("Image must be less than 4MB.");
+      return;
+    }
+    try {
+      const dataUrl = await readImageFileAsDataUrl(file);
+      if (!dataUrl) {
+        setAddCounselorError("Failed to read image file.");
+        return;
+      }
+      setAddCounselorError("");
+      setAvatarCropSource(dataUrl);
+      setIsAvatarCropOpen(true);
+    } catch {
+      setAddCounselorError("Failed to read image file.");
+    }
   };
   const counselors = useMemo(() => {
     const normalizedAuthEmail = String(authenticatedUserEmail || "").toLowerCase();
@@ -160,9 +206,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
       (a) => String(a.role || "") === "Team Lead" && String(a.email || "").toLowerCase() === normalizedAuthEmail
     ) : null;
     return accounts.filter((a) => {
-      const role = String(a.role || "").toLowerCase();
-      const isCounselor = isCounselorEquivalentAccountRole(a.role);
-      if (!isCounselor) return false;
+      if (String(a.role || "").trim().toLowerCase() === "student") return false;
       if (currentRole !== "Team Lead") return true;
       if (!loggedTeamLeadAccount) return false;
       return String(a.teamLeadId || "") === String(loggedTeamLeadAccount.id || "") || String(a.teamLeadEmail || "").toLowerCase() === normalizedAuthEmail;
@@ -182,7 +226,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         const normalized = normalizeIdentity(identity);
         if (normalized) counselorIdentities.add(normalized);
       });
-      const myStudents = students.filter((student) => counselorIdentities.has(normalizeIdentity(student.counselor)));
+      const myStudents = students.filter((student) => studentMatchesCounselorIdentitySet(student, counselorIdentities));
       const myTasks = filterTasksForCounselorIdentities(tasks, counselorIdentities, myStudents);
       const activeStudents = myStudents.length;
       const visaGranted = myStudents.filter((s) => s.status === "Visa" || s.status === "Enrolled").length;
@@ -214,6 +258,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         return x !== "Inquiry" && x !== "Registration" && x !== "Application";
       }).length;
       const conversionRate = activeStudents > 0 ? Math.round(converted / activeStudents * 100) : 0;
+      const weeklyPerformance = computeWeeklyPerformanceScore(myStudents);
       const npsScore = Number.isFinite(linkedEmployee?.npsScore) ? linkedEmployee.npsScore : 0;
       const resolvedTeamLeadById = teamLeadOptions.find((lead) => String(lead.id || "") === String(account.teamLeadId || ""));
       const resolvedTeamLeadByEmail = teamLeadOptions.find(
@@ -242,20 +287,37 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           stageSlaBreaches,
           revenue,
           conversionRate,
+          weeklyScore: weeklyPerformance.score,
+          weeklyVisas: weeklyPerformance.visas,
           npsScore,
           avgTurnaround: "2.4h"
         },
         students: myStudents,
         tasks: myTasks
       };
-    });
-  }, [accounts, students, employees, tasks, invoices, currentRole, authenticatedUserEmail]);
+    }).filter(
+      (entry) => isCounselorEquivalentAccountRole(entry.role) || entry.metrics.activeStudents >= 1
+    );
+  }, [accounts, students, employees, tasks, invoices, currentRole, authenticatedUserEmail, teamLeadOptions]);
   const filteredCounselors = counselors.filter(
     (c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.branch.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  const {
+    pageItems: paginatedCounselors,
+    page: counselorPage,
+    setPage: setCounselorPage,
+    pageSize: counselorPageSize,
+    setPageSize: setCounselorPageSize,
+    totalRows: counselorTotalRows,
+  } = useClientPagination(filteredCounselors, searchTerm);
   const topPerformer = useMemo(() => {
     if (counselors.length === 0) return null;
-    return counselors.slice().sort((a, b) => b.metrics.visaGranted - a.metrics.visaGranted)[0];
+    return counselors.slice().sort(
+      (a, b) =>
+        b.metrics.weeklyScore - a.metrics.weeklyScore ||
+        b.metrics.weeklyVisas - a.metrics.weeklyVisas ||
+        b.metrics.visaGranted - a.metrics.visaGranted
+    )[0];
   }, [counselors]);
   const handleTransfer = () => {
     if (selectedCounselorId && targetCounselorId) {
@@ -274,6 +336,15 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         t.status !== "Completed" &&
         (t.priority === "High" || t.status === "Overdue" || isTaskOverdueByDate(t))
     );
+    const weeklyRank = counselors
+      .slice()
+      .sort(
+        (a, b) =>
+          b.metrics.weeklyScore - a.metrics.weeklyScore ||
+          b.metrics.weeklyVisas - a.metrics.weeklyVisas ||
+          b.metrics.visaGranted - a.metrics.visaGranted
+      )
+      .findIndex((c) => c.id === counselor.id) + 1;
     const studentById = new Map(
       (counselor.students || []).map((s) => [String(s.id || "").trim(), s])
     );
@@ -303,7 +374,28 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsx("div", { className: "flex gap-2", children: /* @__PURE__ */ jsx(Button, { disabled: true, onClick: () => setIsTransferModalOpen(true), children: "Transfer" }) })
+        /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-start md:items-end gap-2", children: [
+          /* @__PURE__ */ jsxs("div", { className: "text-left md:text-right", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-400 uppercase tracking-wider", children: "Weekly Performance" }),
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-1", children: [
+              /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center text-sm font-bold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100", children: [
+                counselor.metrics.weeklyScore,
+                " pts"
+              ] }),
+              weeklyRank > 0 && /* @__PURE__ */ jsxs("span", { className: "text-xs font-semibold text-slate-500", children: [
+                "Rank #",
+                weeklyRank
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
+              counselor.metrics.weeklyVisas,
+              " visas · ",
+              counselor.metrics.activeStudents,
+              " active students"
+            ] })
+          ] }),
+          /* @__PURE__ */ jsx("div", { className: "flex gap-2", children: /* @__PURE__ */ jsx(Button, { disabled: true, onClick: () => setIsTransferModalOpen(true), children: "Transfer" }) })
+        ] })
       ] }),
       isTransferModalOpen && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-50 overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200", children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-100 scale-100 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto my-auto", children: [
         /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center p-5 border-b border-gray-100", children: [
@@ -538,10 +630,25 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           /* @__PURE__ */ jsx("h3", { className: "font-bold text-lg text-slate-900", children: "Add New Counselor" }),
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 mt-1", children: "Onboard a new member to the team." })
         ] }),
-        /* @__PURE__ */ jsx("button", { onClick: () => setIsAddModalOpen(false), className: "text-slate-400 hover:text-slate-600 transition-colors", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
+        /* @__PURE__ */ jsx("button", { onClick: resetAddCounselorModal, className: "text-slate-400 hover:text-slate-600 transition-colors", children: /* @__PURE__ */ jsx(X, { size: 20 }) })
       ] }),
         /* @__PURE__ */ jsxs("form", { className: "p-5 space-y-4 overflow-y-auto flex-1 min-h-0", onSubmit: handleAddCounselor, children: [
           addCounselorError && /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: addCounselorError }),
+        /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-4 pb-1", children: [
+          /* @__PURE__ */ jsx("div", { className: "w-20 h-20 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center text-2xl font-bold border-4 border-white shadow-sm overflow-hidden shrink-0", children: newCounselorAvatar ? /* @__PURE__ */ jsx("img", { src: newCounselorAvatar, alt: newCounselor.name || "Counselor preview", className: "w-full h-full object-cover", referrerPolicy: "no-referrer" }) : newCounselor.name ? newCounselor.name.charAt(0).toUpperCase() : /* @__PURE__ */ jsx(Camera, { size: 24, className: "text-indigo-400" }) }),
+          /* @__PURE__ */ jsxs("div", { className: "space-y-2 min-w-0", children: [
+            /* @__PURE__ */ jsx("p", { className: "text-xs font-bold text-slate-500 uppercase", children: "Profile Photo" }),
+            /* @__PURE__ */ jsx("input", { ref: avatarFileInputRef, type: "file", accept: "image/*", className: "hidden", onChange: handleCounselorAvatarFileChange }),
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap gap-2", children: [
+              /* @__PURE__ */ jsxs(Button, { type: "button", variant: "secondary", size: "sm", onClick: () => avatarFileInputRef.current?.click(), children: [
+                /* @__PURE__ */ jsx(Camera, { size: 14, className: "mr-1.5" }),
+                newCounselorAvatar ? "Change photo" : "Upload & crop"
+              ] }),
+              newCounselorAvatar ? /* @__PURE__ */ jsx(Button, { type: "button", variant: "ghost", size: "sm", onClick: () => setNewCounselorAvatar(""), children: "Remove" }) : null
+            ] }),
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "Optional. Cropped image is saved at 256×256 px." })
+          ] })
+        ] }),
         /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-2 gap-4", children: [
           /* @__PURE__ */ jsxs("div", { className: "col-span-2", children: [
             /* @__PURE__ */ jsx("label", { className: "block text-xs font-bold text-slate-500 uppercase mb-1", children: "Full Name" }),
@@ -642,11 +749,24 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           ] })
         ] }),
           /* @__PURE__ */ jsxs("div", { className: "flex justify-end gap-2 pt-4 border-t border-gray-100", children: [
-            /* @__PURE__ */ jsx(Button, { variant: "ghost", type: "button", onClick: () => setIsAddModalOpen(false), disabled: isAddingCounselor, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { variant: "ghost", type: "button", onClick: resetAddCounselorModal, disabled: isAddingCounselor, children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { type: "submit", isLoading: isAddingCounselor, disabled: branchOptions.length === 0, children: "Create Profile" })
         ] })
       ] })
     ] }) }),
+    isAvatarCropOpen && /* @__PURE__ */ jsx(AvatarImageCropModal, {
+      open: isAvatarCropOpen,
+      imageDataUrl: avatarCropSource,
+      onClose: () => {
+        setIsAvatarCropOpen(false);
+        setAvatarCropSource("");
+      },
+      onConfirm: (croppedDataUrl) => {
+        setNewCounselorAvatar(croppedDataUrl);
+        setIsAvatarCropOpen(false);
+        setAvatarCropSource("");
+      }
+    }),
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4", children: [
       /* @__PURE__ */ jsx(MetricCard, { title: "Active Counselors", value: counselors.length.toString(), icon: /* @__PURE__ */ jsx(Briefcase, { size: 18 }) }),
       /* @__PURE__ */ jsx(MetricCard, {
@@ -663,14 +783,15 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           /* @__PURE__ */ jsx("div", { className: "text-white/80 text-xs font-bold uppercase tracking-wider mb-1", children: "Top Performer" }),
           /* @__PURE__ */ jsx("div", { className: "text-xl font-bold", children: topPerformer ? topPerformer.name : "No counselor data" }),
           /* @__PURE__ */ jsxs("div", { className: "text-sm text-white/90 font-medium mt-0.5", children: [
-            topPerformer ? topPerformer.metrics.visaGranted : 0,
-            " Visas Granted"
+            topPerformer ? topPerformer.metrics.weeklyScore : 0,
+            " pts · Weekly Performance"
           ] })
         ] }),
         /* @__PURE__ */ jsx("div", { className: "absolute -right-4 -bottom-4 text-white opacity-10", children: /* @__PURE__ */ jsx(Users, { size: 100 }) })
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { className: dt.card, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+    /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
       /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
         /* @__PURE__ */ jsx("th", { className: dt.th, children: "Counselor" }),
         /* @__PURE__ */ jsx("th", { className: `${dt.th} hidden md:table-cell`, children: "Branch" }),
@@ -680,7 +801,7 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
         /* @__PURE__ */ jsx("th", { className: `${dt.thRight} hidden md:table-cell`, children: "Critical tasks" }),
         /* @__PURE__ */ jsx("th", { className: dt.th })
       ] }) }),
-      /* @__PURE__ */ jsx("tbody", { className: dt.body, children: filteredCounselors.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
+      /* @__PURE__ */ jsx("tbody", { className: dt.body, children: paginatedCounselors.map((c) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
         /* @__PURE__ */ jsx("td", { className: "px-6 py-4", children: /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-3", children: [
           /* @__PURE__ */ jsx("div", { className: "w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200", children: c.avatar ? /* @__PURE__ */ jsx("img", { src: c.avatar, alt: c.name, className: "w-full h-full object-cover rounded-full", referrerPolicy: "no-referrer" }) : c.name.charAt(0) }),
           /* @__PURE__ */ jsxs("div", { children: [
@@ -733,7 +854,16 @@ const CounselorManagement = ({ students, employees, tasks, onTransferStudents, o
           ] })
         ] }) : null })
       ] }, c.id)) })
-    ] }) })
+    ] }),
+    /* @__PURE__ */ jsx(DataTablePagination, {
+      page: counselorPage,
+      pageSize: counselorPageSize,
+      totalRows: counselorTotalRows,
+      onPageChange: setCounselorPage,
+      onPageSizeChange: setCounselorPageSize,
+      rowLabel: "counselors",
+    }),
+    ] })
   ] });
 };
 const MetricCard = ({ title, value, icon, subtext, color, highlight }) => /* @__PURE__ */ jsxs("div", { className: `p-5 rounded-xl border shadow-sm flex flex-col justify-between ${highlight ? "bg-indigo-50 border-indigo-100" : "bg-white border-gray-200"}`, children: [

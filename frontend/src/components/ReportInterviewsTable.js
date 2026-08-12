@@ -4,37 +4,25 @@ import { dt, DataTablePagination } from "./DataTable";
 import { buildReportRowsResetKey, DEFAULT_PAGE_SIZE, useClientPagination } from "../hooks/usePagination";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 
-function getStatusColor(status) {
-  switch (status) {
-    case "Inquiry":
-    case "New Inquiry":
-      return "bg-slate-100 text-slate-700 border-gray-200";
-    case "Registration":
-      return "bg-indigo-50 text-indigo-700 border-indigo-200";
-    case "Application":
-    case "Counseling":
-    case "Uni Application":
-      return "bg-blue-50 text-blue-700 border-blue-200";
-    case "Interview training":
-    case "Offer Received":
-      return "bg-amber-50 text-amber-700 border-amber-200";
-    case "Documentation":
-      return "bg-purple-50 text-purple-700 border-purple-200";
-    case "Visa":
-    case "Visa Pilot":
-      return "bg-emerald-50 text-emerald-700 border-emerald-200";
-    case "Enrolled":
-      return "bg-teal-50 text-teal-800 border-teal-200";
-    case "Requested Lead":
-      return "bg-amber-50 text-amber-800 border-amber-200";
-    default:
-      return "bg-gray-50 text-gray-700 border-gray-200";
-  }
-}
-
 function isUnassignedCounselor(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "" || normalized === "unassigned" || normalized === "none" || normalized === "null";
+}
+
+function formatCompletedDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  try {
+    return parsed.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return raw;
+  }
 }
 
 function resolveTableStudent(row) {
@@ -44,15 +32,23 @@ function resolveTableStudent(row) {
     name: row.name,
     country: row.country,
     branch: row.branch,
-    status: "Requested Lead",
     counselor: "Unassigned",
     counselorName: "",
-    kind: "lead",
-    submittedAt: row.entry?.submittedAt,
   };
 }
 
-const ReportStudentTable = ({
+function outcomeBadgeClass(outcome) {
+  const value = String(outcome || "").trim().toLowerCase();
+  if (value.includes("fail")) {
+    return "bg-rose-50 text-rose-700 border-rose-200";
+  }
+  if (value.includes("pass")) {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+  return "bg-slate-50 text-slate-700 border-slate-200";
+}
+
+const ReportInterviewsTable = ({
   rows = [],
   employees = [],
   onSelectStudent = null,
@@ -94,13 +90,15 @@ const ReportStudentTable = ({
         /* @__PURE__ */ jsx("th", { className: dt.th, children: "Student Name" }),
         /* @__PURE__ */ jsx("th", { className: dt.th, children: "Country" }),
         /* @__PURE__ */ jsx("th", { className: dt.th, children: "Branch" }),
-        /* @__PURE__ */ jsx("th", { className: dt.th, children: "Pipeline Stage" }),
+        /* @__PURE__ */ jsx("th", { className: dt.th, children: "Interview" }),
+        /* @__PURE__ */ jsx("th", { className: dt.th, children: "Outcome" }),
+        /* @__PURE__ */ jsx("th", { className: `${dt.th} whitespace-nowrap`, children: "Completed" }),
         /* @__PURE__ */ jsx("th", { className: dt.th, children: "Counselor" }),
       ] }) }),
       /* @__PURE__ */ jsx("tbody", { className: dt.body, children: totalRows ? pageRows.map((row) => {
         const student = resolveTableStudent(row);
-        const isLead = row.kind === "lead";
-        const clickable = !isLead && typeof onSelectStudent === "function";
+        const clickable = typeof onSelectStudent === "function";
+        const interviewOutcome = String(row.interviewOutcome || "Completed").trim() || "Completed";
         return /* @__PURE__ */ jsxs(
           "tr",
           {
@@ -116,12 +114,20 @@ const ReportStudentTable = ({
                 /* @__PURE__ */ jsxs("span", { className: "min-w-0", children: [
                   student.name,
                   student.priority === "High" && /* @__PURE__ */ jsx("span", { className: "ml-2 inline-block w-2 h-2 rounded-full bg-rose-500", title: "High Priority" }),
-                  isLead && /* @__PURE__ */ jsx("span", { className: "ml-2 inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-100 rounded", children: "Lead" }),
                 ] }),
               ] }) }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-600", children: student.country || "—" }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-500 text-xs", children: student.branch || "—" }),
-              /* @__PURE__ */ jsx("td", { className: "px-6 py-3", children: /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(student.status)}`, children: student.status || "—" }) }),
+              /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-700 text-sm max-w-[220px]", children: /* @__PURE__ */ jsx("span", {
+                className: "block truncate",
+                title: row.interviewType || "—",
+                children: row.interviewType || "—",
+              }) }),
+              /* @__PURE__ */ jsx("td", { className: "px-6 py-3", children: /* @__PURE__ */ jsx("span", {
+                className: `inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${outcomeBadgeClass(interviewOutcome)}`,
+                children: interviewOutcome,
+              }) }),
+              /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-500 text-xs whitespace-nowrap", children: formatCompletedDate(row.completedAt) }),
               /* @__PURE__ */ jsx("td", { className: "px-6 py-3 text-slate-600", children: isUnassignedCounselor(student.counselor) ? /* @__PURE__ */ jsx("span", { className: "text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full text-xs font-semibold", children: "Unassigned" }) : /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
                 getCounselor(student.counselor)?.avatar ? /* @__PURE__ */ jsx("img", { src: getCounselor(student.counselor)?.avatar, alt: getCounselor(student.counselor)?.name, className: "w-5 h-5 rounded-full object-cover", referrerPolicy: "no-referrer" }) : /* @__PURE__ */ jsx("div", { className: "w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold", children: (getCounselor(student.counselor)?.name || student.counselorName || student.counselor || "?").charAt(0) }),
                 /* @__PURE__ */ jsx("span", { children: getCounselor(student.counselor)?.name || student.counselorName || student.counselor }),
@@ -130,7 +136,7 @@ const ReportStudentTable = ({
           },
           row.key
         );
-      }) : /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 5, className: dt.emptyRow, children: "No students match this metric." }) }) }),
+      }) : /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 7, className: dt.emptyRow, children: "No students match this metric." }) }) }),
     ] }) }),
     /* @__PURE__ */ jsx(DataTablePagination, {
       page: currentPage,
@@ -144,4 +150,4 @@ const ReportStudentTable = ({
   ] });
 };
 
-export { ReportStudentTable };
+export { ReportInterviewsTable };

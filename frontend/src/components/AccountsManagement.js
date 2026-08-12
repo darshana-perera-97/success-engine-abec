@@ -1,7 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search, Shield, UserPen, X } from "lucide-react";
 import {
   createAccount,
@@ -174,6 +175,15 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
         r.id.toLowerCase().includes(q)
     );
   }, [rows, query]);
+
+  const {
+    pageItems: paginatedAccounts,
+    page: accountsPage,
+    setPage: setAccountsPage,
+    pageSize: accountsPageSize,
+    setPageSize: setAccountsPageSize,
+    totalRows: accountsTotalRows,
+  } = useClientPagination(filtered, query);
 
   const openResetDialog = (row) => {
     setResetTarget(row);
@@ -429,7 +439,7 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
                 }),
                 /* @__PURE__ */ jsx("tbody", {
                   className: dt.body,
-                  children: filtered.map((row) =>
+                  children: paginatedAccounts.map((row) =>
                     /* @__PURE__ */ jsxs(
                       "tr",
                       {
@@ -534,6 +544,16 @@ const AccountsManagement = ({ onResetPassword, onAccountCreated, onAdminAvatarUp
               ]
             })
           }),
+          filtered.length > 0
+            ? /* @__PURE__ */ jsx(DataTablePagination, {
+                page: accountsPage,
+                pageSize: accountsPageSize,
+                totalRows: accountsTotalRows,
+                onPageChange: setAccountsPage,
+                onPageSizeChange: setAccountsPageSize,
+                rowLabel: "accounts",
+              })
+            : null,
           filtered.length === 0 &&
             /* @__PURE__ */ jsx("div", {
               className: "px-4 py-12 text-center text-slate-500 text-sm",

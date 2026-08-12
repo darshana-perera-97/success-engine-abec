@@ -2,7 +2,8 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DollarSign, X, ExternalLink, FileText } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { invoiceApprovedPaid, invoiceBalanceDue, invoiceInvoicedAmount, evidencePaymentKind, evidencePaymentKindLabel, evidencePaymentKindClass } from "../invoicePaymentHelpers";
@@ -237,6 +238,24 @@ const AccountantInvoices = ({
       });
   }, [refundRows, query]);
 
+  const invoicePaginationResetKey = `${activeTab}:${query}`;
+  const {
+    pageItems: paginatedInvoiceRows,
+    page: invoicePage,
+    setPage: setInvoicePage,
+    pageSize: invoicePageSize,
+    setPageSize: setInvoicePageSize,
+    totalRows: invoiceTotalRows,
+  } = useClientPagination(filteredRows, invoicePaginationResetKey);
+  const {
+    pageItems: paginatedRefundRows,
+    page: refundPage,
+    setPage: setRefundPage,
+    pageSize: refundPageSize,
+    setPageSize: setRefundPageSize,
+    totalRows: refundTotalRows,
+  } = useClientPagination(filteredRefundRows, invoicePaginationResetKey);
+
   const isBusy = (invId, action) => busyInvoiceId === invId && busyAction === action;
 
   const awaitingAccountantReview = (inv) => String(inv?.status || "").trim() === "Verifying";
@@ -446,7 +465,7 @@ const AccountantInvoices = ({
                   ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "px-4 py-12 text-center text-sm text-slate-500", children: "Loading…" }) })
                   : filteredRefundRows.length === 0
                     ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 6, className: "px-4 py-12 text-center text-sm text-slate-500", children: "No approved or completed refunds yet." }) })
-                    : filteredRefundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80 align-middle", children: [
+                    : paginatedRefundRows.map((row) => /* @__PURE__ */ jsxs("tr", { className: "hover:bg-slate-50/80 align-middle", children: [
                         /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-medium text-slate-900", children: row.studentName || row.studentId || "—" }),
                         /* @__PURE__ */ jsx("td", { className: "px-4 py-3 font-mono text-slate-800 tabular-nums whitespace-nowrap", children: `${row.currency || "LKR"} ${Number(row.amount || 0).toLocaleString()}` }),
                         /* @__PURE__ */ jsx("td", { className: "px-4 py-3 text-slate-600 font-mono text-xs", children: row.invoiceId || "Auto" }),
@@ -510,7 +529,7 @@ const AccountantInvoices = ({
                           : "No invoices in this tab."
                     })
                   })
-                : filteredRows.map((inv) => {
+                : paginatedInvoiceRows.map((inv) => {
                     const sid = String(inv.studentId || "").trim();
                     const studentName =
                       String(studentById.get(sid)?.name || "").trim() || sid || "—";
@@ -582,7 +601,16 @@ const AccountantInvoices = ({
                   })
             })
           ]
-        }) })
+        }) }),
+        /* @__PURE__ */ jsx(DataTablePagination, {
+          page: activeTab === "refunds" ? refundPage : invoicePage,
+          pageSize: activeTab === "refunds" ? refundPageSize : invoicePageSize,
+          totalRows: activeTab === "refunds" ? refundTotalRows : invoiceTotalRows,
+          onPageChange: activeTab === "refunds" ? setRefundPage : setInvoicePage,
+          onPageSizeChange: activeTab === "refunds" ? setRefundPageSize : setInvoicePageSize,
+          rowLabel: activeTab === "refunds" ? "refunds" : "invoices",
+          loading: activeTab === "refunds" ? refundsLoading : invoicesLoading,
+        })
       ]
     }),
     evidenceModal.open && modalInvoice && /* @__PURE__ */ jsx("div", {

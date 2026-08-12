@@ -4,7 +4,8 @@ import { DollarSign, ExternalLink } from "lucide-react";
 import { formatLKR } from "../utils";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { getFilteredInvoices } from "../authApi";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 
 const TABS = [
   { id: "all", label: "All" },
@@ -85,6 +86,15 @@ const AllInvoices = ({
   useEffect(() => {
     fetchData(activeTab, debouncedQuery);
   }, [activeTab, debouncedQuery, fetchData]);
+
+  const {
+    pageItems: paginatedRows,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, `${activeTab}:${debouncedQuery}`);
 
   return jsxs("div", { className: "space-y-6 animate-in fade-in duration-500 pb-10", children: [
     jsxs("div", { className: "space-y-1", children: [
@@ -168,7 +178,7 @@ const AllInvoices = ({
                       children: "No invoices found."
                     })
                   })
-                : rows.map((inv) => {
+                : paginatedRows.map((inv) => {
                     const sid = String(inv.studentId || "").trim();
                     const student = studentById.get(sid);
                     const studentName = String(student?.name || "").trim() || sid || "—";
@@ -226,7 +236,16 @@ const AllInvoices = ({
                   })
             })
           ]
-        }) })
+        }) }),
+        jsx(DataTablePagination, {
+          page,
+          pageSize,
+          totalRows,
+          onPageChange: setPage,
+          onPageSizeChange: setPageSize,
+          rowLabel: "invoices",
+          loading,
+        })
       ]
     })
   ] });

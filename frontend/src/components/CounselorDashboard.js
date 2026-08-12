@@ -2,16 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { Clock, Users, CheckCircle, ArrowRight, CheckSquare, AlertTriangle } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 import { BarChart, Bar, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 import { LeaderboardWidget } from "./LeaderboardWidget";
+import { buildCounselorWeeklyLeaderboard, findCounselorWeeklyRank } from "../utils/counselorWeeklyPerformance";
 import { getChats } from "../authApi";
 import InquiryCaptureFlowModals, { InquirySlaBadge } from "./InquiryCaptureFlowModals";
 import { filterTasksForCounselor, isNewStudentIntakeTask, isTaskOverdueByDate } from "../counselorTaskScope";
 import {
   normalizePipelineStatus,
   computePipelineEscalations,
-  countOpenSlaRequirementViolations,
   formatInquiryScheduledCallLabel,
   getInquiryScheduledCallAt,
   isInquiryCallOnHold,
@@ -92,14 +93,19 @@ const CounselorDashboard = ({
     };
   }, [currentUser?.id]);
   const myStudents = students;
+  const {
+    pageItems: paginatedMyStudents,
+    page: studentsPage,
+    setPage: setStudentsPage,
+    pageSize: studentsPageSize,
+    setPageSize: setStudentsPageSize,
+    totalRows: studentsTotalRows,
+  } = useClientPagination(myStudents || [], (myStudents || []).length);
   const stageEscalations = useMemo(
     () => computePipelineEscalations(myStudents || [], { resolveCountryConfig: resolveCountryDocConfig }),
     [myStudents]
   );
   const myTasks = filterTasksForCounselor(tasks, currentUser, myStudents, counselorIdentitySet);
-  const overdueTasksCount = myTasks.filter((t) => isTaskOverdueByDate(t)).length;
-  const totalUnresolvedViolations = myStudents.reduce((acc, s) => acc + countOpenSlaRequirementViolations(s), 0);
-  const slaScore = Math.max(0, 100 - overdueTasksCount * 5 - totalUnresolvedViolations * 2);
   const overdueTasks = myTasks.filter((t) => isTaskOverdueByDate(t));
   const overdueTasksSorted = useMemo(() => {
     const list = [...overdueTasks];
@@ -121,31 +127,28 @@ const CounselorDashboard = ({
   const pendingTasksOpen = myTasks.filter((t) => t.status === "Pending" || t.status === "In Progress");
   const completedTasks = myTasks.filter((t) => t.status === "Completed");
   const pendingReviewTasks = myTasks.filter((t) => t.status === "In Review");
-  const itemsReviewed = myTasks.filter((t) => {
-    if (t.status !== "Completed") return false;
-    if (t.documentType) return true;
-    return /review/i.test(String(t.task || ""));
-  }).length;
   const studentIdSet = new Set(
     (myStudents || []).map((s) => String(s.id || "").trim()).filter(Boolean)
   );
   const counselorId = String(currentUser?.id || "").trim();
-  const inboundFromStudents = chatMessages.filter((m) => {
-    return studentIdSet.has(String(m.senderId || "")) && String(m.receiverId || "") === counselorId;
-  }).length;
-  const counselorReplies = chatMessages.filter((m) => {
-    const fromCounselor = String(m.senderId || "") === counselorId;
-    const toStudent = studentIdSet.has(String(m.receiverId || ""));
-    const hasBody = (String(m.content || "").trim().length > 0 || m.attachment);
-    return fromCounselor && toStudent && hasBody;
-  }).length;
-  const reviewDenominator = itemsReviewed + pendingReviewTasks.length;
-  const reviewScore = reviewDenominator > 0 ? itemsReviewed / reviewDenominator * 100 : 100;
-  const totalMyTasks = myTasks.length;
-  const taskCompletionPct = totalMyTasks > 0 ? completedTasks.length / totalMyTasks * 100 : 100;
-  const chatScore = inboundFromStudents > 0 ? Math.min(100, counselorReplies / Math.max(1, inboundFromStudents) * 100) : 100;
-  const baseActivity = 0.4 * taskCompletionPct + 0.3 * chatScore + 0.3 * reviewScore;
-  const performanceScore = Math.max(0, Math.min(100, Math.round(baseActivity / 100 * slaScore)));
+  const weeklyLeaderboard = useMemo(
+    () => buildCounselorWeeklyLeaderboard(allStudents, employees),
+    [allStudents, employees]
+  );
+  const weeklyPerformanceEntry = useMemo(() => {
+    const uid = String(currentUser?.id || "").trim();
+    const email = String(currentUser?.email || "").trim();
+    return weeklyLeaderboard.find(
+      (entry) =>
+        String(entry.id || "") === uid ||
+        String(entry.email || "").trim().toLowerCase() === email.toLowerCase()
+    ) || null;
+  }, [weeklyLeaderboard, currentUser?.id, currentUser?.email]);
+  const weeklyPerformanceScore = weeklyPerformanceEntry?.score ?? 0;
+  const weeklyPerformanceRank = findCounselorWeeklyRank(weeklyLeaderboard, {
+    id: currentUser?.id,
+    email: currentUser?.email
+  });
   const pipelineHealth = useMemo(
     () => buildPipelineHealthRows(myStudents || [], resolveCountryDocConfig),
     [myStudents]
@@ -285,21 +288,20 @@ const CounselorDashboard = ({
         /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 mt-1", children: "Here's what's on your plate today." })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "text-left sm:text-right", children: [
-        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-400 uppercase tracking-wider", children: "Your Performance" }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-400 uppercase tracking-wider", children: "Weekly Performance" }),
         /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-start sm:items-end gap-1 mt-1", children: [
-          /* @__PURE__ */ jsxs("div", { className: `inline-flex items-center text-sm font-bold px-2 py-0.5 rounded-full ${performanceScore >= 90 ? "bg-emerald-50 text-emerald-600" : performanceScore >= 70 ? "bg-amber-50 text-amber-600" : "bg-rose-50 text-rose-600"}`, children: [
+          /* @__PURE__ */ jsxs("div", { className: `inline-flex items-center text-sm font-bold px-2 py-0.5 rounded-full ${weeklyPerformanceScore >= 50 ? "bg-emerald-50 text-emerald-600" : weeklyPerformanceScore >= 20 ? "bg-amber-50 text-amber-600" : "bg-slate-100 text-slate-600"}`, children: [
             /* @__PURE__ */ jsx(CheckCircle, { size: 14, className: "mr-1" }),
             " ",
-            performanceScore,
-            "% score"
+            weeklyPerformanceScore,
+            " pts"
           ] }),
           /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 leading-tight", children: [
-            completedTasks.length,
-            " tasks done \xB7 ",
-            counselorReplies,
-            " replies \xB7 ",
-            itemsReviewed,
-            " reviewed"
+            weeklyPerformanceRank > 0 ? /* @__PURE__ */ jsxs("span", { children: ["Rank #", weeklyPerformanceRank, " · "] }) : null,
+            weeklyPerformanceEntry?.visas ?? 0,
+            " visas · ",
+            weeklyPerformanceEntry?.activeCount ?? myStudents.length,
+            " students"
           ] })
         ] })
       ] })
@@ -570,7 +572,7 @@ const CounselorDashboard = ({
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
+          /* @__PURE__ */ jsxs("div", { className: "bg-white p-6 rounded-xl border border-gray-200 shadow-sm", children: [
           /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-center mb-4", children: [
             /* @__PURE__ */ jsxs("h3", { className: "font-semibold text-slate-900 flex items-center", children: [
               /* @__PURE__ */ jsx(Users, { size: 18, className: "mr-2 text-indigo-600" }),
@@ -582,13 +584,14 @@ const CounselorDashboard = ({
               ")"
             ] })
           ] }),
+          /* @__PURE__ */ jsx("div", { className: dt.card, children: [
           /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
             /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
               /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Name" }),
               /* @__PURE__ */ jsx("th", { className: dt.thCompact, children: "Stage" }),
               /* @__PURE__ */ jsx("th", { className: dt.thCompactRight, children: "Action" })
             ] }) }),
-            /* @__PURE__ */ jsx("tbody", { className: dt.body, children: myStudents.slice(0, 5).map((student) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
+            /* @__PURE__ */ jsx("tbody", { className: dt.body, children: paginatedMyStudents.map((student) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
               /* @__PURE__ */ jsx("td", { className: "py-3 font-medium text-slate-700", children: student.name }),
               /* @__PURE__ */ jsx("td", { className: "py-3", children: /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200", children: student.status }) }),
               /* @__PURE__ */ jsx("td", { className: "py-3 text-right", children: /* @__PURE__ */ jsxs(
@@ -603,7 +606,16 @@ const CounselorDashboard = ({
                 }
               ) })
             ] }, student.id)) })
-          ] }) })
+          ] }) }),
+          /* @__PURE__ */ jsx(DataTablePagination, {
+            page: studentsPage,
+            pageSize: studentsPageSize,
+            totalRows: studentsTotalRows,
+            onPageChange: setStudentsPage,
+            onPageSizeChange: setStudentsPageSize,
+            rowLabel: "students",
+          }),
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [

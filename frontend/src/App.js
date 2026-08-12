@@ -1883,6 +1883,7 @@ function App({ initialView = "dashboard" }) {
     if (!enteredPassword) {
       return { ok: false, error: "Password is required." };
     }
+    const avatarDataUrl = String(payload?.avatar || "").trim();
     const accountResult = await createAccount({
       username: String(payload?.name || "").trim(),
       email,
@@ -1892,11 +1893,13 @@ function App({ initialView = "dashboard" }) {
       phone: String(payload?.phone || "").trim(),
       teamLeadId: "",
       teamLeadName: "",
-      teamLeadEmail: ""
+      teamLeadEmail: "",
+      avatar: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : void 0
     });
     if (!accountResult.ok) {
       return { ok: false, error: accountResult.error || "Failed to save counselor account." };
     }
+    const savedAvatar = toAbsoluteAssetUrl(accountResult.data?.avatar) || DEFAULT_USER_AVATAR;
     const newEmployee = {
       id: `EMP${String(maxEmployeeNumber + 1).padStart(3, "0")}`,
       name: String(payload?.name || "").trim(),
@@ -1906,7 +1909,7 @@ function App({ initialView = "dashboard" }) {
       phone: String(payload?.phone || "").trim(),
       teamLeadId: "",
       teamLeadName: "",
-      avatar: DEFAULT_USER_AVATAR
+      avatar: savedAvatar
     };
     setEmployees((prev) => [...prev, newEmployee]);
     addNotification("Counselor added", `${newEmployee.name} profile created and saved to accounts.`, "success");
@@ -2720,6 +2723,8 @@ function App({ initialView = "dashboard" }) {
       );
       return /* @__PURE__ */ jsx(ReportPage, {
         students: reportStudents,
+        studentScopeParams,
+        scopedStudentIds: [...reportStudentIds],
         employees: reportEmployees,
         appointments: scopedAppointments,
         scopeLabel: reportScopeLabel,

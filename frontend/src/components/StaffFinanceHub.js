@@ -1,7 +1,8 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { DollarSign, ChevronRight } from "lucide-react";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 
 function countOpenInvoicesForStudent(invoices, studentId) {
   const sid = String(studentId || "").trim();
@@ -24,6 +25,14 @@ const StaffFinanceHub = ({ students = [], invoices = [], invoicesLoading = false
     .filter((s) => studentHasInvoices(invoices, s.id) && countOpenInvoicesForStudent(invoices, s.id) > 0)
     .slice()
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const {
+    pageItems: paginatedRows,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, rows.length);
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
       /* @__PURE__ */ jsxs("h2", { className: "text-xl font-bold text-slate-900 flex items-center gap-2", children: [
@@ -33,15 +42,15 @@ const StaffFinanceHub = ({ students = [], invoices = [], invoicesLoading = false
       /* @__PURE__ */ jsx("p", { className: "text-sm text-slate-500 max-w-2xl", children: "Students with open invoices (pending, partially paid, overdue, or awaiting verification). Select a row to open their ledger and payment status." }),
       /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 font-medium", children: "Payment is not refundable." })
     ] }),
-    invoicesLoading ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "Loading…" }) : rows.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "No students with open invoices in your current scope." }) : /* @__PURE__ */ jsx("div", { className: dt.card, children: /* @__PURE__ */ jsxs("div", { className: dt.scroll, children: [
-      /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+    invoicesLoading ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "Loading…" }) : rows.length === 0 ? /* @__PURE__ */ jsx("div", { className: "rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-10 text-center text-sm text-slate-500", children: "No students with open invoices in your current scope." }) : /* @__PURE__ */ jsxs("div", { className: dt.card, children: [
+      /* @__PURE__ */ jsx("div", { className: dt.scroll, children: /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
         /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Student" }),
           /* @__PURE__ */ jsx("th", { className: dt.th, children: "Branch" }),
           /* @__PURE__ */ jsx("th", { className: `${dt.th} text-center`, children: "Open items" }),
           /* @__PURE__ */ jsx("th", { className: dt.thRight, children: " " })
         ] }) }),
-        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: rows.map((s) => {
+        /* @__PURE__ */ jsx("tbody", { className: dt.body, children: paginatedRows.map((s) => {
           const openCount = countOpenInvoicesForStudent(invoices, s.id);
           return /* @__PURE__ */ jsxs(
             "tr",
@@ -69,8 +78,16 @@ const StaffFinanceHub = ({ students = [], invoices = [], invoicesLoading = false
             String(s.id)
           );
         }) })
-      ] })
-    ] }) })
+      ] }) }),
+      /* @__PURE__ */ jsx(DataTablePagination, {
+        page,
+        pageSize,
+        totalRows,
+        onPageChange: setPage,
+        onPageSizeChange: setPageSize,
+        rowLabel: "students",
+      })
+    ] })
   ] });
 };
 

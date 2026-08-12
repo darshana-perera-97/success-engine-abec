@@ -21,7 +21,8 @@ import {
   formatStageDeadlineLabel
 } from "../docMappingConfig";
 import { Button } from "./Button";
-import { dt } from "./DataTable";
+import { dt, DataTablePagination } from "./DataTable";
+import { useClientPagination } from "../hooks/usePagination";
 
 function genId(prefix = "dm") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -929,6 +930,15 @@ function StageDeadlinesSection({ stages, stageDeadlines, onChange }) {
     }));
   }, [stages, stageDeadlines]);
 
+  const {
+    pageItems: paginatedStageRows,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    totalRows,
+  } = useClientPagination(rows, rows.length);
+
   const updateStageDeadline = (stageId, patch) => {
     const normalized = normalizeStageDeadlinesMap(stageDeadlines, stages);
     const current = normalized[stageId] ?? null;
@@ -978,7 +988,7 @@ function StageDeadlinesSection({ stages, stageDeadlines, onChange }) {
                 ] })
               }),
               jsx("tbody", { className: dt.body, children:
-                rows.map(({ stage, deadline }) => {
+                paginatedStageRows.map(({ stage, deadline }) => {
                   const hasDeadline = Boolean(deadline && deadline.value);
                   const summary = hasDeadline ? formatStageDeadlineLabel(deadline) : "—";
                   return jsx("tr", { key: stage.id, className: "align-middle", children: [
@@ -1036,6 +1046,14 @@ function StageDeadlinesSection({ stages, stageDeadlines, onChange }) {
               })
             ] })
           })
+    }),
+    jsx(DataTablePagination, {
+      page,
+      pageSize,
+      totalRows,
+      onPageChange: setPage,
+      onPageSizeChange: setPageSize,
+      rowLabel: "stages",
     })
   ] });
 }
