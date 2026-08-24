@@ -788,11 +788,6 @@ async function handle(req, res, url) {
         return true;
       }
       const current = invoices[idx];
-      const currentStatus = String(current.status || "").trim();
-      if (currentStatus === "Verifying") {
-        sendJson(res, 400, { ok: false, error: "Payment evidence is already awaiting review for this invoice." });
-        return true;
-      }
       if (isInvoiceFullyPaid(current)) {
         sendJson(res, 400, { ok: false, error: "This invoice is already fully paid." });
         return true;

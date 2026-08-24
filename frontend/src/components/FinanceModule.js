@@ -1109,10 +1109,9 @@ const FinanceModule = ({
     if (!canUploadEvidence) return false;
     if (inv?.isWaveOff) return false;
     const status = String(inv?.status || "").trim();
-    if (status === "Verifying" || isInvoiceFullyPaid(inv)) return false;
     if (status === "Wave-off Pending" || status === "Waived" || status === "Wave-off Rejected") return false;
-    if (!invoiceProofUrl(inv)) return true;
-    return hasRejectedPaymentEvidenceOnInvoice(inv);
+    if (isInvoiceFullyPaid(inv)) return false;
+    return invoiceBalanceDue(inv) > 0.009;
   };
   const uploadableInvoices = studentInvoices.filter((inv) => canUploadForInvoice(inv));
   const selectedPaymentInvoices = uploadableInvoices.filter((inv) => selectedInvoiceIds.includes(String(inv.id)));
@@ -1137,7 +1136,7 @@ const FinanceModule = ({
     if (uploadableInvoices.length === 0) {
       onNotify?.(
         "Cannot upload yet",
-        "No invoices are ready for a new receipt. Wait for review to finish or check the Ledger for open balances.",
+        "No invoices have an outstanding balance. Fully paid and wave-off invoices cannot take new evidence.",
         "info"
       );
       return;
@@ -1449,7 +1448,7 @@ const FinanceModule = ({
       /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
         /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
           /* @__PURE__ */ jsx("h4", { className: "font-bold text-slate-800 text-sm", children: "Payments" }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: isStudentView ? "One row per receipt. Click a row to view details or upload new receipts with the button." : "One row per payment slip. Click a row to view evidence, approve, or reject." })
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: isStudentView ? "One row per receipt. Click a row to view details, or add a new receipt at any time while a balance remains." : "One row per payment slip. Click a row to view evidence, approve, or reject. Add evidence at any time while a balance remains." })
         ] }),
         canUploadEvidence ? /* @__PURE__ */ jsxs(Button, { size: "sm", onClick: handleOpenAddEvidence, children: [
           /* @__PURE__ */ jsx(Plus, { size: 16, className: "mr-1.5" }),
@@ -1683,6 +1682,7 @@ const FinanceModule = ({
           const checked = selectedInvoiceIds.includes(String(inv.id));
           const balanceDue = invoiceBalanceDue(inv);
           const rejected = hasRejectedPaymentEvidenceOnInvoice(inv);
+          const verifying = String(inv?.status || "").trim() === "Verifying";
           return /* @__PURE__ */ jsxs("label", { className: `flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${checked ? "border-indigo-300 bg-indigo-50/80" : "border-transparent bg-white hover:border-slate-200"}`, children: [
             /* @__PURE__ */ jsx("input", { type: "checkbox", className: "mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500", checked, onChange: () => togglePaymentInvoiceSelection(inv.id) }),
             /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
@@ -1698,7 +1698,7 @@ const FinanceModule = ({
                 balanceDue.toLocaleString(),
                 inv.issueDate ? ` · Issued ${inv.issueDate}` : ""
               ] }),
-              rejected ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-1", children: "Previous receipt rejected — re-upload needed" }) : null
+              rejected ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600 mt-1", children: "Previous receipt rejected — re-upload needed" }) : verifying ? /* @__PURE__ */ jsx("p", { className: "text-xs text-amber-700 mt-1", children: "Pending review — new upload replaces the current slip" }) : null
             ] })
           ] }, inv.id);
         }) }),
@@ -1829,7 +1829,7 @@ const FinanceModule = ({
       const modalRowAmount = modalEvidence ? evidenceDisplayAmount(modalEvidence, modalInv) : invoiceApprovedPaid(modalInv);
       const studentClaimed = Number(modalEvidence?.claimedAmount ?? modalInv?.paymentProofClaimedAmount);
       const canEnterPaidAmount = canAcceptPayment && modalStatus === "Verifying" && (!modalEvidence || modalEvidence.isCurrent);
-      const showModalReupload = modalEvidence?.isCurrent && canUploadForInvoice(modalInv) && hasRejectedPaymentEvidenceOnInvoice(modalInv);
+      const showModalReupload = modalEvidence?.isCurrent && canUploadForInvoice(modalInv);
       const modalRejectionNote = String(modalEvidence?.rejectionReason || (modalEvidence?.isCurrent ? modalInv.paymentRejectionReason : "") || "").trim();
       const modalApprovalLabel = modalEvidence ? getEvidenceApprovalLabel(modalEvidence, modalInv) : getPaymentApprovalLabel(modalInv);
       const modalApprovalClass = getPaymentApprovalClass(modalApprovalLabel);
@@ -1921,7 +1921,9 @@ const FinanceModule = ({
           showModalReupload ? /* @__PURE__ */ jsx(Button, { className: "flex-1 min-w-[140px] bg-indigo-600 hover:bg-indigo-700 text-white", onClick: () => {
             closeEvidenceModal();
             handlePayClick(modalInv);
-          }, children: isStudentView ? "Re-upload receipt" : "Re-upload evidence" }) : null,
+          }, children: hasRejectedPaymentEvidenceOnInvoice(modalInv)
+            ? isStudentView ? "Re-upload receipt" : "Re-upload evidence"
+            : isStudentView ? "Add receipt" : "Add evidence" }) : null,
           canEnterPaidAmount ? /* @__PURE__ */ jsxs(Fragment, { children: [
             /* @__PURE__ */ jsx(Button, { className: "flex-1 min-w-[120px]", isLoading: evidenceModal.saving, onClick: async () => {
               setEvidenceModal((prev) => ({ ...prev, saving: true, error: "" }));

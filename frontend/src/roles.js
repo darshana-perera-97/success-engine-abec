@@ -13,17 +13,9 @@ export function canRequestInvoiceAmountChangePortalRole(role) {
   return isRecognizedPortalRole(normalized);
 }
 
-/** Staff and students who may upload invoice payment evidence (receipts, bank slips, cash). */
+/** Any portal user (staff or student) may upload invoice payment evidence (receipts, bank slips, cash). */
 export function canUploadInvoicePaymentEvidencePortalRole(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  if (
-    normalized === "student" ||
-    normalized === "country coordinator" ||
-    normalized === "accountant"
-  ) {
-    return true;
-  }
-  return isCounselorEquivalentPortalRole(role);
+  return isRecognizedPortalRole(role);
 }
 
 /** Staff who may approve or reject uploaded invoice payment evidence. */

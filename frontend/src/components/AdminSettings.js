@@ -340,7 +340,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         }),
         /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Allow counselors to accept payments" }),
-          "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission and can upload payment evidence on a student's Payments tab."
+          "When enabled, counselors (including visa officers) can approve or reject invoice payment evidence. Admin, Manager, and Accountant always retain this permission. All users can upload payment evidence on a student's Payments tab whenever an invoice still has a balance."
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { className: "w-full rounded-lg border border-gray-200 bg-slate-50/60 p-4", children: /* @__PURE__ */ jsxs("label", { className: "flex items-start gap-3 w-full cursor-pointer", children: [
