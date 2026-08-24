@@ -7,7 +7,7 @@ const {
   DEFAULT_MALE_AVATAR_PATH,
 } = require("../config");
 const { readUsers, writeUsers, sanitizeAccount, splitAdminRecord } = require("../models/users");
-const { readStudemts, writeStudemts, publicAssetUrl } = require("../models/students");
+const { readStudemts, writeStudemts, publicAvatarUrl } = require("../models/students");
 const { readBranches } = require("../models/branches");
 const { readCountries } = require("../models/countries");
 const {
@@ -40,10 +40,12 @@ async function handle(req, res, url) {
         role: "Admin",
         avatar: (adminRecord && adminRecord.avatar) || DEFAULT_MALE_AVATAR_PATH,
       };
-      const safeUsers = others.map(sanitizeAccount).map((u) => ({ ...u, avatar: publicAssetUrl(req, u.avatar) }));
+      const safeUsers = await Promise.all(
+        others.map(sanitizeAccount).map(async (u) => ({ ...u, avatar: await publicAvatarUrl(req, u.avatar) }))
+      );
       sendJson(res, 200, {
         ok: true,
-        data: [{ ...adminAccount, avatar: publicAssetUrl(req, adminAccount.avatar) }, ...safeUsers],
+        data: [{ ...adminAccount, avatar: await publicAvatarUrl(req, adminAccount.avatar) }, ...safeUsers],
       });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to load accounts." });
@@ -195,7 +197,7 @@ async function handle(req, res, url) {
 
       sendJson(res, 201, {
         ok: true,
-        data: { ...sanitizeAccount(account), avatar: publicAssetUrl(req, account.avatar) },
+        data: { ...sanitizeAccount(account), avatar: await publicAvatarUrl(req, account.avatar) },
         ...(emailDelivery ? { emailDelivery } : {}),
       });
     } catch {
@@ -298,7 +300,7 @@ async function handle(req, res, url) {
       });
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+        data: { ...sanitizeAccount(updatedAccount), avatar: await publicAvatarUrl(req, updatedAccount.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -352,7 +354,7 @@ async function handle(req, res, url) {
       await writeUsers(updatedUsers);
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(updatedCounselor), avatar: publicAssetUrl(req, updatedCounselor.avatar) },
+        data: { ...sanitizeAccount(updatedCounselor), avatar: await publicAvatarUrl(req, updatedCounselor.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -449,7 +451,7 @@ async function handle(req, res, url) {
       });
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+        data: { ...sanitizeAccount(updatedAccount), avatar: await publicAvatarUrl(req, updatedAccount.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -510,7 +512,7 @@ async function handle(req, res, url) {
       });
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+        data: { ...sanitizeAccount(updatedAccount), avatar: await publicAvatarUrl(req, updatedAccount.avatar) },
       });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to reset password." });
@@ -550,7 +552,7 @@ async function handle(req, res, url) {
       await writeUsers(nextUsers);
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(adminAccount), avatar: publicAssetUrl(req, adminAccount.avatar) },
+        data: { ...sanitizeAccount(adminAccount), avatar: await publicAvatarUrl(req, adminAccount.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -596,7 +598,7 @@ async function handle(req, res, url) {
         await writeUsers(nextUsers);
         sendJson(res, 200, {
           ok: true,
-          data: { ...sanitizeAccount(adminAccount), avatar: publicAssetUrl(req, adminAccount.avatar) },
+          data: { ...sanitizeAccount(adminAccount), avatar: await publicAvatarUrl(req, adminAccount.avatar) },
         });
         return true;
       }
@@ -615,7 +617,7 @@ async function handle(req, res, url) {
       await writeUsers(updatedUsers);
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(updatedAccount), avatar: publicAssetUrl(req, updatedAccount.avatar) },
+        data: { ...sanitizeAccount(updatedAccount), avatar: await publicAvatarUrl(req, updatedAccount.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });
@@ -666,7 +668,7 @@ async function handle(req, res, url) {
       await writeUsers(updatedUsers);
       sendJson(res, 200, {
         ok: true,
-        data: { ...sanitizeAccount(merged), avatar: publicAssetUrl(req, merged.avatar) },
+        data: { ...sanitizeAccount(merged), avatar: await publicAvatarUrl(req, merged.avatar) },
       });
     } catch {
       sendJson(res, 400, { ok: false, error: "Invalid request body." });

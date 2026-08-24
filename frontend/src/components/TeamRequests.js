@@ -17,6 +17,8 @@ import {
   getBranchChangeRequests,
   getBranchWhatsappMessengerChangeRequests,
   getRefundRequests,
+  getInvoiceAmountChangeRequests,
+  decideInvoiceAmountChangeRequest,
 } from "../authApi";
 import { Button } from "./Button";
 import {
@@ -89,7 +91,7 @@ export function TeamRequests({
     setLoading(true);
     setError("");
     const params = filter === "pending" ? { pendingOnly: true } : {};
-    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult] = await Promise.all([
+    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult, amountChangeResult] = await Promise.all([
       getCountryChangeRequests(params),
       getStudentDetailChangeRequests(params),
       getInvoiceWaveOffRequests(params),
@@ -98,9 +100,10 @@ export function TeamRequests({
       getRefundRequests(params),
       getBranchChangeRequests(params),
       getBranchWhatsappMessengerChangeRequests(params),
+      getInvoiceAmountChangeRequests(params),
     ]);
-    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok) {
-      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || "Failed to load team requests.");
+    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok && !amountChangeResult.ok) {
+      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || amountChangeResult.error || "Failed to load team requests.");
       setRows([]);
     } else {
       setRows(
@@ -112,7 +115,8 @@ export function TeamRequests({
           intakeResult.ok ? intakeResult.data : [],
           refundResult.ok ? refundResult.data : [],
           branchResult.ok ? branchResult.data : [],
-          whatsappContactResult.ok ? whatsappContactResult.data : []
+          whatsappContactResult.ok ? whatsappContactResult.data : [],
+          amountChangeResult.ok ? amountChangeResult.data : []
         )
       );
     }
@@ -162,6 +166,8 @@ export function TeamRequests({
           ? await decideInvoiceWaveOff(row.invoiceId || row.id, reviewerPayload)
         : row.requestType === "refund"
           ? await decideRefundRequest(row.id, reviewerPayload)
+        : row.requestType === "invoice-amount-change"
+          ? await decideInvoiceAmountChangeRequest(row.id, reviewerPayload)
         : row.requestType === "whatsapp-contact-change"
           ? await decideBranchWhatsappMessengerChangeRequest(row.id, reviewerPayload)
           : await decideCountryChangeRequest(row.id, reviewerPayload);
@@ -180,6 +186,9 @@ export function TeamRequests({
     if (row.requestType === "invoice-wave-off" && result.data && onUpdateInvoice) {
       await onUpdateInvoice(result.data);
     }
+    if (row.requestType === "invoice-amount-change" && result.invoice && onUpdateInvoice) {
+      await onUpdateInvoice(result.invoice);
+    }
     const changeSummary = formatRequestChangeSummary(row);
     const actionLabel =
       row.requestType === "student-details"
@@ -194,6 +203,8 @@ export function TeamRequests({
           ? "invoice wave-off"
         : row.requestType === "refund"
           ? "refund"
+        : row.requestType === "invoice-amount-change"
+          ? "invoice amount change"
         : row.requestType === "whatsapp-contact-change"
           ? "WhatsApp contact change"
           : "country change";
@@ -215,6 +226,8 @@ export function TeamRequests({
             ? `${row.studentName || "Student"} has been removed from the system.`
           : row.requestType === "refund"
             ? `Refund for ${row.studentName || "student"} has been approved for accountant processing.`
+          : row.requestType === "invoice-amount-change"
+            ? `Invoice amount for ${row.studentName || "student"} has been updated.`
           : `Changes for ${row.studentName || "student"} have been applied.`
         : row.requestType === "invoice-wave-off"
           ? `Wave-off request for ${row.studentName || "student"} was rejected.`
@@ -243,7 +256,7 @@ export function TeamRequests({
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Team Requests</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Review and approve country, branch, WhatsApp contact, intake, student detail, removal, refund, and invoice wave-off requests from your team.
+              Review and approve country, branch, WhatsApp contact, intake, student detail, removal, refund, invoice amount, and invoice wave-off requests from your team.
             </p>
           </div>
         </div>

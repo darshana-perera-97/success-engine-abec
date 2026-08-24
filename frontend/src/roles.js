@@ -5,6 +5,14 @@ export const VISA_OFFICER_COUNSELOR_ROLE = "Visa Officer & Counselor";
 /** Branch-scoped finance role: dashboard, students, and invoices only. */
 export const ACCOUNTANT_ROLE = "Accountant";
 
+/** Any staff account (not Student) may request invoice amount edits for Team Requests approval. */
+export function canRequestInvoiceAmountChangePortalRole(role) {
+  const normalized = String(role || "").trim();
+  if (!normalized) return false;
+  if (normalized.toLowerCase() === "student") return false;
+  return isRecognizedPortalRole(normalized);
+}
+
 /** Staff and students who may upload invoice payment evidence (receipts, bank slips, cash). */
 export function canUploadInvoicePaymentEvidencePortalRole(role) {
   const normalized = String(role || "").trim().toLowerCase();

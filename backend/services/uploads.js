@@ -10,6 +10,7 @@ const {
   MAX_UPLOAD_BYTES,
   MAX_UPLOAD_LABEL,
 } = require("../config");
+const { compressAvatarBuffer, isAvatarStoragePrefix } = require("./avatarImage");
 
 function detectImageExtension(dataUrl) {
   const mimeMatch = /^data:(image\/[a-zA-Z0-9.+-]+);base64,/.exec(dataUrl);
@@ -27,8 +28,18 @@ async function storeImageDataUrl(dataUrl, prefix) {
   if (!ext) return null;
   const base64 = dataUrl.split(",")[1] || "";
   if (!base64) return null;
-  const buffer = Buffer.from(base64, "base64");
-  const fileName = `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  let buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) return null;
+  let outExt = ext;
+  if (isAvatarStoragePrefix(prefix)) {
+    try {
+      buffer = await compressAvatarBuffer(buffer);
+      outExt = "jpg";
+    } catch {
+      // Keep the original bytes if compression fails.
+    }
+  }
+  const fileName = `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${outExt}`;
   await fs.mkdir(ASSETS_DIR, { recursive: true });
   await fs.writeFile(path.join(ASSETS_DIR, fileName), buffer);
   return `/assets/${fileName}`;

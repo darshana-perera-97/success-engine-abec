@@ -89,6 +89,19 @@ function publicAssetUrl(req, avatar) {
   return avatar;
 }
 
+async function publicAvatarUrl(req, avatar) {
+  const value = String(avatar || "");
+  if (value.startsWith("data:image/")) {
+    try {
+      const { compressAvatarDataUrl } = require("../services/avatarImage");
+      return await compressAvatarDataUrl(value);
+    } catch {
+      return value;
+    }
+  }
+  return publicAssetUrl(req, avatar);
+}
+
 function publicChatFileUrl(req, filePath) {
   if (!filePath) return filePath;
   const relativePath = extractBackendRelativePath(filePath);
@@ -249,6 +262,7 @@ module.exports = {
   publicStudentRecord,
   studentSummaryRecord,
   publicAssetUrl,
+  publicAvatarUrl,
   publicStudentDocUrl,
   publicChatFileUrl,
   resolveChatFileDiskPath,

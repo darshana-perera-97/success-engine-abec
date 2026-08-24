@@ -2370,3 +2370,63 @@ export async function markRefundRequestRefunded(requestId, payload) {
     return { ok: false, error: "Cannot reach the server." };
   }
 }
+
+export async function getInvoiceAmountChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    const invoiceId = String(params.invoiceId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (invoiceId) search.set("invoiceId", invoiceId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/invoice-amount-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load invoice amount change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createInvoiceAmountChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/invoice-amount-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit invoice amount change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideInvoiceAmountChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/invoice-amount-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review invoice amount change request." };
+    }
+    return { ok: true, data: data.data || null, invoice: data.invoice || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}

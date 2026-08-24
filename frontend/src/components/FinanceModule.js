@@ -1,18 +1,20 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DollarSign, CheckCircle, Clock, FileText, Plus, Upload, X, MessageCircle, Link2 } from "lucide-react";
+import { DollarSign, CheckCircle, Clock, FileText, Pencil, Plus, Upload, X, MessageCircle, Link2 } from "lucide-react";
 import { Button } from "./Button";
 import { dt, DataTablePagination } from "./DataTable";
 import { useClientPagination } from "../hooks/usePagination";
 import { formatLKR, formatRawLKR } from "../utils";
 import {
+  canRequestInvoiceAmountChangePortalRole,
   canReviewInvoicePaymentPortalRole,
   canUploadInvoicePaymentEvidencePortalRole,
   isCounselorEquivalentAccountRole,
 } from "../roles";
 import { useExchangeRates } from "../useExchangeRates";
-import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp, getRefundRequests, createRefundRequest } from "../authApi";
+import { getPaymentAccounts, uploadInvoicePaymentProof, getInvoicesByStudentId, resendInvoiceWhatsapp, getRefundRequests, createRefundRequest, getInvoiceAmountChangeRequests, createInvoiceAmountChangeRequest } from "../authApi";
 import { RefundRequestModal } from "./RefundRequestModal";
+import { InvoiceAmountChangeRequestModal } from "./InvoiceAmountChangeRequestModal";
 import { getLocalDateIso } from "./DatePicker";
 import { requestStatusBadgeClass, requestStatusLabel } from "../utils/studentDetailChangeRequests";
 import { toAbsoluteAssetUrl } from "../apiConfig";
@@ -255,6 +257,14 @@ function invoiceLedgerAmount(inv) {
   return invoiceInvoicedAmount(inv);
 }
 
+function invoiceAllowsAmountChange(inv) {
+  if (!inv || inv.isWaveOff) return false;
+  const status = String(inv?.status || "").trim();
+  if (status === "Wave-off Pending" || status === "Waived" || status === "Wave-off Rejected") return false;
+  if (status === "Verifying") return false;
+  return true;
+}
+
 function formatPaymentTableDate(inv, evidence) {
   const raw = String(
     evidence?.uploadedAt ||
@@ -370,6 +380,15 @@ const FinanceModule = ({
     saving: false,
     error: "",
   });
+  const [amountChangeRows, setAmountChangeRows] = useState([]);
+  const [amountChangeDialog, setAmountChangeDialog] = useState({
+    open: false,
+    invoice: null,
+    amount: "",
+    reason: "",
+    saving: false,
+    error: "",
+  });
 
   const loadStudentInvoices = useCallback(async () => {
     const sid = String(student?.id || "").trim();
@@ -397,7 +416,25 @@ const FinanceModule = ({
 
   useEffect(() => { loadRefundRows(); }, [loadRefundRows]);
 
+  const loadAmountChangeRows = useCallback(async () => {
+    const sid = String(student?.id || "").trim();
+    if (!sid) {
+      setAmountChangeRows([]);
+      return;
+    }
+    const result = await getInvoiceAmountChangeRequests({ studentId: sid, pendingOnly: true });
+    if (result.ok) setAmountChangeRows(result.data);
+  }, [student?.id]);
+
+  useEffect(() => { loadAmountChangeRows(); }, [loadAmountChangeRows]);
+
   const paidInvoicesForRefund = studentInvoices.filter((inv) => invoiceApprovedPaid(inv) > 0.009);
+  const pendingAmountChangeInvoiceIds = new Set(
+    (amountChangeRows || [])
+      .filter((row) => String(row.status || "").trim().toLowerCase() === "pending")
+      .map((row) => String(row.invoiceId || "").trim())
+      .filter(Boolean)
+  );
 
   const handleSubmitRefundRequest = async () => {
     const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
@@ -440,6 +477,54 @@ const FinanceModule = ({
       "info"
     );
     loadRefundRows();
+  };
+
+  const handleSubmitInvoiceAmountChange = async () => {
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    const invoice = amountChangeDialog.invoice;
+    const amount = Number(amountChangeDialog.amount);
+    if (!requesterId) {
+      setAmountChangeDialog((prev) => ({ ...prev, error: "Your user id is required to submit a request." }));
+      return;
+    }
+    if (!invoice?.id) {
+      setAmountChangeDialog((prev) => ({ ...prev, error: "Select an invoice to update." }));
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setAmountChangeDialog((prev) => ({ ...prev, error: "Enter a valid invoice amount." }));
+      return;
+    }
+    if (!String(amountChangeDialog.reason || "").trim()) {
+      setAmountChangeDialog((prev) => ({ ...prev, error: "Reason is required." }));
+      return;
+    }
+    setAmountChangeDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createInvoiceAmountChangeRequest({
+      invoiceId: invoice.id,
+      studentId: student.id,
+      studentName: student.name,
+      requestedAmount: amount,
+      reason: String(amountChangeDialog.reason || "").trim(),
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole,
+    });
+    if (!result.ok) {
+      setAmountChangeDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit amount change request." }));
+      return;
+    }
+    setAmountChangeDialog({ open: false, invoice: null, amount: "", reason: "", saving: false, error: "" });
+    setIsDetailsModalOpen(false);
+    onNotify?.(
+      "Amount change submitted",
+      "Your invoice amount change was sent for admin approval. Track it under My Requests and Team Requests.",
+      "info"
+    );
+    loadAmountChangeRows();
   };
 
   useEffect(() => {
@@ -959,6 +1044,7 @@ const FinanceModule = ({
   const canAcceptPayment = canReviewInvoicePaymentPortalRole(userRole, counselorCanAcceptPayments);
   const canUploadEvidence = canUploadInvoicePaymentEvidencePortalRole(userRole);
   const isStudentView = roleNorm === "student";
+  const canRequestAmountChange = canRequestInvoiceAmountChangePortalRole(userRole);
   const invoiceHasDeliveryDetails = (inv) => Boolean(
     inv?.paymentAccount || inv?.attachmentLink || inv?.attachmentFileUrl || inv?.generatedReceiptUrl
   );
@@ -1506,6 +1592,7 @@ const FinanceModule = ({
             detailsInvoice.currency !== "LKR" ? ` (≈ ${formatLKR(invoiceLedgerAmount(detailsInvoice), detailsInvoice.currency, exchangeRates)})` : ""
           ] }) })
         ] }),
+        canRequestAmountChange && pendingAmountChangeInvoiceIds.has(String(detailsInvoice.id || "").trim()) ? /* @__PURE__ */ jsx("p", { className: "text-xs font-medium text-amber-700", children: "An amount change is pending admin approval in Team Requests." }) : null,
         detailsInvoice.isWaveOff && detailsInvoice.waveOffReason ? /* @__PURE__ */ jsxs("div", { className: "rounded-lg border border-orange-100 bg-orange-50/60 p-3", children: [
           /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold uppercase text-orange-800 mb-1", children: "Wave-off reason" }),
           /* @__PURE__ */ jsx("p", { className: "text-sm text-orange-900 whitespace-pre-wrap", children: detailsInvoice.waveOffReason })
@@ -1541,6 +1628,25 @@ const FinanceModule = ({
         /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-400 pt-1", children: PAYMENT_NOT_REFUNDABLE_NOTICE })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "flex gap-3 mt-6 flex-wrap", children: [
+        canRequestAmountChange && invoiceAllowsAmountChange(detailsInvoice) && !pendingAmountChangeInvoiceIds.has(String(detailsInvoice.id || "").trim()) ? /* @__PURE__ */ jsxs(
+          Button,
+          {
+            variant: "outline",
+            className: "flex-1 min-w-[140px]",
+            onClick: () => setAmountChangeDialog({
+              open: true,
+              invoice: detailsInvoice,
+              amount: String(invoiceLedgerAmount(detailsInvoice) || ""),
+              reason: "",
+              saving: false,
+              error: "",
+            }),
+            children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 14, className: "mr-1.5" }),
+              "Edit amount"
+            ]
+          }
+        ) : null,
         isStaff ? /* @__PURE__ */ jsx(
           Button,
           {
@@ -1859,6 +1965,19 @@ const FinanceModule = ({
       onInvoiceIdChange: (value) => setRefundDialog((prev) => ({ ...prev, invoiceId: value, error: "" })),
       onReasonChange: (value) => setRefundDialog((prev) => ({ ...prev, reason: value, error: "" })),
       onSubmit: handleSubmitRefundRequest
+    }),
+    /* @__PURE__ */ jsx(InvoiceAmountChangeRequestModal, {
+      student,
+      invoice: amountChangeDialog.invoice,
+      open: amountChangeDialog.open,
+      amount: amountChangeDialog.amount,
+      reason: amountChangeDialog.reason,
+      saving: amountChangeDialog.saving,
+      error: amountChangeDialog.error,
+      onClose: () => setAmountChangeDialog({ open: false, invoice: null, amount: "", reason: "", saving: false, error: "" }),
+      onAmountChange: (value) => setAmountChangeDialog((prev) => ({ ...prev, amount: value, error: "" })),
+      onReasonChange: (value) => setAmountChangeDialog((prev) => ({ ...prev, reason: value, error: "" })),
+      onSubmit: handleSubmitInvoiceAmountChange
     })
   ] });
 };

@@ -21,6 +21,7 @@ const {
 } = require("../config");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
 const { readSystemData, writeSystemData, normalizeSystemData } = require("../models/systemData");
+const { getCompressedAvatarFile, isAvatarAssetFileName } = require("../services/avatarImage");
 
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/company-profile") {
@@ -89,6 +90,19 @@ async function handle(req, res, url) {
     try {
       const fileName = path.basename(url.pathname);
       const filePath = path.join(ASSETS_DIR, fileName);
+      if (isAvatarAssetFileName(fileName)) {
+        try {
+          const compressed = await getCompressedAvatarFile(filePath, fileName);
+          Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "image/jpeg");
+          res.setHeader("Cache-Control", "public, max-age=604800");
+          res.end(compressed);
+          return true;
+        } catch {
+          // Fall through to the original file if compression fails.
+        }
+      }
       const file = await fs.readFile(filePath);
       const ext = path.extname(fileName).toLowerCase();
       const contentType =

@@ -37,6 +37,7 @@ export function formatRequestTypeLabel(row) {
   if (row?.requestType === "student-details") return "Student details";
   if (row?.requestType === "student-removal") return "Student removal";
   if (row?.requestType === "invoice-wave-off") return "Invoice wave-off";
+  if (row?.requestType === "invoice-amount-change") return "Invoice amount";
   if (row?.requestType === "intake-change") return "Intake change";
   if (row?.requestType === "branch-change") return "Branch change";
   if (row?.requestType === "whatsapp-contact-change") return "WhatsApp contact";
@@ -52,7 +53,8 @@ export function mergeRequestRows(
   intakeRows = [],
   refundRows = [],
   branchRows = [],
-  whatsappContactRows = []
+  whatsappContactRows = [],
+  amountChangeRows = []
 ) {
   const taggedCountry = (countryRows || []).map((row) => ({
     ...row,
@@ -86,6 +88,10 @@ export function mergeRequestRows(
     ...row,
     requestType: "whatsapp-contact-change",
   }));
+  const taggedAmountChange = (amountChangeRows || []).map((row) => ({
+    ...row,
+    requestType: "invoice-amount-change",
+  }));
   return [
     ...taggedCountry,
     ...taggedDetail,
@@ -95,6 +101,7 @@ export function mergeRequestRows(
     ...taggedRefund,
     ...taggedBranch,
     ...taggedWhatsappContact,
+    ...taggedAmountChange,
   ].sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
 }
 
@@ -148,6 +155,11 @@ export function buildRequestDetailRows(row, { showRequestedBy = false } = {}) {
     } else {
       rows.push({ label: "Change", value: "—" });
     }
+  } else if (row.requestType === "invoice-amount-change") {
+    if (row.description) {
+      rows.push({ label: "Invoice", value: row.description });
+    }
+    rows.push({ label: "Change", value: formatRequestChangeSummary(row) });
   } else if (row.requestType !== "refund") {
     rows.push({ label: "Change", value: formatRequestChangeSummary(row) });
   } else {
@@ -223,6 +235,13 @@ export function formatRequestChangeSummary(row) {
     const invoiceId = String(row.invoiceId || row.id || "").trim();
     if (desc && invoiceId) return `${invoiceId}: ${desc}`;
     return desc || invoiceId || "Wave-off invoice";
+  }
+  if (row?.requestType === "invoice-amount-change") {
+    const currency = String(row.currency || "LKR").trim() || "LKR";
+    const current = `${currency} ${Number(row.currentAmount || 0).toLocaleString()}`;
+    const requested = `${currency} ${Number(row.requestedAmount || 0).toLocaleString()}`;
+    const invoiceId = String(row.invoiceId || "").trim();
+    return invoiceId ? `${invoiceId}: ${current} → ${requested}` : `${current} → ${requested}`;
   }
   if (row?.requestType === "intake-change") {
     const current = formatIntakeLabel(row.currentIntakeMonth, row.currentIntakeYear) || "—";

@@ -44,6 +44,7 @@ const BRANCH_WHATSAPP_MESSENGER_CHANGE_REQUESTS_FILE = path.join(
   "branchWhatsappMessengerChangeRequests.json"
 );
 const REFUND_REQUESTS_FILE = path.join(DATA_DIR, "refundRequests.json");
+const INVOICE_AMOUNT_CHANGE_REQUESTS_FILE = path.join(DATA_DIR, "invoiceAmountChangeRequests.json");
 const DOC_MAPPING_FILE = path.join(DATA_DIR, "docMapping.json");
 const WEB_FORMS_FILE = path.join(DATA_DIR, "webForms.json");
 const STAGES_FILE = path.join(DATA_DIR, "stages.json");
@@ -215,6 +216,7 @@ module.exports = {
   BRANCH_CHANGE_REQUESTS_FILE,
   BRANCH_WHATSAPP_MESSENGER_CHANGE_REQUESTS_FILE,
   REFUND_REQUESTS_FILE,
+  INVOICE_AMOUNT_CHANGE_REQUESTS_FILE,
   DOC_MAPPING_FILE,
   WEB_FORMS_FILE,
   STAGES_FILE,

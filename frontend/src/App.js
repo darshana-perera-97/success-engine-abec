@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getBranchChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getBranchChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests, getInvoiceAmountChangeRequests } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ReportPage } from "./components/ReportPage";
 import { ManagerDashboard } from "./components/ManagerDashboard";
@@ -1308,7 +1308,7 @@ function App({ initialView = "dashboard" }) {
       return;
     }
     const loadTeamRequests = async () => {
-      const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult] = await Promise.all([
+      const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, amountChangeResult] = await Promise.all([
         getCountryChangeRequests({ pendingOnly: true }),
         getStudentDetailChangeRequests({ pendingOnly: true }),
         getInvoiceWaveOffRequests({ pendingOnly: true }),
@@ -1316,6 +1316,7 @@ function App({ initialView = "dashboard" }) {
         getIntakeChangeRequests({ pendingOnly: true }),
         getRefundRequests({ pendingOnly: true }),
         getBranchChangeRequests({ pendingOnly: true }),
+        getInvoiceAmountChangeRequests({ pendingOnly: true }),
       ]);
       if (cancelled) return;
       const countryCount = countryResult.ok && Array.isArray(countryResult.data) ? countryResult.data.length : 0;
@@ -1325,7 +1326,8 @@ function App({ initialView = "dashboard" }) {
       const intakeCount = intakeResult.ok && Array.isArray(intakeResult.data) ? intakeResult.data.length : 0;
       const refundCount = refundResult.ok && Array.isArray(refundResult.data) ? refundResult.data.length : 0;
       const branchCount = branchResult.ok && Array.isArray(branchResult.data) ? branchResult.data.length : 0;
-      setTeamRequestsCount(countryCount + detailCount + waveOffCount + removalCount + intakeCount + refundCount + branchCount);
+      const amountChangeCount = amountChangeResult.ok && Array.isArray(amountChangeResult.data) ? amountChangeResult.data.length : 0;
+      setTeamRequestsCount(countryCount + detailCount + waveOffCount + removalCount + intakeCount + refundCount + branchCount + amountChangeCount);
     };
     loadTeamRequests();
     const intervalId = setInterval(loadTeamRequests, POLL_MS.requestedStudents);
