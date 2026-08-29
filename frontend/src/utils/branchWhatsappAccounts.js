@@ -86,11 +86,14 @@ async function enrichWhatsappAccountFromStatus(userId) {
 /**
  * Resolves the WhatsApp contact card for a student, including cross-branch assignments.
  */
-export async function resolveStudentWhatsappContactAccount(student, scopeBranch = "") {
+export async function resolveStudentWhatsappContactAccount(student, scopeBranch = "", { sharedAccount = false } = {}) {
   const branchLabel = resolveStudentBranchLabel(student, scopeBranch);
   const branchAccounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
-  const account = resolveStudentBranchWhatsappAccount(branchAccounts, student);
+  const account = resolveStudentBranchWhatsappAccount(branchAccounts, student, { sharedAccount });
   const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
+  if (sharedAccount) {
+    return account;
+  }
   if (!assignedId || String(account?.userId || "") !== assignedId) {
     return account;
   }
@@ -131,20 +134,28 @@ export function pickDefaultBranchWhatsappAccountId(accounts, currentValue = "") 
   return String(primary?.userId || "").trim();
 }
 
-export function resolveStudentBranchWhatsappAccount(accounts, student) {
+export function resolveStudentBranchWhatsappAccount(accounts, student, { sharedAccount = false } = {}) {
   const rows = Array.isArray(accounts) ? accounts : [];
   const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
-  if (assignedId) {
+  if (assignedId && !sharedAccount) {
     const match = rows.find((row) => String(row?.userId || "") === assignedId);
     if (match) return match;
     return { userId: assignedId, connected: false, name: "", whatsappNumber: "" };
+  }
+  if (assignedId && sharedAccount) {
+    const match = rows.find((row) => String(row?.userId || "") === assignedId);
+    if (match) return match;
   }
   const connected = rows.filter((row) => row.connected);
   return connected.find((row) => row.isPrimary) || connected[0] || rows[0] || null;
 }
 
 /** Primary WhatsApp messenger user id for a student (assigned id or branch default). */
-export function resolvePrimaryWhatsappMessengerUserId(student, accounts = null) {
+export function resolvePrimaryWhatsappMessengerUserId(student, accounts = null, { sharedAccount = false } = {}) {
+  if (sharedAccount && Array.isArray(accounts)) {
+    const account = resolveStudentBranchWhatsappAccount(accounts, student, { sharedAccount: true });
+    return String(account?.userId || "").trim();
+  }
   const assignedId = String(student?.branchWhatsappMessengerUserId || "").trim();
   if (assignedId) return assignedId;
   if (Array.isArray(accounts)) {
@@ -157,20 +168,22 @@ export function resolvePrimaryWhatsappMessengerUserId(student, accounts = null) 
 /**
  * Returns whether the student's Primary WhatsApp contact is connected and ready to send.
  */
-export async function getStudentPrimaryWhatsappSendReadiness(student) {
+export async function getStudentPrimaryWhatsappSendReadiness(student, { sharedAccount = false } = {}) {
   if (!student) {
     return { ready: true, messengerUserId: "", account: null };
   }
   const branchLabel = resolveStudentBranchLabel(student);
   const accounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
-  const account = await resolveStudentWhatsappContactAccount(student);
-  const messengerUserId = resolvePrimaryWhatsappMessengerUserId(student, accounts);
+  const account = await resolveStudentWhatsappContactAccount(student, "", { sharedAccount });
+  const messengerUserId = resolvePrimaryWhatsappMessengerUserId(student, accounts, { sharedAccount });
   if (!messengerUserId) {
     return {
       ready: false,
       messengerUserId: "",
       account: account || null,
-      reason: "No Primary WhatsApp contact is set for this student. Assign one on the student profile.",
+      reason: sharedAccount
+        ? "The branch WhatsApp account for this student's team is not connected. Connect it under Integrations."
+        : "No Primary WhatsApp contact is set for this student. Assign one on the student profile.",
     };
   }
   const statusResult = await getWhatsappStatus(messengerUserId);
@@ -187,8 +200,9 @@ export async function getStudentPrimaryWhatsappSendReadiness(student) {
     ready: false,
     messengerUserId,
     account: account || { userId: messengerUserId, connected: false },
-    reason:
-      "The Primary WhatsApp contact for this student is not connected. Connect that WhatsApp account or assign a different Primary WhatsApp contact.",
+    reason: sharedAccount
+      ? "The branch WhatsApp account for this student's team is not connected. Connect it under Integrations."
+      : "The Primary WhatsApp contact for this student is not connected. Connect that WhatsApp account or assign a different Primary WhatsApp contact.",
   };
 }
 

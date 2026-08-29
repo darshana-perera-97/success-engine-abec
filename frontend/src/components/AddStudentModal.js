@@ -58,7 +58,8 @@ const AddStudentModal = ({
   currentUser,
   counselorOptions = [],
   scopeBranch = null,
-  branchWhatsappEnabled = false
+  branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false
 }) => {
   const [branchRecords, setBranchRecords] = useState([]);
   const [globalCountries, setGlobalCountries] = useState([]);
@@ -184,7 +185,7 @@ const AddStudentModal = ({
       setFormError("Please select a counselor to assign this lead.");
       return;
     }
-    if (branchWhatsappEnabled && showAssignStep && !String(branchWhatsappMessengerUserId || "").trim()) {
+    if (branchWhatsappEnabled && !branchWhatsappSharedEnabled && showAssignStep && !String(branchWhatsappMessengerUserId || "").trim()) {
       setFormError("Please select a primary WhatsApp account for this student.");
       return;
     }
@@ -381,7 +382,7 @@ const AddStudentModal = ({
                   </select>
                 )}
               </div>
-              {branchWhatsappEnabled ? (
+              {branchWhatsappEnabled && !branchWhatsappSharedEnabled ? (
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Primary WhatsApp account
@@ -429,7 +430,7 @@ const AddStudentModal = ({
                   disabled={
                     assignableCounselors.length === 0 ||
                     !assignedCounselorId ||
-                    (branchWhatsappEnabled && !branchWhatsappMessengerUserId)
+                    (branchWhatsappEnabled && !branchWhatsappSharedEnabled && !branchWhatsappMessengerUserId)
                   }
                 >
                   Add Student

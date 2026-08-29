@@ -9,6 +9,8 @@ function normalizeSystemData(input) {
     adminChatEnabled: src.adminChatEnabled === true,
     branchCountriesEnabled: src.branchCountriesEnabled === true,
     branchWhatsappEnabled: src.branchWhatsappEnabled === true,
+    branchWhatsappSharedEnabled:
+      src.branchWhatsappEnabled === true && src.branchWhatsappSharedEnabled === true,
     goldLoansAcceptable: src.goldLoansAcceptable !== false,
   };
 }

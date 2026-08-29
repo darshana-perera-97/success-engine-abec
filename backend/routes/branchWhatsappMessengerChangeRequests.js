@@ -9,6 +9,7 @@ const { readStudemts, writeStudemts } = require("../models/students");
 const { readBranches } = require("../models/branches");
 const {
   isBranchWhatsappEnabled,
+  isBranchWhatsappSharedEnabled,
   listBranchWhatsappAccounts,
   validateStudentBranchWhatsappMessengerUserId,
   setBranchWhatsappMessenger,
@@ -121,6 +122,14 @@ async function handle(req, res, url) {
       const student = studemts.find((s) => String(s.id || "") === studentId);
       if (!student) {
         sendJson(res, 404, { ok: false, error: "Student not found." });
+        return true;
+      }
+
+      if (await isBranchWhatsappSharedEnabled()) {
+        sendJson(res, 400, {
+          ok: false,
+          error: "This branch uses a single shared WhatsApp account. Student contacts cannot be changed to another number.",
+        });
         return true;
       }
 
@@ -250,6 +259,7 @@ async function handle(req, res, url) {
         const studentBranch = findStudentBranchRecord(branches, updatedStudent);
         if (
           studentBranch &&
+          !(await isBranchWhatsappSharedEnabled()) &&
           (await isBranchWhatsappAccountForStudentBranch(updatedStudent, result.data.requestedMessengerUserId))
         ) {
           await setBranchWhatsappMessenger(studentBranch.id, result.data.requestedMessengerUserId);

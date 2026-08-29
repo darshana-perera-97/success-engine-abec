@@ -149,7 +149,7 @@ function App({ initialView = "dashboard" }) {
   const [appointments, setAppointments] = useState([]);
   const [bookingBlocks, setBookingBlocks] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
-  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, goldLoansAcceptable: true });
+  const [systemData, setSystemData] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, branchWhatsappSharedEnabled: false, goldLoansAcceptable: true });
   const [meetingSettings, setMeetingSettings] = useState({
     meetingDurationMinutes: 30,
     daySchedules: {
@@ -389,6 +389,7 @@ function App({ initialView = "dashboard" }) {
   const currentUser = getCurrentUserObject();
   const adminChatEnabled = systemData.adminChatEnabled === true;
   const branchWhatsappEnabled = systemData.branchWhatsappEnabled === true;
+  const branchWhatsappSharedEnabled = branchWhatsappEnabled && systemData.branchWhatsappSharedEnabled === true;
   const normalizeIdentity = (value) => String(value || "").trim().toLowerCase();
   /** Match pipeline scope: primary counselor, else inquiry counselor (legacy rows may only set one). */
   const effectiveAssignedCounselorKey = (student) => {
@@ -1208,11 +1209,10 @@ function App({ initialView = "dashboard" }) {
     }
     const loadUnreadCount = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
-      const result = await getChats(userId, { markRead: false });
+      const result = await getChats(userId, { markRead: false, summary: true });
       if (!result.ok || cancelled) return;
-      const unread = (result.data || []).filter(
-        (msg) => String(msg.receiverId || "") === userId && msg.read !== true
-      ).length;
+      const rows = result.data || [];
+      const unread = rows.reduce((sum, row) => sum + (Number(row.unreadCount) || 0), 0);
       setUnreadMessageCount(unread);
       if (!isCounselorEquivalentPortalRole(currentRole) && currentRole !== "Country Coordinator") {
         return;
@@ -1222,12 +1222,15 @@ function App({ initialView = "dashboard" }) {
         counselorInboundChatNotifyHydratedRef.current = false;
         notifiedCounselorInboundChatIdsRef.current = /* @__PURE__ */ new Set();
       }
-      const inboundUnread = (result.data || []).filter((msg) => {
-        if (String(msg.receiverId || "").trim() !== userId) return false;
-        if (String(msg.senderId || "").trim() === userId) return false;
-        if (msg.read === true) return false;
-        return true;
-      });
+      const inboundUnread = rows
+        .map((row) => row?.lastMessage)
+        .filter((msg) => {
+          if (!msg) return false;
+          if (String(msg.receiverId || "").trim() !== userId) return false;
+          if (String(msg.senderId || "").trim() === userId) return false;
+          if (msg.read === true) return false;
+          return true;
+        });
       if (!counselorInboundChatNotifyHydratedRef.current) {
         for (const m of inboundUnread) {
           const mid = String(m.id || "").trim();
@@ -2587,11 +2590,11 @@ function App({ initialView = "dashboard" }) {
   const renderContent = () => {
     if (currentView === "integration") {
       if (canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)) {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled });
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, adminChatEnabled });
       }
     }
     if (currentView === "messages") {
-      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled, branchWhatsappEnabled });
+      return /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: studentMessagesInitialPeerId, adminChatEnabled, branchWhatsappEnabled, branchWhatsappSharedEnabled });
     }
     if (currentView === "resume") {
       return /* @__PURE__ */ jsx(AIResumeBuilder, {
@@ -2684,6 +2687,7 @@ function App({ initialView = "dashboard" }) {
             ? resolveCounselorIdentitySet(currentUser, counselorIdentitySet)
             : null,
       branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
+      branchWhatsappSharedEnabled,
       adminChatEnabled: systemData.adminChatEnabled === true,
     };
     if (currentView === "report") {
@@ -2774,7 +2778,7 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (isWhatsappIntegrationRole(currentRole) && currentView === "integration") {
-        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled });
+        return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, adminChatEnabled });
       }
       if (currentView === "branch") {
         const coordBranch = String(currentUser?.branch || authenticatedUser?.branch || "").trim();
@@ -2787,14 +2791,14 @@ function App({ initialView = "dashboard" }) {
         });
       }
       if (currentView === "dashboard") return /* @__PURE__ */ jsx(CounselorDashboard, { onNavigate: handleNavigate, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, students: coordStudents, allStudents: students, employees, onSelectStudent: handleSelectStudent, onSelectTask: handleSelectTask, onOpenStudentTask: openStudentContextForTask, assignmentAlerts, onDismissAssignmentAlert: handleDismissAssignmentAlert, onUpdateStudent: handleUpdateStudent, onStudentMovedToRequests: handleStudentMovedToRequests, onCompleteStudentIntakeTask: completePendingStudentIntakeTasks, onAddActivity: handleAddActivity, userRole: currentRole });
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       if (currentView === "tasks") return /* @__PURE__ */ jsx(TaskManager, { userRole: currentRole, tasks: coordTasks, currentUser, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null, selectedTaskId, onUpdateTasks: handleUpdateTasks, onAddTask: handleAddTask, monitoredStudents: coordStudents, employees, onSelectStudent: handleSelectStudent, onNavigate: handleNavigate });
       if (currentView === "student-detail") {
         const selectedSid = selectedStudent ? String(selectedStudent.id ?? "").trim() : "";
         const studentInScope = selectedSid ? coordStudents.find((s) => String(s.id ?? "").trim() === selectedSid) : null;
         return selectedStudent && studentInScope
           ? /* @__PURE__ */ jsx(StudentProfile, { ...coordProfileProps, student: selectedStudent, userRole: currentRole })
-          : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
+          : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: coordStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: isCounselorEquivalentPortalRole(currentRole) ? counselorIdentitySet : null });
       }
       if (currentView === "finance") {
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
@@ -2828,7 +2832,8 @@ function App({ initialView = "dashboard" }) {
         currentUser,
         authenticatedUser,
         scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null,
-        branchWhatsappEnabled
+        branchWhatsappEnabled,
+        branchWhatsappSharedEnabled
       };
       if (currentView === "students") {
         return /* @__PURE__ */ jsx(StudentList, acctListProps);
@@ -2897,7 +2902,7 @@ function App({ initialView = "dashboard" }) {
           scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null
         });
       }
-      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, branchWhatsappEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
+      if (currentView === "students") return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
       if (currentView === "tasks") {
         const escBlock = currentRole === "Manager" ? managerScopedEscalations : teamLeadScopedEscalations;
         return /* @__PURE__ */ jsxs(Fragment, {
@@ -2925,13 +2930,14 @@ function App({ initialView = "dashboard" }) {
           ]
         });
       }
-      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: currentRole === "Team Lead" ? "Team Lead" : "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, branchWhatsappEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
+      if (currentView === "student-detail") return selectedStudent && mgrStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...mgrProfileProps, student: selectedStudent, userRole: currentRole === "Team Lead" ? "Team Lead" : "Manager" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: mgrStudents, employees: mgrEmployees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, scopeBranch: managerDataScope.active ? managerDataScope.branchLabel : null, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
       if (currentView === "requested-students") {
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
           scopeBranch: staffBranchLabel || null,
           branchCountriesLimited: systemData.branchCountriesEnabled === true,
           branchWhatsappEnabled,
+          branchWhatsappSharedEnabled,
           onAddFromRequest: handleAddFromRequest
         });
       }
@@ -2958,7 +2964,7 @@ function App({ initialView = "dashboard" }) {
       }
       if (currentView === "integration") {
         return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
-          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled })
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, adminChatEnabled })
           : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       }
       return /* @__PURE__ */ jsx(ManagerDashboard, { ...managerDashboardProps });
@@ -3046,16 +3052,18 @@ function App({ initialView = "dashboard" }) {
       case "branch":
         return /* @__PURE__ */ jsx(BranchAnalytics, {
           scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
-          branchWhatsappEnabled: systemData.branchWhatsappEnabled === true
+          branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
+          branchWhatsappSharedEnabled
         });
       case "students":
-        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
+        return /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
       case "requested-students":
         return /* @__PURE__ */ jsx(RequestedStudents, {
           userRole: currentRole,
           scopeBranch: adminBranchScoped ? managerDataScope.branchLabel : null,
           branchCountriesLimited: systemData.branchCountriesEnabled === true,
           branchWhatsappEnabled,
+          branchWhatsappSharedEnabled,
           onAddFromRequest: handleAddFromRequest
         });
       case "team-requests":
@@ -3071,7 +3079,7 @@ function App({ initialView = "dashboard" }) {
           onStudentMovedToRequests: handleStudentMovedToRequests
         });
       case "student-detail":
-        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
+        return selectedStudent && adminViewStudents.some((s) => s.id === selectedStudent.id) ? /* @__PURE__ */ jsx(StudentProfile, { ...adminViewProfileProps, student: selectedStudent, userRole: "Admin" }) : /* @__PURE__ */ jsx(StudentList, { onSelectStudent: handleSelectStudent, students: adminViewStudents, employees, onUpdateStudent: handleUpdateStudent, onAssignStudentCounselor: handleAssignStudentCounselor, onAddSecondaryStudentCounselor: handleAddSecondaryStudentCounselor, onNavigate: handleNavigate, onAddActivity: handleAddActivity, userRole: currentRole, onAddStudent: handleAddStudent, currentUser, authenticatedUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, counselorIdentitySet: primaryCounselorIdentitySet });
       case "finance":
         return /* @__PURE__ */ jsx(StaffFinanceHub, {
           students: adminViewStudents,
@@ -3095,7 +3103,7 @@ function App({ initialView = "dashboard" }) {
         return /* @__PURE__ */ jsx(DocMapping, { userRole: currentRole });
       case "integration":
         return canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)
-          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, adminChatEnabled })
+          ? /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, adminChatEnabled })
           : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       case "web-forms":
         return /* @__PURE__ */ jsx(WebForms, {});
@@ -3179,7 +3187,7 @@ function App({ initialView = "dashboard" }) {
         children: renderContent()
       }
     ),
-    profileChatPeerId && currentView === "student-detail" && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[200] flex justify-end bg-slate-900/40 backdrop-blur-sm", onClick: handleCloseProfileChat, children: /* @__PURE__ */ jsx("div", { className: "h-full w-full max-w-3xl bg-white shadow-2xl border-l border-gray-200 flex flex-col", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: profileChatPeerId, adminChatEnabled, branchWhatsappEnabled, overlayMode: true, onClose: handleCloseProfileChat }) }) }),
+    profileChatPeerId && currentView === "student-detail" && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[200] flex justify-end bg-slate-900/40 backdrop-blur-sm", onClick: handleCloseProfileChat, children: /* @__PURE__ */ jsx("div", { className: "h-full w-full max-w-3xl bg-white shadow-2xl border-l border-gray-200 flex flex-col", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsx(ChatInterface, { currentRole, currentUser, messages, onSendMessage: handleSendMessage, students: chatStudents, employees, initialChatPeerId: profileChatPeerId, adminChatEnabled, branchWhatsappEnabled, branchWhatsappSharedEnabled, overlayMode: true, onClose: handleCloseProfileChat }) }) }),
     isCreateTaskModalOpen && /* @__PURE__ */ jsx(
       CreateTaskModal,
       {

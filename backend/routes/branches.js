@@ -11,7 +11,7 @@ const { readInvoices } = require("../models/invoices");
 const { readStudemts } = require("../models/students");
 const { readUsers, splitAdminRecord } = require("../models/users");
 const { loadExchangeRatesFromApi } = require("../services/exchangeRates");
-const { isBranchWhatsappEnabled, listBranchWhatsappAccounts, summarizeBranchWhatsappStatus, validateStudentBranchWhatsappMessengerUserId } = require("../services/branchWhatsapp");
+const { isBranchWhatsappEnabled, isBranchWhatsappSharedEnabled, listBranchWhatsappAccounts, summarizeBranchWhatsappStatus, validateStudentBranchWhatsappMessengerUserId } = require("../services/branchWhatsapp");
 
 const financeSummaryCache = new Map();
 
@@ -309,9 +309,10 @@ async function handle(req, res, url) {
       const scopeKey = scopeBranch ? scopeBranch.toLowerCase() : "";
       const branchWhatsappEnabled = await isBranchWhatsappEnabled();
       if (!branchWhatsappEnabled) {
-        sendJson(res, 200, { ok: true, data: { enabled: false, branches: [] } });
+        sendJson(res, 200, { ok: true, data: { enabled: false, sharedAccount: false, branches: [] } });
         return true;
       }
+      const sharedAccount = await isBranchWhatsappSharedEnabled();
 
       const branches = await readBranches();
       const filtered = scopeKey
@@ -348,7 +349,7 @@ async function handle(req, res, url) {
       );
 
       rows.sort((a, b) => a.name.localeCompare(b.name));
-      sendJson(res, 200, { ok: true, data: { enabled: true, branches: rows } });
+      sendJson(res, 200, { ok: true, data: { enabled: true, sharedAccount, branches: rows } });
     } catch (err) {
       console.error("branch-analytics/whatsapp-connectivity error:", err);
       sendJson(res, 500, { ok: false, error: "Failed to load branch WhatsApp connectivity." });

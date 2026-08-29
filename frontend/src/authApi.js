@@ -1495,6 +1495,8 @@ export async function getChats(userId, options = {}) {
     if (options.markRead === false) params.set("markRead", "0");
     const peerId = String(options.peerId || "").trim();
     if (peerId) params.set("peerId", peerId);
+    if (options.summary === true) params.set("summary", "1");
+    if (options.thread === true) params.set("thread", "1");
     const query = params.toString() ? `?${params.toString()}` : "";
     const res = await fetch(`${API_BASE}/api/chats${query}`);
     const data = await res.json().catch(() => ({}));

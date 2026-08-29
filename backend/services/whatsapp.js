@@ -22,12 +22,14 @@ const {
   isBranchWhatsappManagerRole,
   isWhatsappSessionConnected,
   isBranchWhatsappEnabled,
+  isBranchWhatsappSharedEnabled,
   resolveUserRecord,
   resolveBranchForUser,
   resolveBranchForStudent,
   findBranchWhatsappMessengerUser,
   setBranchWhatsappMessenger,
   clearBranchWhatsappMessenger,
+  ensureSharedBranchMessenger,
   resolveEffectiveWhatsappSenderId,
   studentPrimaryWhatsappUnavailableReason,
   resolveWhatsappIntegrationContext,
@@ -274,6 +276,10 @@ async function prepareBranchWhatsappConnect(userId) {
   const branch = await resolveBranchForUser(actor);
   if (!branch?.id) {
     return { ok: true };
+  }
+  if (await isBranchWhatsappSharedEnabled()) {
+    await ensureSharedBranchMessenger(branch, userId);
+    return { ok: true, branch };
   }
   const storedId = String(branch?.whatsappMessengerUserId || "").trim();
   if (!storedId) {

@@ -14,6 +14,7 @@ export function PrimaryWhatsappConnectPrompt({
   currentUserId = "",
   adminChatEnabled = false,
   branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false,
   onOpenIntegrations,
   onOpenStudentProfile,
 }) {
@@ -34,7 +35,9 @@ export function PrimaryWhatsappConnectPrompt({
   const studentLabel = String(studentName || "").trim() || "this student";
   const bodyText =
     reason ||
-    "Connect the WhatsApp account shown on the student profile, or assign a different Primary WhatsApp contact.";
+    (branchWhatsappSharedEnabled
+      ? "Connect the branch WhatsApp account under Integrations. Messages to this student are sent only from that shared team number."
+      : "Connect the WhatsApp account shown on the student profile, or assign a different Primary WhatsApp contact.");
 
   return /* @__PURE__ */ jsx("div", {
     className:
@@ -122,8 +125,9 @@ export function PrimaryWhatsappConnectPrompt({
           }),
           /* @__PURE__ */ jsx("p", {
             className: "text-[11px] text-slate-500",
-            children:
-              "Connect the linked WhatsApp under Integrations, or request a different Primary contact on this profile.",
+            children: branchWhatsappSharedEnabled
+              ? "Connect the shared branch WhatsApp under Integrations. Student messages always use that team account."
+              : "Connect the linked WhatsApp under Integrations, or request a different Primary contact on this profile.",
           }),
         ] }),
         /* @__PURE__ */ jsxs("div", {

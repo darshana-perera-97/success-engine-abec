@@ -41,6 +41,7 @@ const whatsappStatusDotClass = (status, hasMessenger) => {
 const BranchAnalytics = ({
   scopeBranch = null,
   branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false,
 }) => {
   const formatRevenueNumber = (value) => {
     const formatted = formatRawLKR(value);
@@ -441,7 +442,9 @@ const BranchAnalytics = ({
 
             {showBranchWhatsapp ? (
               <div className="mt-8 pt-6 border-t border-gray-100">
-                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Branch WhatsApp</h4>
+                <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">
+                  {branchWhatsappSharedEnabled ? "Shared branch WhatsApp" : "Branch WhatsApp"}
+                </h4>
                 <div className="space-y-3">
                   {cardRankedData.map((data) => {
                     const wa = getWhatsappForBranch(data.name);

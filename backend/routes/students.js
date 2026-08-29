@@ -65,6 +65,8 @@ const {
   setBranchWhatsappMessenger,
   isBranchWhatsappAccountForStudentBranch,
   resolveBranchForStudent,
+  isBranchWhatsappSharedEnabled,
+  applySharedBranchWhatsappMessenger,
 } = require("../services/branchWhatsapp");
 const { collectDocumentVerificationTransitions } = require("../services/documents");
 const {
@@ -477,23 +479,27 @@ async function handle(req, res, url) {
       if (counselorHistory.length > 0) {
         student.counselorHistory = counselorHistory;
       }
-      const branchWhatsappMessengerUserId = String(body.branchWhatsappMessengerUserId || "").trim();
-      if (branchWhatsappMessengerUserId) {
-        const whatsappAssignmentError = await validateStudentBranchWhatsappMessengerUserId(
-          student,
-          branchWhatsappMessengerUserId
-        );
-        if (whatsappAssignmentError) {
-          sendJson(res, 400, { ok: false, error: whatsappAssignmentError });
-          return true;
-        }
-        student.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
-        const studentBranch = await resolveBranchForStudent(student);
-        if (
-          studentBranch?.id &&
-          (await isBranchWhatsappAccountForStudentBranch(student, branchWhatsappMessengerUserId))
-        ) {
-          await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
+      if (await isBranchWhatsappSharedEnabled()) {
+        await applySharedBranchWhatsappMessenger(student);
+      } else {
+        const branchWhatsappMessengerUserId = String(body.branchWhatsappMessengerUserId || "").trim();
+        if (branchWhatsappMessengerUserId) {
+          const whatsappAssignmentError = await validateStudentBranchWhatsappMessengerUserId(
+            student,
+            branchWhatsappMessengerUserId
+          );
+          if (whatsappAssignmentError) {
+            sendJson(res, 400, { ok: false, error: whatsappAssignmentError });
+            return true;
+          }
+          student.branchWhatsappMessengerUserId = branchWhatsappMessengerUserId;
+          const studentBranch = await resolveBranchForStudent(student);
+          if (
+            studentBranch?.id &&
+            (await isBranchWhatsappAccountForStudentBranch(student, branchWhatsappMessengerUserId))
+          ) {
+            await setBranchWhatsappMessenger(studentBranch.id, branchWhatsappMessengerUserId);
+          }
         }
       }
       const updated = [...studemts, student];
@@ -578,7 +584,9 @@ async function handle(req, res, url) {
         sendJson(res, 400, { ok: false, error: counselorAssignmentError });
         return true;
       }
-      if (Object.prototype.hasOwnProperty.call(body, "branchWhatsappMessengerUserId")) {
+      if (await isBranchWhatsappSharedEnabled()) {
+        await applySharedBranchWhatsappMessenger(merged);
+      } else if (Object.prototype.hasOwnProperty.call(body, "branchWhatsappMessengerUserId")) {
         const branchWhatsappMessengerUserId = String(body.branchWhatsappMessengerUserId || "").trim();
         if (branchWhatsappMessengerUserId) {
           const whatsappAssignmentError = await validateStudentBranchWhatsappMessengerUserId(

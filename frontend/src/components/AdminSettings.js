@@ -55,7 +55,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     currency: "LKR",
     notes: ""
   });
-  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, goldLoansAcceptable: true });
+  const [financeForm, setFinanceForm] = useState({ counselorCanAcceptPayments: false, adminChatEnabled: false, branchCountriesEnabled: false, branchWhatsappEnabled: false, branchWhatsappSharedEnabled: false, goldLoansAcceptable: true });
   const [financeError, setFinanceError] = useState("");
   const [financeSuccess, setFinanceSuccess] = useState("");
   const [isSavingFinanceSettings, setIsSavingFinanceSettings] = useState(false);
@@ -132,6 +132,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
       adminChatEnabled: systemData.adminChatEnabled === true,
       branchCountriesEnabled: systemData.branchCountriesEnabled === true,
       branchWhatsappEnabled: systemData.branchWhatsappEnabled === true,
+      branchWhatsappSharedEnabled: systemData.branchWhatsappEnabled === true && systemData.branchWhatsappSharedEnabled === true,
       goldLoansAcceptable: systemData.goldLoansAcceptable !== false
     });
   }, [systemData]);
@@ -404,11 +405,28 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           type: "checkbox",
           className: "mt-1 shrink-0",
           checked: financeForm.branchWhatsappEnabled,
-          onChange: (e) => setFinanceForm((prev) => ({ ...prev, branchWhatsappEnabled: e.target.checked }))
+          onChange: (e) => setFinanceForm((prev) => ({
+            ...prev,
+            branchWhatsappEnabled: e.target.checked,
+            branchWhatsappSharedEnabled: e.target.checked ? prev.branchWhatsappSharedEnabled : false
+          }))
         }),
         /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
           /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Use one WhatsApp account per branch" }),
           "When enabled, each branch Manager and Team Lead can connect their own WhatsApp under Integrations. When assigning a student, staff choose which branch WhatsApp account messages that student. Counselors see the branch account status in the navbar but cannot connect WhatsApp. When disabled, each user connects their own WhatsApp as today."
+        ] })
+      ] }) }),
+      /* @__PURE__ */ jsx("div", { className: `w-full rounded-lg border border-gray-200 p-4 ${financeForm.branchWhatsappEnabled ? "bg-slate-50/60" : "bg-slate-50/40 opacity-60"}`, children: /* @__PURE__ */ jsxs("label", { className: `flex items-start gap-3 w-full ${financeForm.branchWhatsappEnabled ? "cursor-pointer" : "cursor-not-allowed"}`, children: [
+        /* @__PURE__ */ jsx("input", {
+          type: "checkbox",
+          className: "mt-1 shrink-0",
+          checked: financeForm.branchWhatsappEnabled && financeForm.branchWhatsappSharedEnabled,
+          disabled: !financeForm.branchWhatsappEnabled,
+          onChange: (e) => setFinanceForm((prev) => ({ ...prev, branchWhatsappSharedEnabled: e.target.checked }))
+        }),
+        /* @__PURE__ */ jsxs("span", { className: "text-sm text-slate-700 flex-1", children: [
+          /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-900 block", children: "Use a single WhatsApp account for the whole branch" }),
+          "Requires \"Use one WhatsApp account per branch\". When enabled, all Managers and Team Leads in a branch share one WhatsApp connection — they see the same QR code and linked account. Student messages are sent only from that student's branch WhatsApp, not from another team's number."
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { className: "flex justify-end w-full", children: /* @__PURE__ */ jsxs(Button, {
@@ -420,7 +438,8 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
           setIsSavingChatSettings(true);
           const result = await onSaveSystemData?.({
             adminChatEnabled: financeForm.adminChatEnabled,
-            branchWhatsappEnabled: financeForm.branchWhatsappEnabled
+            branchWhatsappEnabled: financeForm.branchWhatsappEnabled,
+            branchWhatsappSharedEnabled: financeForm.branchWhatsappEnabled && financeForm.branchWhatsappSharedEnabled
           });
           setIsSavingChatSettings(false);
           if (!result?.ok) {

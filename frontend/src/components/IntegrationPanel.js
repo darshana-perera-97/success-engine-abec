@@ -89,6 +89,7 @@ function branchWhatsappAccentClass(status, hasMessenger) {
 const defaultContext = {
   mode: "personal",
   branchWhatsappEnabled: false,
+  sharedAccount: false,
   canManage: false,
   statusUserId: "",
   messengerUserId: "",
@@ -112,7 +113,7 @@ function markAutoReconnectAttempt(userId) {
   }
 }
 
-export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false }) {
+export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, branchWhatsappSharedEnabled = false }) {
   const [state, setState] = useState(null);
   const [context, setContext] = useState(defaultContext);
   const [loading, setLoading] = useState(false);
@@ -133,6 +134,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
     context.canManage === true &&
     (!branchWhatsappEnabled || isBranchWhatsappManagerRole(currentUser?.role));
   const canShowQrCode = canManage && !isCounselorViewer;
+  const sharedAccount = branchWhatsappSharedEnabled === true || context.sharedAccount === true;
 
   const statusLabel = useMemo(() => {
     const key = String(state?.status || "disconnected");
@@ -332,8 +334,9 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
             <div>
               <h2 className="text-2xl font-bold text-slate-900">Branch WhatsApp Accounts</h2>
               <p className="text-sm text-slate-500 mt-1">
-                Each branch can have multiple WhatsApp accounts linked by its Managers and Team Leads. Status updates
-                automatically.
+                {sharedAccount
+                  ? "Each branch uses one WhatsApp account shared by its Managers and Team Leads. Status updates automatically."
+                  : "Each branch can have multiple WhatsApp accounts linked by its Managers and Team Leads. Status updates automatically."}
               </p>
             </div>
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
@@ -466,14 +469,18 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 ? "Connect your own WhatsApp for Omni-Channel messaging as Admin."
                 : branchMode
                   ? canManage
-                    ? "Connect your branch WhatsApp account. Multiple Managers and Team Leads in the same branch can each link their own number."
-                    : "View the branch WhatsApp account used for student messaging."
+                    ? sharedAccount
+                      ? "Connect the branch WhatsApp account. All Managers and Team Leads in this branch share the same QR code and linked number."
+                      : "Connect your branch WhatsApp account. Multiple Managers and Team Leads in the same branch can each link their own number."
+                    : sharedAccount
+                      ? "View the shared branch WhatsApp account used for student messaging."
+                      : "View the branch WhatsApp account used for student messaging."
                   : "Connect your WhatsApp to manage counselor conversations from a single workspace."}
             </p>
-            {branchMode && branchLabel ? (
+              {branchMode && branchLabel ? (
               <p className="text-xs text-slate-500 mt-2">
                 Branch: <span className="font-semibold text-slate-700">{branchLabel}</span>
-                {messengerName ? (
+                {messengerName && !sharedAccount ? (
                   <>
                     {" "}
                     · Connected by <span className="font-semibold text-slate-700">{messengerName}</span>
@@ -622,7 +629,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false })
                 <span className="text-sm font-semibold text-slate-900">{branchLabel || "-"}</span>
               </div>
             ) : null}
-            {branchMode && messengerName ? (
+            {branchMode && messengerName && !sharedAccount ? (
               <div className="px-4 py-3 flex items-center justify-between">
                 <span className="text-sm text-slate-500">Connected by</span>
                 <span className="text-sm font-semibold text-slate-900">{messengerName}</span>

@@ -113,7 +113,8 @@ const StudentList = ({
   authenticatedUser,
   counselorIdentitySet = null,
   scopeBranch = null,
-  branchWhatsappEnabled = false
+  branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false
 }) => {
   const [filterText, setFilterText] = useState("");
   const [counselorFilter, setCounselorFilter] = useState("All");
@@ -391,7 +392,7 @@ const StudentList = ({
   };
   const confirmCounselorAssign = (student) => {
     if (!managerTargetCounselorId) return;
-    if (branchWhatsappEnabled && !managerTargetWhatsappUserId) return;
+    if (branchWhatsappEnabled && !branchWhatsappSharedEnabled && !managerTargetWhatsappUserId) return;
     if (managerAssignMode === "secondary") {
       if (onAddSecondaryStudentCounselor) {
         onAddSecondaryStudentCounselor(student, managerTargetCounselorId);
@@ -725,7 +726,8 @@ const StudentList = ({
         currentUser,
         counselorOptions,
         scopeBranch,
-        branchWhatsappEnabled
+        branchWhatsappEnabled,
+        branchWhatsappSharedEnabled
       }
     ),
     assigningStudent ? /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[9999] overflow-y-auto overscroll-contain flex items-start justify-center py-8 px-4 bg-slate-900/60 backdrop-blur-sm", onClick: () => setAssigningStudentId(null), children: /* @__PURE__ */ jsxs("div", { className: "w-full max-w-md bg-white rounded-xl border border-gray-100 shadow-2xl max-h-[90vh] overflow-y-auto my-auto", onClick: (e) => e.stopPropagation(), children: [
@@ -779,7 +781,7 @@ const StudentList = ({
             }
           )
         ] }) : null,
-        branchWhatsappEnabled && managerAssignMode !== "secondary" ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
+        branchWhatsappEnabled && !branchWhatsappSharedEnabled && managerAssignMode !== "secondary" ? /* @__PURE__ */ jsxs("div", { className: "space-y-2", children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-bold text-slate-500 uppercase", children: "Primary WhatsApp account" }),
           /* @__PURE__ */ jsx(
             BranchWhatsappAccountSelect,
@@ -797,7 +799,7 @@ const StudentList = ({
             /* @__PURE__ */ jsx(X, { size: 14, className: "mr-1.5" }),
             "Remove"
           ] }) : null,
-          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId || (branchWhatsappEnabled && managerAssignMode !== "secondary" && !managerTargetWhatsappUserId), onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : managerAssignMode === "secondary" ? "Add secondary" : "Reassign" }) : null
+          canManageCounselors ? /* @__PURE__ */ jsx(Button, { type: "button", disabled: !managerTargetCounselorId || (branchWhatsappEnabled && !branchWhatsappSharedEnabled && managerAssignMode !== "secondary" && !managerTargetWhatsappUserId), onClick: () => confirmCounselorAssign(assigningStudent), children: isUnassignedCounselor(assigningStudent.counselor) ? "Assign" : managerAssignMode === "secondary" ? "Add secondary" : "Reassign" }) : null
         ] })
       ] })
     ] }) }) : null

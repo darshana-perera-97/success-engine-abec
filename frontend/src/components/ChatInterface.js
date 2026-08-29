@@ -1,5 +1,5 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Send, Paperclip, Search, Check, CheckCheck, Eye, Lock, MessageCircle, Reply, X, RefreshCw } from "lucide-react";
 import { getAccounts, getChats, getWhatsappStatus, syncWhatsappHistory } from "../authApi";
 import { buildCounselorTeamEntriesWithFallback } from "../studentContactHelpers";
@@ -37,15 +37,43 @@ const formatMessageDateTime = (timestamp) => {
   return `${dateLabel}, ${timeLabel}`;
 };
 
-const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false, overlayMode = false, onClose = null }) => {
+const chatListSignature = (msgs) =>
+  `${(msgs || []).length}:${(msgs || []).map((m) => `${m.id}:${m.timestamp}:${m.read === true ? "1" : "0"}`).join("|")}`;
+
+const inboxRowsSignature = (rows) =>
+  (rows || [])
+    .map(
+      (row) =>
+        `${row.peerId}:${row.lastMessage?.id}:${row.lastMessage?.timestamp}:${row.lastMessage?.read === true ? "1" : "0"}:${row.unreadCount || 0}`
+    )
+    .join("|");
+
+const latestMessageInThread = (msgs) => {
+  let latest = null;
+  let latestTs = -1;
+  for (const msg of msgs || []) {
+    const ts = new Date(msg?.timestamp || 0).getTime();
+    if (!Number.isFinite(ts)) continue;
+    if (ts >= latestTs) {
+      latestTs = ts;
+      latest = msg;
+    }
+  }
+  return latest;
+};
+
+const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, students = [], employees = [], initialChatPeerId = null, adminChatEnabled = false, branchWhatsappEnabled = false, branchWhatsappSharedEnabled = false, overlayMode = false, onClose = null }) => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isWaitingForReply, setIsWaitingForReply] = useState(false);
   const [liveMessages, setLiveMessages] = useState(messages || []);
+  const [inboxByPeer, setInboxByPeer] = useState({});
   const [accountNameById, setAccountNameById] = useState({});
   const [isChatsLoading, setIsChatsLoading] = useState(true);
+  const [isThreadLoading, setIsThreadLoading] = useState(false);
+  const [isInboxRefreshing, setIsInboxRefreshing] = useState(false);
   const [whatsappSyncStatus, setWhatsappSyncStatus] = useState("disconnected");
   const [replyingTo, setReplyingTo] = useState(null);
   const [highlightMessageId, setHighlightMessageId] = useState(null);
@@ -58,7 +86,14 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const fileInputRef = useRef(null);
   const textInputRef = useRef(null);
   const lastSignatureRef = useRef("");
+  const inboxSignatureRef = useRef("");
+  const threadCacheRef = useRef({});
+  const threadSignatureByPeerRef = useRef({});
+  const inboxByPeerRef = useRef({});
   const highlightTimerRef = useRef(null);
+  const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
+  const chatsUserId = shouldLoadAll ? "" : currentUser?.id;
+  inboxByPeerRef.current = inboxByPeer;
   const canSendAsStaffMessenger = canSendStaffStudentMessages(currentRole, adminChatEnabled, branchWhatsappEnabled);
   const isGhostMode =
     (currentRole === "Admin" || currentRole === "Manager" || currentRole === "Team Lead") && !canSendAsStaffMessenger;
@@ -69,7 +104,9 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   };
   useEffect(() => {
-    setLiveMessages(messages || []);
+    if (Array.isArray(messages) && messages.length) {
+      setLiveMessages(messages);
+    }
   }, [messages]);
   useEffect(() => {
     const loadAccountNames = async () => {
@@ -87,53 +124,61 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   }, []);
   useEffect(() => {
     let cancelled = false;
-    const loadChats = async () => {
-      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
-      // Keep unread flags intact while browsing the inbox list; mark per-peer on open.
-      const result = await getChats(shouldLoadAll ? "" : currentUser?.id, { markRead: false });
+    const applyInboxRows = (rows) => {
+      const signature = inboxRowsSignature(rows);
+      if (signature === inboxSignatureRef.current) return;
+      inboxSignatureRef.current = signature;
+      const next = {};
+      for (const row of rows || []) {
+        const peerId = String(row?.peerId || "").trim();
+        if (!peerId) continue;
+        next[peerId] = {
+          lastMessage: row.lastMessage || null,
+          unreadCount: Number(row.unreadCount) || 0
+        };
+      }
+      setInboxByPeer(next);
+    };
+    const loadInbox = async () => {
+      if (inboxSignatureRef.current) setIsInboxRefreshing(true);
+      const result = await getChats(chatsUserId, { markRead: false, summary: true });
       if (cancelled) return;
       setIsChatsLoading(false);
+      setIsInboxRefreshing(false);
       if (!result.ok) return;
-      const incoming = result.data || [];
-      const signature = `${incoming.length}:${incoming.map((m) => `${m.id}:${m.timestamp}:${m.read === true ? "1" : "0"}`).join("|")}`;
-      if (signature === lastSignatureRef.current) return;
-      lastSignatureRef.current = signature;
-      setLiveMessages(incoming);
+      applyInboxRows(result.data || []);
     };
-    loadChats();
-    const intervalId = setInterval(loadChats, POLL_MS.chats);
+    loadInbox();
+    const intervalId = setInterval(loadInbox, POLL_MS.chats);
     return () => {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [currentRole, currentUser?.id]);
-  const getConversations = () => {
+  }, [chatsUserId]);
+  const allConversations = useMemo(() => {
     if (currentRole === "Student") {
-      const student = currentUser;
-      const roster = buildCounselorTeamEntriesWithFallback(student, employees);
+      const roster = buildCounselorTeamEntriesWithFallback(currentUser, employees);
       if (roster.length === 0) return [];
       return roster.map((c) => ({
         id: c.id,
         name: c.badgeLabel ? `${c.name} (${c.badgeLabel})` : c.name,
         avatar: c.avatar || ""
       }));
-    } else if (isStudentMessagingStaffRole(currentRole)) {
-      // App already passes role-scoped students; avoid re-filtering here.
-      return students;
-    } else {
-      return students || [];
     }
-  };
-  const allConversations = getConversations();
-  const conversationList = allConversations.filter(
-    (u) => u.name.toLowerCase().includes(searchTerm.toLowerCase())
-  ).sort((a, b) => {
-    const lastMsgA = liveMessages.filter((m) => m.senderId === a.id || m.receiverId === a.id).sort((m1, m2) => new Date(m2.timestamp).getTime() - new Date(m1.timestamp).getTime())[0];
-    const lastMsgB = liveMessages.filter((m) => m.senderId === b.id || m.receiverId === b.id).sort((m1, m2) => new Date(m2.timestamp).getTime() - new Date(m1.timestamp).getTime())[0];
-    if (!lastMsgA) return 1;
-    if (!lastMsgB) return -1;
-    return new Date(lastMsgB.timestamp).getTime() - new Date(lastMsgA.timestamp).getTime();
-  });
+    return students || [];
+  }, [currentRole, currentUser, employees, students]);
+  const conversationList = useMemo(() => {
+    const term = String(searchTerm || "").trim().toLowerCase();
+    return allConversations
+      .filter((u) => String(u?.name || "").toLowerCase().includes(term))
+      .sort((a, b) => {
+        const lastMsgA = inboxByPeer[String(a.id || "")]?.lastMessage;
+        const lastMsgB = inboxByPeer[String(b.id || "")]?.lastMessage;
+        if (!lastMsgA) return lastMsgB ? 1 : 0;
+        if (!lastMsgB) return -1;
+        return new Date(lastMsgB.timestamp).getTime() - new Date(lastMsgA.timestamp).getTime();
+      });
+  }, [allConversations, searchTerm, inboxByPeer]);
   useEffect(() => {
     const peer = String(initialChatPeerId || "").trim();
     if (peer) {
@@ -146,6 +191,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       setSelectedConversationId(null);
       return;
     }
+    if (isChatsLoading) return;
     setSelectedConversationId((current) => {
       const currentId = String(current || "").trim();
       if (currentId && allConversations.some((entry) => String(entry?.id || "").trim() === currentId)) {
@@ -154,18 +200,13 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       if (!conversationList.length) {
         return current;
       }
-      if (liveMessages.length) {
-        const studentIdsWithMessages = new Set(
-          liveMessages.flatMap((m) => [String(m.senderId || ""), String(m.receiverId || "")])
-        );
-        const firstWithMessages = conversationList.find((student) =>
-          studentIdsWithMessages.has(String(student.id || ""))
-        );
-        if (firstWithMessages) return firstWithMessages.id;
-      }
+      const firstWithMessages = conversationList.find((student) =>
+        Boolean(inboxByPeer[String(student.id || "")]?.lastMessage)
+      );
+      if (firstWithMessages) return firstWithMessages.id;
       return conversationList[0].id;
     });
-  }, [initialChatPeerId, allConversations, conversationList, liveMessages]);
+  }, [initialChatPeerId, allConversations, conversationList, inboxByPeer, isChatsLoading]);
   useEffect(() => {
     setReplyingTo(null);
     setHighlightMessageId(null);
@@ -181,37 +222,89 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       ? pendingInitialPeer
       : null;
   const activeConversationId =
-    selectedConversationId || resolvedInitialPeer || (!pendingInitialPeer ? conversationList[0]?.id : null);
+    selectedConversationId ||
+    resolvedInitialPeer ||
+    (!pendingInitialPeer && !isChatsLoading ? conversationList[0]?.id : null);
   useEffect(() => {
-    if (isGhostMode) return;
     const peerId = String(activeConversationId || "").trim();
-    const myId = String(currentUser?.id || "").trim();
-    if (!peerId || !myId) return;
+    if (!peerId) {
+      setIsThreadLoading(false);
+      return;
+    }
     let cancelled = false;
-    const markPeerRead = async () => {
-      const result = await getChats(myId, { peerId });
-      if (cancelled || !result.ok) return;
-      const readAt = new Date().toISOString();
-      setLiveMessages((prev) => {
-        let changed = false;
-        const next = prev.map((m) => {
+    let isFirstLoad = true;
+    const cached = threadCacheRef.current[peerId];
+    const inboxPreview = inboxByPeerRef.current[peerId]?.lastMessage;
+    if (cached && cached.length) {
+      lastSignatureRef.current = threadSignatureByPeerRef.current[peerId] || chatListSignature(cached);
+      setLiveMessages(cached);
+      setIsThreadLoading(false);
+    } else {
+      setLiveMessages(inboxPreview ? [inboxPreview] : []);
+      setIsThreadLoading(true);
+    }
+    const loadThread = async () => {
+      const shouldMarkRead = isFirstLoad && !isGhostMode;
+      isFirstLoad = false;
+      const myId = String(currentUser?.id || "").trim();
+      const result = await getChats(chatsUserId, {
+        peerId,
+        thread: true,
+        markRead: shouldMarkRead && !shouldLoadAll
+      });
+      if (cancelled) return;
+      if (!result.ok) {
+        setIsThreadLoading(false);
+        return;
+      }
+      let incoming = result.data || [];
+      if (shouldMarkRead && myId) {
+        const readAt = new Date().toISOString();
+        incoming = incoming.map((m) => {
           if (String(m.receiverId || "").trim() !== myId) return m;
           if (String(m.senderId || "").trim() !== peerId) return m;
           if (m.read === true) return m;
-          changed = true;
           return { ...m, read: true, readAt };
         });
-        if (changed) {
-          lastSignatureRef.current = `${next.length}:${next.map((m) => `${m.id}:${m.timestamp}:${m.read === true ? "1" : "0"}`).join("|")}`;
+        if (shouldLoadAll) {
+          getChats(myId, { peerId, thread: true });
         }
-        return changed ? next : prev;
+      }
+      const signature = chatListSignature(incoming);
+      threadCacheRef.current[peerId] = incoming;
+      threadSignatureByPeerRef.current[peerId] = signature;
+      if (signature !== lastSignatureRef.current) {
+        lastSignatureRef.current = signature;
+        setLiveMessages(incoming);
+      }
+      setIsThreadLoading(false);
+      const last = latestMessageInThread(incoming);
+      setInboxByPeer((prev) => {
+        const current = prev[peerId];
+        const unreadCount = shouldMarkRead ? 0 : current?.unreadCount || 0;
+        if (
+          current?.lastMessage?.id === last?.id &&
+          current?.lastMessage?.timestamp === last?.timestamp &&
+          current?.unreadCount === unreadCount
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [peerId]: {
+            lastMessage: last || current?.lastMessage || null,
+            unreadCount
+          }
+        };
       });
     };
-    markPeerRead();
+    loadThread();
+    const intervalId = setInterval(loadThread, POLL_MS.chats);
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
-  }, [activeConversationId, currentUser?.id, isGhostMode]);
+  }, [activeConversationId, chatsUserId, currentUser?.id, isGhostMode, shouldLoadAll]);
   const MESSAGE_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
   const getMessageContentKey = (msg) => {
     const content = String(msg?.content || "").trim().toLowerCase();
@@ -320,7 +413,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       };
     }
     const assignedId = String(activeStudentPeer.branchWhatsappMessengerUserId || "").trim();
-    if (assignedId) {
+    if (assignedId && !branchWhatsappSharedEnabled) {
       setPrimaryWhatsappStatusUserId(assignedId);
       return () => {
         cancelled = true;
@@ -331,13 +424,15 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       const accounts = branchLabel ? await loadBranchWhatsappAccounts(branchLabel) : [];
       if (cancelled) return;
       setPrimaryWhatsappStatusUserId(
-        resolvePrimaryWhatsappMessengerUserId(activeStudentPeer, accounts)
+        resolvePrimaryWhatsappMessengerUserId(activeStudentPeer, accounts, {
+          sharedAccount: branchWhatsappSharedEnabled === true,
+        })
       );
     })();
     return () => {
       cancelled = true;
     };
-  }, [branchWhatsappEnabled, currentRole, relevantCounselorId, activeStudentPeer?.id, activeStudentPeer?.branchWhatsappMessengerUserId]);
+  }, [branchWhatsappEnabled, branchWhatsappSharedEnabled, currentRole, relevantCounselorId, activeStudentPeer?.id, activeStudentPeer?.branchWhatsappMessengerUserId]);
   const whatsappStatusUserId =
     branchWhatsappEnabled && currentRole !== "Student"
       ? primaryWhatsappStatusUserId
@@ -371,11 +466,33 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     try {
       const studentId = currentRole === "Student" ? "" : String(activeConversationId || "").trim();
       await syncWhatsappHistory(whatsappStatusUserId, studentId);
-      const shouldLoadAll = currentRole === "Manager" || currentRole === "Team Lead" || currentRole === "Admin";
-      const result = await getChats(shouldLoadAll ? "" : currentUser?.id, { markRead: false });
-      if (result.ok) {
-        setLiveMessages(result.data || []);
-        lastSignatureRef.current = "";
+      const peerId = String(activeConversationId || "").trim();
+      const [inboxResult, threadResult] = await Promise.all([
+        getChats(chatsUserId, { markRead: false, summary: true }),
+        peerId
+          ? getChats(chatsUserId, { markRead: false, peerId, thread: true })
+          : Promise.resolve({ ok: false })
+      ]);
+      if (inboxResult.ok) {
+        const rows = inboxResult.data || [];
+        inboxSignatureRef.current = inboxRowsSignature(rows);
+        const next = {};
+        for (const row of rows) {
+          const id = String(row?.peerId || "").trim();
+          if (!id) continue;
+          next[id] = {
+            lastMessage: row.lastMessage || null,
+            unreadCount: Number(row.unreadCount) || 0
+          };
+        }
+        setInboxByPeer(next);
+      }
+      if (threadResult.ok && peerId) {
+        const incoming = threadResult.data || [];
+        lastSignatureRef.current = chatListSignature(incoming);
+        threadCacheRef.current[peerId] = incoming;
+        threadSignatureByPeerRef.current[peerId] = lastSignatureRef.current;
+        setLiveMessages(incoming);
       }
     } catch {
       // Sync failed silently; next poll will pick up any new messages.
@@ -472,10 +589,23 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     let replyUsed = false;
     const appendSentMessage = (message) => {
       if (!message?.id) return;
+      const peer = String(activeConversationId || "").trim();
       setLiveMessages((prev) => {
         if (prev.some((msg) => msg.id === message.id)) return prev;
-        return [...prev, message];
+        const next = [...prev, message];
+        if (peer) {
+          threadCacheRef.current[peer] = next;
+          threadSignatureByPeerRef.current[peer] = chatListSignature(next);
+          lastSignatureRef.current = threadSignatureByPeerRef.current[peer];
+        }
+        return next;
       });
+      if (peer) {
+        setInboxByPeer((prev) => ({
+          ...prev,
+          [peer]: { lastMessage: message, unreadCount: 0 }
+        }));
+      }
     };
     try {
       if (text) {
@@ -655,7 +785,10 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     !overlayMode && /* @__PURE__ */ jsxs("div", { className: "w-80 border-r border-gray-200 flex flex-col bg-gray-50/50", children: [
       /* @__PURE__ */ jsxs("div", { className: "p-4 border-b border-gray-200 bg-white", children: [
         /* @__PURE__ */ jsxs("h2", { className: "font-bold text-slate-900 mb-3 flex items-center justify-between", children: [
-          /* @__PURE__ */ jsx("span", { children: "Inbox" }),
+          /* @__PURE__ */ jsxs("span", { className: "flex items-center gap-2", children: [
+            /* @__PURE__ */ jsx("span", { children: "Inbox" }),
+            isInboxRefreshing ? /* @__PURE__ */ jsx(RefreshCw, { size: 12, className: "animate-spin text-slate-400" }) : null
+          ] }),
           isGhostMode && /* @__PURE__ */ jsxs("span", { className: "text-[10px] bg-slate-900 text-white px-2 py-0.5 rounded-full flex items-center gap-1", children: [
             /* @__PURE__ */ jsx(Eye, { size: 10 }),
             " Ghost Mode"
@@ -679,21 +812,10 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-700", children: "No matching chats" }),
         /* @__PURE__ */ jsx("p", { className: "text-xs mt-1", children: "Try a different name or clear the search." })
       ] }) : conversationList.map((user) => {
-        const relatedMsgs = liveMessages.filter(
-          (m) => m.senderId === user.id || m.receiverId === user.id
-        ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        const lastMsg = relatedMsgs[0];
+        const inboxEntry = inboxByPeer[String(user.id || "")];
+        const lastMsg = inboxEntry?.lastMessage;
         const isSelected = activeConversationId === user.id;
-        const myId = String(currentUser?.id || "").trim();
-        const unreadCount = isGhostMode
-          ? relatedMsgs.filter((m) => {
-              if (m.read === true) return false;
-              if (String(m.senderId || "").trim() !== String(user.id || "").trim()) return false;
-              return String(m.receiverId || "").trim() !== String(user.id || "").trim();
-            }).length
-          : relatedMsgs.filter(
-              (m) => String(m.receiverId || "").trim() === myId && m.read !== true
-            ).length;
+        const unreadCount = Number(inboxEntry?.unreadCount) || 0;
         const hasUnread = unreadCount > 0;
         const lastMessagePreview = lastMsg ? getLastMessagePreview(lastMsg) : "";
         const lastMessageSender = lastMsg ? getSenderName(lastMsg.senderId) : "";
@@ -777,10 +899,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { ref: messagesContainerRef, className: "flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50", children: [
-        isChatsLoading ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center h-full text-slate-400", children: [
-          /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mb-4 text-slate-300" }),
-          /* @__PURE__ */ jsx("p", { children: "Loading chats..." }),
-          /* @__PURE__ */ jsx("p", { className: "text-xs", children: "Please wait a moment." })
+        isThreadLoading && activeMessages.length > 0 ? /* @__PURE__ */ jsx("p", { className: "text-center text-[10px] text-slate-400 -mt-1", children: "Updating conversation..." }) : null,
+        isThreadLoading && activeMessages.length === 0 ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center h-full text-slate-400", children: [
+          /* @__PURE__ */ jsx(RefreshCw, { size: 28, className: "mb-4 text-slate-300 animate-spin" }),
+          /* @__PURE__ */ jsx("p", { children: "Loading messages..." }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs", children: "Showing latest chat while history updates." })
         ] }) : activeMessages.length === 0 ? /* @__PURE__ */ jsxs("div", { className: "flex flex-col items-center justify-center h-full text-slate-400", children: [
           /* @__PURE__ */ jsx(MessageCircle, { size: 48, className: "mb-4 text-slate-300" }),
           /* @__PURE__ */ jsx("p", { children: "No messages yet." }),

@@ -130,7 +130,8 @@ async function handle(req, res, url) {
         return true;
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
-      const data = sanitizeWhatsappStatusForViewer(await startWhatsappSession(userId), context);
+      const sessionUserId = String(context.statusUserId || userId).trim() || userId;
+      const data = sanitizeWhatsappStatusForViewer(await startWhatsappSession(sessionUserId), context);
       sendJson(res, 200, { ok: true, data, context });
     } catch (error) {
       console.error("Failed to start WhatsApp connection:", error);
@@ -159,7 +160,8 @@ async function handle(req, res, url) {
         return true;
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
-      const data = sanitizeWhatsappStatusForViewer(await regenerateWhatsappQrCode(userId), context);
+      const sessionUserId = String(context.statusUserId || userId).trim() || userId;
+      const data = sanitizeWhatsappStatusForViewer(await regenerateWhatsappQrCode(sessionUserId), context);
       sendJson(res, 200, { ok: true, data, context });
     } catch (error) {
       const message = String(error?.message || "Failed to regenerate WhatsApp QR code.");
@@ -187,7 +189,8 @@ async function handle(req, res, url) {
         return true;
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
-      const data = sanitizeWhatsappStatusForViewer(await stopWhatsappSession(userId), context);
+      const sessionUserId = String(context.statusUserId || userId).trim() || userId;
+      const data = sanitizeWhatsappStatusForViewer(await stopWhatsappSession(sessionUserId), context);
       sendJson(res, 200, { ok: true, data, context });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to disconnect WhatsApp." });

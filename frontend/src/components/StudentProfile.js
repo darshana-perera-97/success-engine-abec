@@ -342,7 +342,7 @@ const KeyDetails = ({
     }) }),
     showWhatsappContact ? /* @__PURE__ */ jsxs("div", { className: "pt-4 mt-1 border-t border-gray-100", children: [
       /* @__PURE__ */ jsxs("div", { className: "mb-2 flex items-center justify-between gap-2", children: [
-        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: "Primary WhatsApp contact" }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs font-semibold text-slate-700", children: whatsappContactAccount?.shared ? "Branch WhatsApp" : "Primary WhatsApp contact" }),
         whatsappContactChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
       ] }),
       whatsappContactLoading ? /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500", children: [
@@ -353,10 +353,10 @@ const KeyDetails = ({
           /* @__PURE__ */ jsx("div", { className: "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700", children: /* @__PURE__ */ jsx(MessageSquare, { size: 15, strokeWidth: 1.75 }) }),
           /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
             /* @__PURE__ */ jsx("p", { className: "text-sm font-semibold text-slate-900 truncate", children: formatWhatsappContactCardTitle(whatsappContactAccount) }),
-            whatsappContactAccount?.name ? /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-600 mt-0.5 truncate", children: [
+            whatsappContactAccount?.name && whatsappContactAccount.name !== "Branch WhatsApp" ? /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-600 mt-0.5 truncate", children: [
               "Staff: ",
               whatsappContactAccount.name
-            ] }) : null,
+            ] }) : whatsappContactAccount?.name === "Branch WhatsApp" ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-600 mt-0.5 truncate", children: "Shared branch account" }) : null,
             whatsappContactAccount?.whatsappNumber ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-0.5 truncate", children: whatsappContactAccount.whatsappNumber }) : null,
             !whatsappContactAccount?.connected ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-amber-700 mt-1", children: "Account is not connected right now." }) : null
           ] })
@@ -1019,6 +1019,7 @@ const StudentProfile = ({
   onCompleteStudentIntakeTask,
   counselorIdentitySet = null,
   branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false,
   adminChatEnabled = false
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1475,7 +1476,10 @@ const StudentProfile = ({
   const canRequestCountryChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestBranchChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestWhatsappContactChange =
-    branchWhatsappEnabled === true && userRole !== "Student" && userRole !== "Accountant";
+    branchWhatsappEnabled === true &&
+    branchWhatsappSharedEnabled !== true &&
+    userRole !== "Student" &&
+    userRole !== "Accountant";
   const canRequestIntakeChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestStudentDetailChange = userRole !== "Student" && userRole !== "Accountant";
   const profileIntakeOptions = useIntakeOptionsForCountry(localStudent?.country);
@@ -1608,11 +1612,14 @@ const StudentProfile = ({
       return;
     }
     setWhatsappContactLoading(true);
-    const account = await resolveStudentWhatsappContactAccount(localStudentRef.current);
+    const account = await resolveStudentWhatsappContactAccount(localStudentRef.current, "", {
+      sharedAccount: branchWhatsappSharedEnabled === true,
+    });
     setWhatsappContactAccount(account);
     setWhatsappContactLoading(false);
   }, [
     branchWhatsappEnabled,
+    branchWhatsappSharedEnabled,
     localStudent?.branch,
     localStudent?.id,
     localStudent?.branchWhatsappMessengerUserId,
@@ -1667,7 +1674,9 @@ const StudentProfile = ({
     if (primaryWhatsappPromptStudentIdRef.current === studentId) return;
     let cancelled = false;
     (async () => {
-      const readiness = await getStudentPrimaryWhatsappSendReadiness(localStudent);
+      const readiness = await getStudentPrimaryWhatsappSendReadiness(localStudent, {
+        sharedAccount: branchWhatsappSharedEnabled === true,
+      });
       if (cancelled || readiness.ready) return;
       primaryWhatsappPromptStudentIdRef.current = studentId;
       setPrimaryWhatsappConnectPrompt({
@@ -1681,6 +1690,7 @@ const StudentProfile = ({
     };
   }, [
     branchWhatsappEnabled,
+    branchWhatsappSharedEnabled,
     userRole,
     localStudent,
     whatsappContactLoading,
@@ -3212,6 +3222,7 @@ const StudentProfile = ({
           currentUserId: currentUser?.id || authenticatedUser?.id,
           adminChatEnabled,
           branchWhatsappEnabled,
+          branchWhatsappSharedEnabled,
           onOpenIntegrations: typeof onNavigate === "function" ? () => onNavigate("integration") : undefined,
           onOpenStudentProfile:
             canRequestWhatsappContactChange && !whatsappContactChangePending

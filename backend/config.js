@@ -92,6 +92,7 @@ const DEFAULT_SYSTEM_DATA = {
   adminChatEnabled: false,
   branchCountriesEnabled: false,
   branchWhatsappEnabled: false,
+  branchWhatsappSharedEnabled: false,
   goldLoansAcceptable: true,
 };
 

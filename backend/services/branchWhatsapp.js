@@ -32,6 +32,11 @@ async function isBranchWhatsappEnabled() {
   return systemData.branchWhatsappEnabled === true;
 }
 
+async function isBranchWhatsappSharedEnabled() {
+  const systemData = await readSystemData();
+  return systemData.branchWhatsappEnabled === true && systemData.branchWhatsappSharedEnabled === true;
+}
+
 async function resolveUserRecord(userId) {
   const id = String(userId || "").trim();
   if (!id) return null;
@@ -72,31 +77,71 @@ async function findBranchManagers(branch, users = null) {
   return managers;
 }
 
-function pickStoredBranchMessenger(branch, users, managers) {
+function pickStoredBranchMessenger(branch, users, managers, { allowFormerManagers = false } = {}) {
   const messengerUserId = String(branch?.whatsappMessengerUserId || "").trim();
   if (!messengerUserId) return null;
   const messenger = users.find((user) => String(user.id || "") === messengerUserId);
-  if (!messenger || !isBranchWhatsappManagerRole(messenger.role)) return null;
+  if (!messenger) return null;
+  if (allowFormerManagers) return messenger;
+  if (!isBranchWhatsappManagerRole(messenger.role)) return null;
   if (!managers.some((manager) => String(manager.id || "") === messengerUserId)) return null;
   return messenger;
 }
 
-function buildBranchWhatsappAccountRow(manager, primaryUserId) {
+function buildBranchWhatsappAccountRow(manager, primaryUserId, { shared = false } = {}) {
   const userId = String(manager?.id || "").trim();
   const state = userId ? whatsappSessions.get(userId) : null;
   const status = String(state?.status || "disconnected");
   const connected = isWhatsappSessionConnected(userId);
+  const staffName = String(manager?.username || manager?.email || "").trim();
   return {
     userId,
-    name: String(manager?.username || manager?.email || "").trim(),
+    name: shared ? "Branch WhatsApp" : staffName,
+    linkedByName: shared ? staffName : "",
     status,
     connected,
     whatsappName: connected ? String(state?.whatsappName || "").trim() : "",
     whatsappNumber: connected ? String(state?.whatsappNumber || "").trim() : "",
     connectedAt: connected ? String(state?.connectedAt || "").trim() : "",
     isPrimary: Boolean(primaryUserId && userId === primaryUserId),
+    shared,
     error: connected ? "" : String(state?.error || "").trim(),
   };
+}
+
+async function resolveCanonicalBranchMessengerUserId(branch, users = null, actorUserId = "") {
+  if (!branch?.id) return "";
+  const allUsers = users || (await readUsers());
+  const managers = await findBranchManagers(branch, allUsers);
+  const stored = pickStoredBranchMessenger(branch, allUsers, managers, { allowFormerManagers: true });
+  if (stored?.id) return String(stored.id).trim();
+
+  for (const manager of managers) {
+    const id = String(manager.id || "").trim();
+    if (!id) continue;
+    const state = whatsappSessions.get(id);
+    const status = String(state?.status || "");
+    if (status && status !== "disconnected") return id;
+  }
+
+  const actorId = String(actorUserId || "").trim();
+  if (actorId && managers.some((manager) => String(manager.id || "") === actorId)) {
+    return actorId;
+  }
+
+  const first = managers.find((manager) => String(manager.id || "").trim());
+  return first ? String(first.id).trim() : "";
+}
+
+async function ensureSharedBranchMessenger(branch, actorUserId = "") {
+  if (!branch?.id) return "";
+  const canonicalId = await resolveCanonicalBranchMessengerUserId(branch, null, actorUserId);
+  if (!canonicalId) return "";
+  const storedId = String(branch?.whatsappMessengerUserId || "").trim();
+  if (storedId !== canonicalId) {
+    await setBranchWhatsappMessenger(branch.id, canonicalId);
+  }
+  return canonicalId;
 }
 
 const BRANCH_WHATSAPP_STATUS_PRIORITY = [
@@ -141,6 +186,15 @@ async function listBranchWhatsappAccounts(branch, users = null) {
   if (!branch?.id) return [];
   const allUsers = users || (await readUsers());
   const managers = await findBranchManagers(branch, allUsers);
+  const shared = await isBranchWhatsappSharedEnabled();
+  if (shared) {
+    const canonicalId = await resolveCanonicalBranchMessengerUserId(branch, allUsers);
+    if (!canonicalId) return [];
+    const messenger =
+      allUsers.find((user) => String(user.id || "") === canonicalId) ||
+      { id: canonicalId, username: "Branch WhatsApp", role: "Manager" };
+    return [buildBranchWhatsappAccountRow(messenger, canonicalId, { shared: true })];
+  }
   const primaryUserId = String(branch?.whatsappMessengerUserId || "").trim();
   const accounts = managers.map((manager) => buildBranchWhatsappAccountRow(manager, primaryUserId));
   accounts.sort((a, b) => {
@@ -155,7 +209,10 @@ async function findBranchWhatsappMessengerUser(branch) {
   if (!branch?.id) return null;
   const users = await readUsers();
   const managers = await findBranchManagers(branch, users);
-  const storedMessenger = pickStoredBranchMessenger(branch, users, managers);
+  const shared = await isBranchWhatsappSharedEnabled();
+  const storedMessenger = pickStoredBranchMessenger(branch, users, managers, {
+    allowFormerManagers: shared,
+  });
 
   if (storedMessenger) {
     const storedId = String(storedMessenger.id || "").trim();
@@ -239,6 +296,9 @@ async function studentPrimaryWhatsappUnavailableReason(student) {
   if (!branch) {
     return "Student branch is not set or does not match a configured branch office.";
   }
+  if (await isBranchWhatsappSharedEnabled()) {
+    return "The branch WhatsApp account for this student's team is not connected. Connect it under Integrations.";
+  }
   const assignedId = resolveStudentPrimaryWhatsappMessengerUserId(student);
   if (assignedId) {
     return "The Primary WhatsApp contact for this student is not connected. Connect that account or assign a different Primary WhatsApp contact.";
@@ -246,16 +306,34 @@ async function studentPrimaryWhatsappUnavailableReason(student) {
   return "No Primary WhatsApp contact is connected for this student. Connect a branch WhatsApp account or assign one on the student profile.";
 }
 
+async function applySharedBranchWhatsappMessenger(student) {
+  if (!student || !(await isBranchWhatsappSharedEnabled())) return student;
+  const branch = await resolveBranchForStudent(student);
+  if (!branch) return student;
+  const canonicalId = await resolveCanonicalBranchMessengerUserId(branch);
+  if (canonicalId) {
+    student.branchWhatsappMessengerUserId = canonicalId;
+  }
+  return student;
+}
+
 /** Branch-linked WhatsApp sender for a student when branch mode is enabled. */
 async function resolveStudentBranchWhatsappSenderId(student) {
   if (!(await isBranchWhatsappEnabled()) || !student) return null;
+
+  const studentBranch = await resolveBranchForStudent(student);
+  if (await isBranchWhatsappSharedEnabled()) {
+    if (!studentBranch) return null;
+    const messenger = await findBranchWhatsappMessengerUser(studentBranch);
+    const messengerId = messenger?.id ? String(messenger.id).trim() : "";
+    return messengerId && isWhatsappSessionConnected(messengerId) ? messengerId : null;
+  }
 
   const assignedId = resolveStudentPrimaryWhatsappMessengerUserId(student);
   if (assignedId) {
     return isWhatsappSessionConnected(assignedId) ? assignedId : null;
   }
 
-  const studentBranch = await resolveBranchForStudent(student);
   if (!studentBranch) return null;
 
   const messenger = await findBranchWhatsappMessengerUser(studentBranch);
@@ -267,6 +345,21 @@ async function validateStudentBranchWhatsappMessengerUserId(student, userId) {
   if (!(await isBranchWhatsappEnabled())) return null;
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return null;
+
+  if (await isBranchWhatsappSharedEnabled()) {
+    const studentBranch = await resolveBranchForStudent(student);
+    if (!studentBranch) {
+      return "Student branch is required before assigning the branch WhatsApp account.";
+    }
+    const canonicalId = await resolveCanonicalBranchMessengerUserId(studentBranch);
+    if (canonicalId && cleanUserId !== canonicalId) {
+      return "This branch uses a single shared WhatsApp account. Student messages must use that branch account.";
+    }
+    if (!(await isBranchWhatsappAccountForStudentBranch(student, cleanUserId))) {
+      return "Selected WhatsApp account must belong to the student's branch.";
+    }
+    return null;
+  }
 
   const users = await readUsers();
   const user = users.find((row) => String(row.id || "") === cleanUserId);
@@ -314,6 +407,7 @@ async function resolveWhatsappIntegrationContext(viewerUserId) {
     return {
       mode: "personal",
       branchWhatsappEnabled: false,
+      sharedAccount: false,
       canManage: false,
       statusUserId: "",
       messengerUserId: "",
@@ -326,6 +420,7 @@ async function resolveWhatsappIntegrationContext(viewerUserId) {
     return {
       mode: "personal",
       branchWhatsappEnabled: false,
+      sharedAccount: false,
       canManage: true,
       statusUserId: String(viewer.id || ""),
       messengerUserId: String(viewer.id || ""),
@@ -337,6 +432,7 @@ async function resolveWhatsappIntegrationContext(viewerUserId) {
     return {
       mode: "personal",
       branchWhatsappEnabled: true,
+      sharedAccount: await isBranchWhatsappSharedEnabled(),
       canManage: true,
       statusUserId: String(viewer.id || ""),
       messengerUserId: String(viewer.id || ""),
@@ -344,8 +440,15 @@ async function resolveWhatsappIntegrationContext(viewerUserId) {
       messengerName: "",
     };
   }
-  const branch = await resolveBranchForUser(viewer);
+  let branch = await resolveBranchForUser(viewer);
   const branchLabel = String(branch?.location || viewer.branch || "").trim();
+  const sharedAccount = await isBranchWhatsappSharedEnabled();
+  if (sharedAccount && branch?.id && isBranchWhatsappManagerRole(viewer.role)) {
+    const canonicalId = await ensureSharedBranchMessenger(branch, viewer.id);
+    if (canonicalId) {
+      branch = { ...branch, whatsappMessengerUserId: canonicalId };
+    }
+  }
   const accounts = branch ? await listBranchWhatsappAccounts(branch) : [];
   const connectedAccounts = accounts.filter((row) => row.connected);
   const primaryAccount =
@@ -358,11 +461,16 @@ async function resolveWhatsappIntegrationContext(viewerUserId) {
   const viewerId = String(viewer.id || "").trim();
   const isManager = isBranchWhatsappManagerRole(viewer.role);
   const canManage = isManager;
-  const statusUserId = isManager ? viewerId : messengerUserId;
+  const statusUserId = sharedAccount
+    ? messengerUserId || viewerId
+    : isManager
+      ? viewerId
+      : messengerUserId;
   const messengerName = String(primaryAccount?.name || "").trim();
   return {
     mode: "branch",
     branchWhatsappEnabled: true,
+    sharedAccount,
     canManage,
     statusUserId,
     messengerUserId,
@@ -436,6 +544,7 @@ async function onWhatsappSessionReady(userId) {
 
 async function onWhatsappSessionDisconnected(userId) {
   if (!(await isBranchWhatsappEnabled())) return;
+  if (await isBranchWhatsappSharedEnabled()) return;
   const user = await resolveUserRecord(userId);
   if (!user || !isBranchWhatsappManagerRole(user.role)) return;
   const branch = await resolveBranchForUser(user);
@@ -466,11 +575,15 @@ module.exports = {
   isBranchWhatsappManagerRole,
   isWhatsappSessionConnected,
   isBranchWhatsappEnabled,
+  isBranchWhatsappSharedEnabled,
   resolveUserRecord,
   resolveBranchForUser,
   resolveBranchForStudent,
   resolveStudentPrimaryWhatsappMessengerUserId,
   studentPrimaryWhatsappUnavailableReason,
+  applySharedBranchWhatsappMessenger,
+  resolveCanonicalBranchMessengerUserId,
+  ensureSharedBranchMessenger,
   resolveStudentBranchWhatsappSenderId,
   listBranchWhatsappAccounts,
   findBranchWhatsappMessengerUser,

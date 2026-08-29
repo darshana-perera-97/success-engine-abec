@@ -167,6 +167,7 @@ export function RequestedStudents({
   scopeBranch = null,
   branchCountriesLimited = false,
   branchWhatsappEnabled = false,
+  branchWhatsappSharedEnabled = false,
   onAddFromRequest
 }) {
   const [rows, setRows] = useState([]);
@@ -538,7 +539,7 @@ export function RequestedStudents({
       setModalError("Choose a primary counselor for this student.");
       return;
     }
-    if (branchWhatsappEnabled && !String(branchWhatsappMessengerUserId || "").trim()) {
+    if (branchWhatsappEnabled && !branchWhatsappSharedEnabled && !String(branchWhatsappMessengerUserId || "").trim()) {
       setModalError("Choose a primary WhatsApp account for this student.");
       return;
     }
@@ -1092,7 +1093,7 @@ export function RequestedStudents({
                 )}
               </div>
 
-              {branchWhatsappEnabled ? (
+              {branchWhatsappEnabled && !branchWhatsappSharedEnabled ? (
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Primary WhatsApp account
@@ -1171,7 +1172,7 @@ export function RequestedStudents({
                 </Button>
                 <Button
                   type="submit"
-                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !primaryCounselorId || (branchWhatsappEnabled && !branchWhatsappMessengerUserId)}
+                  disabled={modalSaving || accountsLoading || counselorRows.length === 0 || !primaryCounselorId || (branchWhatsappEnabled && !branchWhatsappSharedEnabled && !branchWhatsappMessengerUserId)}
                   isLoading={modalSaving}
                 >
                   Add student
