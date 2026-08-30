@@ -48,6 +48,17 @@ const inboxRowsSignature = (rows) =>
     )
     .join("|");
 
+const isStudentPortalWhatsappSkip = (delivery) =>
+  String(delivery?.reason || "").includes("Student portal message");
+
+const isWhatsappDeliveryMissed = (delivery) => {
+  if (!delivery || typeof delivery !== "object") return false;
+  const status = String(delivery.status || "").trim().toLowerCase();
+  if (status === "failed") return true;
+  if (status === "skipped" && !isStudentPortalWhatsappSkip(delivery)) return true;
+  return false;
+};
+
 const latestMessageInThread = (msgs) => {
   let latest = null;
   let latestTs = -1;
@@ -978,7 +989,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
             })() : null,
             /* @__PURE__ */ jsxs("div", { className: `mt-1 flex items-center justify-end gap-1 text-[10px] whitespace-nowrap ${isMe ? "text-indigo-700/80" : "text-slate-400"}`, children: [
               formatMessageDateTime(msg.timestamp),
-              isMe && (msg.read ? /* @__PURE__ */ jsx(CheckCheck, { size: 12, className: "text-[#53BDEB]", title: "Seen" }) : /* @__PURE__ */ jsx(Check, { size: 12, className: "text-slate-400", title: "Sent" }))
+              isMe && isWhatsappDeliveryMissed(msg.whatsappDelivery) ? /* @__PURE__ */ jsx("span", { className: "text-amber-600 font-semibold", title: String(msg.whatsappDelivery?.reason || "Not sent on WhatsApp"), children: "Not on WhatsApp" }) : isMe && (msg.read ? /* @__PURE__ */ jsx(CheckCheck, { size: 12, className: "text-[#53BDEB]", title: "Seen" }) : /* @__PURE__ */ jsx(Check, { size: 12, className: "text-slate-400", title: "Sent" }))
             ] })
           ] }) }, msg.id);
         }),

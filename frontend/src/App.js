@@ -2194,6 +2194,19 @@ function App({ initialView = "dashboard" }) {
       addNotification("Message failed", result.error || "Failed to send message.", "error");
       return { ok: false, error: result.error || "Failed to send message." };
     }
+    const wa = result.data?.whatsappDelivery;
+    const waStatus = String(wa?.status || "").trim().toLowerCase();
+    const waReason = String(wa?.reason || "").trim();
+    const studentPortalSkip = waReason.includes("Student portal message");
+    if (waStatus === "failed") {
+      addNotification(
+        "WhatsApp not delivered",
+        waReason || "The message was saved in this chat but was not sent on WhatsApp.",
+        "warning"
+      );
+    } else if (waStatus === "skipped" && waReason && !studentPortalSkip) {
+      addNotification("WhatsApp not sent", waReason, "warning");
+    }
     return { ok: true, data: result.data };
   };
   const handleReassignDeskTask = async (sourceTask) => {
