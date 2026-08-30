@@ -622,6 +622,9 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     state.silentReconnect = false;
     state.reconnectAttempts = 0;
     state.lastUpdatedAt = new Date().toISOString();
+    installWhatsappLidChatPatch(client).catch(() => {
+      // LID patch is best-effort; send path still resolves chat IDs.
+    });
     onWhatsappSessionReady(cleanUserId).catch(() => {
       // Branch linkage is best-effort; session remains connected.
     });
@@ -1118,6 +1121,149 @@ function toWhatsAppChatId(phone) {
   const digitsOnly = String(normalized || "").replace(/[^\d]/g, "");
   if (!digitsOnly) return "";
   return `${digitsOnly}@c.us`;
+}
+
+function serializeWhatsappWid(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value._serialized || value.id?._serialized || value.id || "").trim();
+}
+
+function isWhatsappLidError(error) {
+  const msg = String(error?.message || error || "").toLowerCase();
+  return msg.includes("no lid") || msg.includes("lid is missing") || msg.includes("accountlid");
+}
+
+async function installWhatsappLidChatPatch(client) {
+  if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return;
+  await client.pupPage.evaluate(() => {
+    if (!window.WWebJS || typeof window.WWebJS.getChat !== "function") return;
+    if (window.WWebJS.__seLidPatched) return;
+    const originalGetChat = window.WWebJS.getChat.bind(window.WWebJS);
+    window.WWebJS.getChat = async (chatId, options = {}) => {
+      try {
+        return await originalGetChat(chatId, options);
+      } catch (error) {
+        const msg = String(error?.message || error || "");
+        if (!/no lid|lid is missing|accountlid/i.test(msg)) throw error;
+      }
+      const digits = String(chatId || "")
+        .split("@")[0]
+        .replace(/[^\d]/g, "");
+      if (!digits) return undefined;
+      let lidSerialized = "";
+      try {
+        const query = window.require("WAWebContactSyncUtils").constructUsyncDeltaQuery([
+          { type: "add", phoneNumber: digits },
+        ]);
+        const result = await query.execute();
+        const lid = result?.list?.[0]?.lid;
+        if (lid) {
+          const wid = window.require("WAWebWidFactory").createWid(lid);
+          lidSerialized = wid?._serialized || String(lid);
+        }
+      } catch {
+        lidSerialized = "";
+      }
+      if (!lidSerialized) return undefined;
+      return originalGetChat(lidSerialized, options);
+    };
+    window.WWebJS.__seLidPatched = true;
+  });
+}
+
+async function resolveLidViaUsync(client, phoneOrChatId) {
+  if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return "";
+  const digits = normalizePhoneDigits(String(phoneOrChatId || "").split("@")[0]);
+  if (!digits) return "";
+  try {
+    return String(
+      (await client.pupPage.evaluate(async (digitsOnly) => {
+        try {
+          const query = window.require("WAWebContactSyncUtils").constructUsyncDeltaQuery([
+            { type: "add", phoneNumber: digitsOnly },
+          ]);
+          const result = await query.execute();
+          const lid = result?.list?.[0]?.lid;
+          if (!lid) return "";
+          const wid = window.require("WAWebWidFactory").createWid(lid);
+          return wid?._serialized || String(lid);
+        } catch {
+          return "";
+        }
+      }, digits)) || ""
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+async function findKnownStudentWhatsappChatId(studentId) {
+  const id = String(studentId || "").trim();
+  if (!id) return "";
+  try {
+    const chats = await readChats();
+    for (let index = chats.length - 1; index >= 0; index -= 1) {
+      const chat = chats[index];
+      const involves = String(chat?.senderId || "") === id || String(chat?.receiverId || "") === id;
+      if (!involves) continue;
+      const chatId = String(chat?.whatsappDelivery?.chatId || "").trim();
+      if (chatId && chatId.includes("@") && !isIgnoredWhatsappIncomingChatId(chatId)) {
+        return chatId;
+      }
+    }
+  } catch {
+    // Chat history lookup is best-effort.
+  }
+  try {
+    const incoming = await readWhatsappIncoming();
+    for (let index = incoming.length - 1; index >= 0; index -= 1) {
+      const row = incoming[index];
+      if (String(row?.mappedStudentId || "").trim() !== id) continue;
+      const from = String(row?.from || "").trim();
+      if (from && from.includes("@") && !isIgnoredWhatsappIncomingChatId(from)) {
+        return from;
+      }
+    }
+  } catch {
+    // Incoming lookup is best-effort.
+  }
+  return "";
+}
+
+async function resolveWhatsappSendChatId(client, student, phone) {
+  const fallback = toWhatsAppChatId(phone);
+  const candidates = [];
+  const pushCandidate = (value) => {
+    const id = serializeWhatsappWid(value);
+    if (id && !candidates.includes(id) && !isIgnoredWhatsappIncomingChatId(id)) {
+      candidates.push(id);
+    }
+  };
+
+  pushCandidate(await findKnownStudentWhatsappChatId(String(student?.id || "")));
+  if (client && typeof client.getNumberId === "function") {
+    try {
+      pushCandidate(await client.getNumberId(normalizePhoneDigits(phone)));
+    } catch {
+      // Number lookup can fail when WhatsApp Web has not synced the contact yet.
+    }
+  }
+  if (client && typeof client.getContactLidAndPhone === "function" && fallback) {
+    try {
+      const pairs = await client.getContactLidAndPhone([fallback, ...candidates.slice(0, 1)]);
+      for (const pair of Array.isArray(pairs) ? pairs : []) {
+        pushCandidate(pair?.lid);
+        pushCandidate(pair?.pn);
+      }
+    } catch {
+      // LID lookup is best-effort.
+    }
+  }
+  const syncedLid = await resolveLidViaUsync(client, phone || fallback);
+  pushCandidate(syncedLid);
+  pushCandidate(fallback);
+  return candidates[0] || fallback;
 }
 
 function normalizePhoneDigits(phone) {
@@ -1764,7 +1910,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
   } else {
     const sender = { id: effectiveSenderId };
     const phone = resolveStudentWhatsappPhone(student);
-    const waChatId = toWhatsAppChatId(phone);
+    let waChatId = toWhatsAppChatId(phone);
     if (!waChatId) {
       deliveryResult = { attempted: false, status: "skipped", reason: "Student WhatsApp number is missing." };
     } else {
@@ -1812,6 +1958,12 @@ async function deliverCounselorMessageToStudentWhatsapp({
         if (!senderReady || !senderState.client || senderState.status !== "connected") {
           deliveryResult = { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
         } else {
+          try {
+            const resolvedChatId = await resolveWhatsappSendChatId(senderState.client, student, phone);
+            if (resolvedChatId) waChatId = resolvedChatId;
+          } catch {
+            // Keep the normalized @c.us fallback when lookup fails.
+          }
           const quotedMessageId = await resolveQuotedWhatsappMessageId(normalizedReplyTo);
           const whatsappBody = quotedMessageId
             ? messageText
@@ -1823,20 +1975,22 @@ async function deliverCounselorMessageToStudentWhatsapp({
             sendOptions.sendMediaAsDocument = true;
           }
 
-          const performSend = async () => {
+          const performSend = async (chatId = waChatId) => {
             const live = ensureWhatsappState(sender.id);
             if (!live.client || live.status !== "connected") {
               throw new Error("WhatsApp is not connected.");
             }
+            const targetChatId = String(chatId || waChatId || "").trim();
+            if (!targetChatId) throw new Error("Student WhatsApp number is missing.");
             if (preparedMedia) {
               return live.client.sendMessage(
-                waChatId,
+                targetChatId,
                 preparedMedia,
                 Object.keys(sendOptions).length ? sendOptions : undefined
               );
             }
             return live.client.sendMessage(
-              waChatId,
+              targetChatId,
               whatsappBody || messageText,
               Object.keys(sendOptions).length ? sendOptions : undefined
             );
@@ -1878,7 +2032,37 @@ async function deliverCounselorMessageToStudentWhatsapp({
             logSent();
             deliveryResult = buildSentResult(sentMsg);
           } catch (error) {
-            if (isWhatsappPuppeteerStaleSessionError(error)) {
+            if (isWhatsappLidError(error)) {
+              logEvent("whatsapp", "LID missing; resolving contact and retrying", {
+                from: sender.id,
+                to: receiverId,
+                chatId: waChatId,
+                reason: String(error?.message || ""),
+              });
+              try {
+                const live = ensureWhatsappState(sender.id);
+                const lidChatId =
+                  (await resolveLidViaUsync(live.client, phone || waChatId)) ||
+                  (await resolveWhatsappSendChatId(live.client, student, phone));
+                if (lidChatId && lidChatId !== waChatId) {
+                  waChatId = lidChatId;
+                }
+                const sentMsg = await performSend(waChatId);
+                logSent();
+                deliveryResult = buildSentResult(sentMsg);
+              } catch (errorAfter) {
+                logEvent("whatsapp", "message send failed", {
+                  from: sender.id,
+                  to: receiverId,
+                  reason: String(errorAfter?.message || ""),
+                });
+                deliveryResult = {
+                  attempted: true,
+                  status: "failed",
+                  reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
+                };
+              }
+            } else if (isWhatsappPuppeteerStaleSessionError(error)) {
               logEvent("whatsapp", "stale session detected; restarting client", {
                 from: sender.id,
                 to: receiverId,
@@ -1962,8 +2146,13 @@ async function syncWhatsappChatHistoryForStudent(counselorUserId, studentId) {
   if (!student) return { synced: 0, error: "Student not found." };
 
   const phone = resolveStudentWhatsappPhone(student);
-  const waChatId = toWhatsAppChatId(phone);
+  let waChatId = toWhatsAppChatId(phone);
   if (!waChatId) return { synced: 0, error: "Student WhatsApp number is missing." };
+  try {
+    waChatId = (await resolveWhatsappSendChatId(state.client, student, phone)) || waChatId;
+  } catch {
+    // Keep the normalized @c.us fallback when lookup fails.
+  }
 
   let waChat;
   try {
