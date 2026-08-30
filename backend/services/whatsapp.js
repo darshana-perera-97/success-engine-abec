@@ -37,7 +37,6 @@ const {
   onWhatsappSessionDisconnected,
   syncBranchWhatsappMessengersFromSessions,
 } = require("./branchWhatsapp");
-const { readBranches } = require("../models/branches");
 
 const BRANCH_WHATSAPP_ACTIVE_STATUSES = new Set([
   "connecting",
@@ -60,6 +59,7 @@ const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
 const WHATSAPP_SEND_WAIT_MS = 45 * 1000;
+const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_LOGOUT_REASON_RE = /logout|unpaired|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 let isWhatsappShuttingDown = false;
@@ -822,14 +822,48 @@ async function regenerateWhatsappQrCode(userId) {
 async function userHasSavedWhatsappSession(userId) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return false;
-  const userConnectionDir = path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId));
+  const sessionDir = resolveWhatsappSessionDataDir(cleanUserId);
   try {
-    const entries = await fs.readdir(userConnectionDir);
+    const entries = await fs.readdir(sessionDir);
     return entries.length > 0;
   } catch (error) {
     if (error && error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function resolveUserIdFromSessionFolder(folderId, users = []) {
+  const safeFolderId = sanitizeUserIdForPath(folderId);
+  if (!safeFolderId) return "";
+  const match = (Array.isArray(users) ? users : []).find(
+    (user) => sanitizeUserIdForPath(user?.id) === safeFolderId
+  );
+  if (match) return String(match.id || "").trim();
+  if (safeFolderId === sanitizeUserIdForPath(ADMIN_WHATSAPP_USER_ID)) {
+    return ADMIN_WHATSAPP_USER_ID;
+  }
+  return safeFolderId;
+}
+
+async function listSavedWhatsappSessionUserIds(users = []) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(WHATSAPP_CONNECTIONS_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+  const userIds = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const userId = resolveUserIdFromSessionFolder(entry.name, users);
+    if (!userId || seen.has(userId)) continue;
+    if (!(await userHasSavedWhatsappSession(userId))) continue;
+    seen.add(userId);
+    userIds.push(userId);
+  }
+  return userIds;
 }
 
 async function startSavedWhatsappSessionIfExists(userId) {
@@ -844,54 +878,57 @@ async function startSavedWhatsappSessionIfExists(userId) {
   }
 }
 
-async function collectBranchWhatsappUserIds(users, branches) {
-  const ids = new Set();
-  if (!(await isBranchWhatsappEnabled())) return ids;
-  for (const user of users) {
-    if (!isBranchWhatsappManagerRole(user.role)) continue;
-    const userId = String(user.id || "").trim();
-    if (userId) ids.add(userId);
+async function waitForStartupWhatsappSession(userId) {
+  const cleanUserId = String(userId || "").trim();
+  const started = Date.now();
+  while (Date.now() - started < WHATSAPP_STARTUP_READY_TIMEOUT_MS) {
+    const state = ensureWhatsappState(cleanUserId);
+    if (state.status === "connected") return "connected";
+    if (state.status === "awaiting_qr_scan") return "awaiting_qr_scan";
+    if (state.manualStop) return String(state.status || "disconnected");
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  for (const branch of branches) {
-    const messengerUserId = String(branch?.whatsappMessengerUserId || "").trim();
-    if (messengerUserId) ids.add(messengerUserId);
+  const timedOut = ensureWhatsappState(cleanUserId);
+  if (timedOut.status === "connected") return "connected";
+  if (timedOut.status === "awaiting_qr_scan") return "awaiting_qr_scan";
+  if (!timedOut.manualStop) {
+    scheduleSilentWhatsappReconnect(cleanUserId, { reason: "startup-wait-timeout" });
   }
-  return ids;
+  return String(timedOut.status || "reconnecting");
 }
 
-async function initializeWhatsappSessionsOnStartup({ branchMessengersOnly = false } = {}) {
+async function initializeWhatsappSessionsOnStartup() {
   try {
     const users = await readUsers();
-    const branches = await readBranches();
-    const branchUserIds = await collectBranchWhatsappUserIds(users, branches);
-
-    if (branchMessengersOnly) {
-      for (const userId of branchUserIds) {
-        await startSavedWhatsappSessionIfExists(userId);
-      }
+    const userIds = await listSavedWhatsappSessionUserIds(users);
+    if (!userIds.length) {
+      console.log("WhatsApp: no saved sessions found to restore on boot.");
       await syncBranchWhatsappMessengersFromSessions();
       return;
     }
 
-    const integratedStaff = users.filter((user) => isWhatsappIntegratedStaffRole(user.role));
-    for (const staffUser of integratedStaff) {
-      const staffUserId = String(staffUser.id || "").trim();
-      if (!staffUserId) continue;
-      await startSavedWhatsappSessionIfExists(staffUserId);
-    }
-    if (await isStaffWhatsappMessagingEnabled()) {
-      await startSavedWhatsappSessionIfExists(ADMIN_WHATSAPP_USER_ID);
-      for (const user of users) {
-        const role = String(user.role || "").trim();
-        if (!STAFF_WHATSAPP_ROLES.has(role)) continue;
-        const staffId = String(user.id || "").trim();
-        if (!staffId) continue;
-        await startSavedWhatsappSessionIfExists(staffId);
-      }
-    }
-    for (const userId of branchUserIds) {
+    console.log(`WhatsApp: restoring ${userIds.length} saved session(s) on boot...`);
+    for (const userId of userIds) {
+      console.log(`WhatsApp: starting saved session for ${userId}`);
       await startSavedWhatsappSessionIfExists(userId);
     }
+
+    const results = await Promise.all(
+      userIds.map(async (userId) => {
+        const status = await waitForStartupWhatsappSession(userId);
+        if (status === "connected") {
+          console.log(`WhatsApp: restored ${userId}`);
+        } else if (status === "awaiting_qr_scan") {
+          console.warn(`WhatsApp: ${userId} needs a QR scan after restart`);
+        } else {
+          console.warn(`WhatsApp: ${userId} is ${status} after restart — retrying in the background`);
+        }
+        return { userId, status };
+      })
+    );
+
+    const connectedCount = results.filter((row) => row.status === "connected").length;
+    console.log(`WhatsApp: ${connectedCount}/${userIds.length} saved session(s) connected after boot.`);
     await syncBranchWhatsappMessengersFromSessions();
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);

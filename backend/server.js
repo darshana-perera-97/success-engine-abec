@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const http = require("http");
 const crypto = require("crypto");
-const { PORT, HOST, WHATSAPP_LAZY_START, WARM_JSON_CACHE_ON_START, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS, IS_PRODUCTION } = require("./config");
+const { PORT, HOST, WARM_JSON_CACHE_ON_START, WHATSAPP_RECONNECT_INTERVAL_MS, MEETING_REMINDER_POLL_MS, IS_PRODUCTION } = require("./config");
 const { corsHeaders, sendJson } = require("./lib/httpUtils");
 const { logEvent } = require("./lib/logger");
 const {
@@ -175,15 +175,8 @@ server.listen(PORT, HOST, async () => {
       console.warn("JSON cache warm-up failed:", error.message);
     });
   }
-  if (WHATSAPP_LAZY_START) {
-    console.log(
-      "WhatsApp: lazy start enabled — restoring branch messenger sessions only (other sessions start on connect)."
-    );
-    await initializeWhatsappSessionsOnStartup({ branchMessengersOnly: true });
-  } else {
-    console.log("WhatsApp: starting saved sessions on server boot...");
-    await initializeWhatsappSessionsOnStartup();
-  }
+  console.log("WhatsApp: restoring previously connected accounts on server boot...");
+  await initializeWhatsappSessionsOnStartup();
   setInterval(() => {
     restartActiveWhatsappSessions().catch((error) => {
       console.error("WhatsApp session health check failed:", error);
