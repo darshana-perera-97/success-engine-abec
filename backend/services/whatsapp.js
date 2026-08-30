@@ -1256,6 +1256,10 @@ function isWhatsappLidError(error) {
   return msg.includes("no lid") || msg.includes("lid is missing") || msg.includes("accountlid");
 }
 
+function isWhatsappLidChatId(chatId) {
+  return String(chatId || "").includes("@lid");
+}
+
 async function installWhatsappWebCompatPatch(client) {
   if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return;
   await client.pupPage.evaluate(() => {
@@ -1267,7 +1271,40 @@ async function installWhatsappWebCompatPatch(client) {
       return String(value._serialized || value.$1 || "").trim();
     };
 
-    if (!window.WWebJS.__seLidPatched && typeof window.WWebJS.getChat === "function") {
+    const senderLidReady = () => {
+      try {
+        return Boolean(window.require("WAWebUserPrefsMeUser").getMaybeMeLidUser());
+      } catch {
+        return false;
+      }
+    };
+
+    const findOrCreateChat = async (serialized) => {
+      const id = String(serialized || "").trim();
+      if (!id) return null;
+      const factory = window.require("WAWebWidFactory");
+      const chatWid = factory.createWid(id);
+      const existing = window.require("WAWebCollections").Chat.get(chatWid);
+      if (existing) return existing;
+      try {
+        return (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const resolvePhoneChat = async (chat) => {
+      let phoneId = "";
+      try {
+        phoneId = widKey(window.require("WAWebApiContact").getPhoneNumber(chat?.id));
+      } catch {
+        phoneId = "";
+      }
+      if (!phoneId) return null;
+      return findOrCreateChat(phoneId);
+    };
+
+    if (!window.WWebJS.__seLidPatchedV2 && typeof window.WWebJS.getChat === "function") {
       const originalGetChat = window.WWebJS.getChat.bind(window.WWebJS);
       window.WWebJS.getChat = async (chatId, options = {}) => {
         try {
@@ -1276,31 +1313,16 @@ async function installWhatsappWebCompatPatch(client) {
           const msg = String(error?.message || error || "");
           if (!/no lid|lid is missing|accountlid/i.test(msg)) throw error;
         }
-        const digits = String(chatId || "")
-          .split("@")[0]
-          .replace(/[^\d]/g, "");
-        if (!digits) return undefined;
-        let lidSerialized = "";
-        try {
-          const query = window.require("WAWebContactSyncUtils").constructUsyncDeltaQuery([
-            { type: "add", phoneNumber: digits },
-          ]);
-          const result = await query.execute();
-          const lid = result?.list?.[0]?.lid;
-          if (lid) {
-            const wid = window.require("WAWebWidFactory").createWid(lid);
-            lidSerialized = widKey(wid) || (typeof lid === "string" ? lid : widKey(lid));
-          }
-        } catch {
-          lidSerialized = "";
+        const created = await findOrCreateChat(chatId);
+        if (created) {
+          return options.getAsModel === false ? created : window.WWebJS.getChatModel(created);
         }
-        if (!lidSerialized) return undefined;
-        return originalGetChat(lidSerialized, options);
+        return undefined;
       };
-      window.WWebJS.__seLidPatched = true;
+      window.WWebJS.__seLidPatchedV2 = true;
     }
 
-    if (!window.WWebJS.__seSendPatched && typeof window.WWebJS.sendMessage === "function") {
+    if (!window.WWebJS.__seSendPatchedV2 && typeof window.WWebJS.sendMessage === "function") {
       const originalSendMessage = window.WWebJS.sendMessage.bind(window.WWebJS);
       const recoverLatestOutgoing = async (chat) => {
         const chatId = widKey(chat?.id);
@@ -1325,7 +1347,19 @@ async function installWhatsappWebCompatPatch(client) {
         return latest || undefined;
       };
       window.WWebJS.sendMessage = async (chat, content, options = {}) => {
-        const sent = await originalSendMessage(chat, content, options);
+        let targetChat = chat;
+        try {
+          const isLidChat =
+            (typeof chat?.id?.isLid === "function" && chat.id.isLid()) ||
+            String(widKey(chat?.id)).includes("@lid");
+          if (isLidChat && !senderLidReady()) {
+            const phoneChat = await resolvePhoneChat(chat);
+            if (phoneChat) targetChat = phoneChat;
+          }
+        } catch {
+          targetChat = chat;
+        }
+        const sent = await originalSendMessage(targetChat, content, options);
         if (sent) {
           if (sent.id && !sent.id._serialized) {
             sent.id._serialized = sent.id.$1 || sent.id._serialized;
@@ -1333,15 +1367,74 @@ async function installWhatsappWebCompatPatch(client) {
           return sent;
         }
         for (let attempt = 0; attempt < 8; attempt += 1) {
-          const recovered = await recoverLatestOutgoing(chat);
+          const recovered = await recoverLatestOutgoing(targetChat);
           if (recovered) return recovered;
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
         return sent;
       };
-      window.WWebJS.__seSendPatched = true;
+      window.WWebJS.__seSendPatchedV2 = true;
     }
   });
+}
+
+async function ensureWhatsappChatReady(client, chatId) {
+  if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return String(chatId || "").trim();
+  const requested = String(chatId || "").trim();
+  if (!requested) return "";
+  try {
+    const resolved = await client.pupPage.evaluate(async (serialized) => {
+      const widKey = (value) => {
+        if (!value) return "";
+        if (typeof value === "string") return value;
+        return String(value._serialized || value.$1 || "").trim();
+      };
+      const factory = window.require("WAWebWidFactory");
+      let target = serialized;
+      let senderLidReady = false;
+      try {
+        senderLidReady = Boolean(window.require("WAWebUserPrefsMeUser").getMaybeMeLidUser());
+      } catch {
+        senderLidReady = false;
+      }
+      if (!String(serialized).includes("@lid")) {
+        try {
+          const exists = await window.require("WAWebQueryExistsJob").queryWidExists(factory.createWid(serialized));
+          const found = widKey(exists?.wid);
+          if (found) {
+            if (found.includes("@lid") && !senderLidReady) {
+              target = serialized;
+            } else {
+              target = found;
+            }
+          }
+        } catch {
+          target = serialized;
+        }
+      } else if (!senderLidReady) {
+        try {
+          const phone = window.require("WAWebApiContact").getPhoneNumber(factory.createWid(serialized));
+          const phoneId = widKey(phone);
+          if (phoneId) target = phoneId;
+        } catch {
+          // Keep the requested LID when the phone mapping is not in this session.
+        }
+      }
+      const chatWid = factory.createWid(target);
+      let chat = window.require("WAWebCollections").Chat.get(chatWid);
+      if (!chat) {
+        try {
+          chat = (await window.require("WAWebFindChatAction").findOrCreateLatestChat(chatWid))?.chat || null;
+        } catch {
+          chat = null;
+        }
+      }
+      return widKey(chat?.id) || target || serialized;
+    }, requested);
+    return String(resolved || requested).trim();
+  } catch {
+    return requested;
+  }
 }
 
 async function recoverRecentlySentWhatsappMessage(client, chatId, sentAfterMs) {
@@ -1429,7 +1522,12 @@ async function findKnownStudentWhatsappChatId(studentId) {
       const involves = String(chat?.senderId || "") === id || String(chat?.receiverId || "") === id;
       if (!involves) continue;
       const chatId = String(chat?.whatsappDelivery?.chatId || "").trim();
-      if (chatId && chatId.includes("@") && !isIgnoredWhatsappIncomingChatId(chatId)) {
+      if (
+        chatId &&
+        chatId.includes("@") &&
+        !isWhatsappLidChatId(chatId) &&
+        !isIgnoredWhatsappIncomingChatId(chatId)
+      ) {
         return chatId;
       }
     }
@@ -1442,7 +1540,7 @@ async function findKnownStudentWhatsappChatId(studentId) {
       const row = incoming[index];
       if (String(row?.mappedStudentId || "").trim() !== id) continue;
       const from = String(row?.from || "").trim();
-      if (from && from.includes("@") && !isIgnoredWhatsappIncomingChatId(from)) {
+      if (from && from.includes("@") && !isWhatsappLidChatId(from) && !isIgnoredWhatsappIncomingChatId(from)) {
         return from;
       }
     }
@@ -1462,6 +1560,7 @@ async function collectWhatsappSendChatIds(client, student, phone) {
     }
   };
 
+  let liveWid = "";
   if (client && typeof client.getNumberId === "function") {
     const digitVariants = [
       ...new Set(
@@ -1472,18 +1571,23 @@ async function collectWhatsappSendChatIds(client, student, phone) {
     ];
     for (const digits of digitVariants) {
       try {
-        pushCandidate(await client.getNumberId(digits));
+        const found = serializeWhatsappWid(await client.getNumberId(digits));
+        if (found) {
+          if (!liveWid) liveWid = found;
+          pushCandidate(found);
+        }
       } catch {
         // Number lookup can fail when WhatsApp Web has not synced the contact yet.
       }
     }
   }
+  pushCandidate(fallback);
   if (client && typeof client.getContactLidAndPhone === "function" && fallback) {
     try {
       const pairs = await client.getContactLidAndPhone([fallback]);
       for (const pair of Array.isArray(pairs) ? pairs : []) {
-        pushCandidate(pair?.lid);
         pushCandidate(pair?.pn);
+        pushCandidate(pair?.lid);
       }
     } catch {
       // LID lookup is best-effort.
@@ -1492,14 +1596,19 @@ async function collectWhatsappSendChatIds(client, student, phone) {
   const knownChatId = await findKnownStudentWhatsappChatId(String(student?.id || ""));
   pushCandidate(knownChatId);
   pushCandidate(await resolveLidViaUsync(client, phone || fallback));
-  pushCandidate(fallback);
 
-  const lids = candidates.filter((id) => id.includes("@lid"));
-  const others = candidates.filter((id) => !id.includes("@lid"));
-  const ordered = [...lids, ...others];
-  if (knownChatId && ordered.includes(knownChatId)) {
-    return [knownChatId, ...ordered.filter((id) => id !== knownChatId)];
-  }
+  const phoneIds = candidates.filter((id) => id.includes("@c.us"));
+  const lidIds = candidates.filter((id) => isWhatsappLidChatId(id));
+  const rest = candidates.filter((id) => !id.includes("@c.us") && !isWhatsappLidChatId(id));
+  const ordered = [];
+  const pushOrdered = (id) => {
+    if (id && !ordered.includes(id)) ordered.push(id);
+  };
+  if (liveWid && liveWid.includes("@c.us")) pushOrdered(liveWid);
+  phoneIds.forEach(pushOrdered);
+  rest.forEach(pushOrdered);
+  if (liveWid && isWhatsappLidChatId(liveWid)) pushOrdered(liveWid);
+  lidIds.forEach(pushOrdered);
   return ordered;
 }
 
@@ -2272,6 +2381,14 @@ async function deliverCounselorMessageToStudentWhatsapp({
           } catch {
             // Keep the normalized @c.us fallback when lookup fails.
           }
+          if (waChatId && !chatIds.includes(waChatId)) {
+            chatIds = [waChatId, ...chatIds];
+          }
+          logEvent("whatsapp", "message send candidates", {
+            from: sender.id,
+            to: receiverId,
+            chatIds,
+          });
           const quotedMessageId = await resolveQuotedWhatsappMessageId(normalizedReplyTo);
           const whatsappBody = quotedMessageId
             ? messageText
@@ -2292,20 +2409,33 @@ async function deliverCounselorMessageToStudentWhatsapp({
             if (!targetChatId) throw new Error("Student WhatsApp number is missing.");
             const payload = preparedMedia || whatsappBody || messageText;
             await installWhatsappWebCompatPatch(live.client);
+            const sendChatId = (await ensureWhatsappChatReady(live.client, targetChatId)) || targetChatId;
             const options = {
               ...sendOptions,
               waitUntilMsgSent: true,
+              sendSeen: false,
+              linkPreview: false,
             };
             const sentAt = Date.now();
             let sentMsg = null;
             try {
-              sentMsg = await live.client.sendMessage(targetChatId, payload, options);
+              sentMsg = await live.client.sendMessage(sendChatId, payload, options);
             } catch (error) {
-              if (isWhatsappLidError(error)) throw error;
-              if (sendOptions.quotedMessageId) {
+              if (isWhatsappLidError(error) && sendChatId !== targetChatId && !isWhatsappLidChatId(targetChatId)) {
                 try {
-                  sentMsg = await live.client.sendMessage(targetChatId, payload, {
+                  sentMsg = await live.client.sendMessage(targetChatId, payload, options);
+                } catch (fallbackError) {
+                  if (isWhatsappLidError(fallbackError)) throw fallbackError;
+                  throw error;
+                }
+              } else if (isWhatsappLidError(error)) {
+                throw error;
+              } else if (sendOptions.quotedMessageId) {
+                try {
+                  sentMsg = await live.client.sendMessage(sendChatId, payload, {
                     waitUntilMsgSent: true,
+                    sendSeen: false,
+                    linkPreview: false,
                     ...(preparedMedia && whatsappBody ? { caption: whatsappBody } : {}),
                     ...(preparedMedia && preparedMediaMime && !preparedMediaMime.startsWith("image/")
                       ? { sendMediaAsDocument: true }
@@ -2320,7 +2450,10 @@ async function deliverCounselorMessageToStudentWhatsapp({
               }
             }
             if (!isUsableSentWhatsappMessage(sentMsg)) {
-              sentMsg = await recoverRecentlySentWhatsappMessage(live.client, targetChatId, sentAt);
+              sentMsg = await recoverRecentlySentWhatsappMessage(live.client, sendChatId, sentAt);
+              if (!isUsableSentWhatsappMessage(sentMsg) && sendChatId !== targetChatId) {
+                sentMsg = await recoverRecentlySentWhatsappMessage(live.client, targetChatId, sentAt);
+              }
               if (isUsableSentWhatsappMessage(sentMsg)) {
                 logEvent("whatsapp", "recovered sent message after empty library return", {
                   from: sender.id,
@@ -2373,10 +2506,8 @@ async function deliverCounselorMessageToStudentWhatsapp({
             };
           };
 
-          const isRejectedSendError = (error) =>
-            /rejected the message/i.test(String(error?.message || ""));
-
           let lastSendError = null;
+          let restartedForStale = false;
           for (const candidateId of chatIds) {
             waChatId = candidateId;
             try {
@@ -2393,27 +2524,8 @@ async function deliverCounselorMessageToStudentWhatsapp({
                 chatId: candidateId,
                 reason: String(error?.message || ""),
               });
-              if (isRejectedSendError(error)) {
-                try {
-                  const senderReady = await ensureWhatsappSenderReady(sender.id, 25000);
-                  if (senderReady) {
-                    const sentMsg = await sendAndConfirm(candidateId);
-                    logSent();
-                    deliveryResult = buildSentResult(sentMsg);
-                    lastSendError = null;
-                    break;
-                  }
-                } catch (retryError) {
-                  lastSendError = retryError;
-                  logEvent("whatsapp", "message send retry after rejection failed", {
-                    from: sender.id,
-                    to: receiverId,
-                    chatId: candidateId,
-                    reason: String(retryError?.message || ""),
-                  });
-                }
-              }
-              if (isWhatsappPuppeteerStaleSessionError(error)) {
+              if (!restartedForStale && isWhatsappPuppeteerStaleSessionError(error)) {
+                restartedForStale = true;
                 logEvent("whatsapp", "stale session detected; restarting client", {
                   from: sender.id,
                   to: receiverId,
