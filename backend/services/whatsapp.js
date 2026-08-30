@@ -53,19 +53,23 @@ const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion, invalidateWhatsappWebVersionCache } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 180 * 1000;
+const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
-const WHATSAPP_SEND_WAIT_MS = 45 * 1000;
-const WHATSAPP_ACK_WAIT_MS = 4 * 1000;
+const WHATSAPP_SEND_WAIT_MS = 75 * 1000;
+const WHATSAPP_SEND_WARMUP_MS = 8 * 1000;
+const WHATSAPP_ACK_WAIT_MS = 8 * 1000;
 const WHATSAPP_ACK_SERVER = 1;
 const WHATSAPP_ACK_ERROR = -1;
 const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
+const WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS = 150 * 1000;
 const WHATSAPP_LOGOUT_REASON_RE = /logout|unpaired|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 let isWhatsappShuttingDown = false;
+let whatsappBootRestoreActive = false;
 let whatsappInitChain = Promise.resolve();
 
 function notifyWhatsappSessionDisconnected(userId) {
@@ -196,6 +200,7 @@ function enqueueWhatsappInit(task) {
 function markWhatsappInitializeFailed(state, userId, error) {
   clearWhatsappAuthenticatedTimeout(state);
   state.status = "error";
+  state.readyAt = 0;
   state.error = String(error?.message || "Failed to initialize WhatsApp client.");
   state.lastUpdatedAt = new Date().toISOString();
   const staleClient = state.client;
@@ -411,6 +416,7 @@ function ensureWhatsappState(userId) {
     reconnectAttempts: 0,
     reconnectTimer: null,
     sessionGeneration: 0,
+    readyAt: 0,
   };
   whatsappSessions.set(key, created);
   return created;
@@ -436,12 +442,13 @@ function isCurrentWhatsappClient(state, client) {
   return Boolean(state && client && state.client === client);
 }
 
-function scheduleSilentWhatsappReconnect(userId, { reason = "" } = {}) {
+function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } = {}) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId || isWhatsappShuttingDown) return;
   const state = ensureWhatsappState(cleanUserId);
   if (state.manualStop) return;
-  if (state.status === "connected" || state.status === "authenticated" || state.status === "awaiting_qr_scan") {
+  if (state.status === "awaiting_qr_scan") return;
+  if (!force && (state.status === "connected" || state.status === "authenticated")) {
     return;
   }
   const exhausted = state.reconnectAttempts >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS;
@@ -483,6 +490,7 @@ function markWhatsappAuthenticatedTimeout(state, userId = "") {
   if (!state || state.status !== "authenticated") return;
   state.authTimedOut = true;
   state.status = "error";
+  state.readyAt = 0;
   state.error = "WhatsApp sign-in timed out after QR scan. Please connect again to generate a fresh QR code.";
   state.qrCodeDataUrl = "";
   state.lastUpdatedAt = new Date().toISOString();
@@ -495,16 +503,29 @@ function markWhatsappAuthenticatedTimeout(state, userId = "") {
     });
   }
   const cleanUserId = String(userId || "").trim();
-  if (cleanUserId) {
-    scheduleWhatsappAuthTimeoutRecovery(cleanUserId);
-  }
+  if (!cleanUserId) return;
+  userHasSavedWhatsappSession(cleanUserId)
+    .then((hasSaved) => {
+      if (hasSaved) {
+        logEvent("whatsapp", "authenticated session stuck; restarting browser", { userId: cleanUserId });
+        scheduleSilentWhatsappReconnect(cleanUserId, { reason: "authenticated-stuck" });
+        return;
+      }
+      scheduleWhatsappAuthTimeoutRecovery(cleanUserId);
+    })
+    .catch(() => {
+      scheduleSilentWhatsappReconnect(cleanUserId, { reason: "authenticated-stuck" });
+    });
 }
 
 function scheduleWhatsappAuthenticatedTimeout(state, userId = "") {
   clearWhatsappAuthenticatedTimeout(state);
+  const timeoutMs = whatsappBootRestoreActive
+    ? WHATSAPP_BOOT_AUTH_TIMEOUT_MS
+    : AUTHENTICATED_STUCK_TIMEOUT_MS;
   state.authenticatedTimeout = setTimeout(() => {
     markWhatsappAuthenticatedTimeout(state, userId);
-  }, AUTHENTICATED_STUCK_TIMEOUT_MS);
+  }, timeoutMs);
   if (typeof state.authenticatedTimeout.unref === "function") {
     state.authenticatedTimeout.unref();
   }
@@ -560,6 +581,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   state.status = silentReconnect ? "reconnecting" : "connecting";
   state.qrCodeDataUrl = "";
   state.error = "";
+  state.readyAt = 0;
   if (!silentReconnect) {
     state.connectedAt = "";
     state.whatsappName = "";
@@ -617,6 +639,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     state.status = "connected";
     state.qrCodeDataUrl = "";
     state.error = "";
+    state.readyAt = Date.now();
     state.connectedAt = new Date().toISOString();
     state.whatsappName = String(info.pushname || info.platform || "WhatsApp User");
     state.whatsappNumber = String(numberFromWid || "");
@@ -692,12 +715,14 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     if (loggedOut) {
       state.status = "disconnected";
       state.connectedAt = "";
+      state.readyAt = 0;
       state.error = "";
       state.lastUpdatedAt = new Date().toISOString();
       notifyWhatsappSessionDisconnected(cleanUserId);
       return;
     }
     state.status = "reconnecting";
+    state.readyAt = 0;
     state.error = "";
     state.lastUpdatedAt = new Date().toISOString();
     scheduleSilentWhatsappReconnect(cleanUserId, { reason: reasonText || "disconnected" });
@@ -767,6 +792,7 @@ async function stopWhatsappSession(userId) {
   state.qrCodeDataUrl = "";
   state.error = "";
   state.connectedAt = "";
+  state.readyAt = 0;
   state.whatsappName = "";
   state.whatsappNumber = "";
   state.whatsappProfilePicUrl = "";
@@ -816,6 +842,7 @@ async function regenerateWhatsappQrCode(userId) {
   state.qrCodeDataUrl = "";
   state.error = "";
   state.authTimedOut = false;
+  state.readyAt = 0;
   state.manualStop = false;
   state.silentReconnect = false;
   state.reconnectAttempts = 0;
@@ -887,16 +914,25 @@ async function startSavedWhatsappSessionIfExists(userId) {
 async function waitForStartupWhatsappSession(userId) {
   const cleanUserId = String(userId || "").trim();
   const started = Date.now();
-  while (Date.now() - started < WHATSAPP_STARTUP_READY_TIMEOUT_MS) {
+  while (true) {
     const state = ensureWhatsappState(cleanUserId);
     if (state.status === "connected") return "connected";
     if (state.status === "awaiting_qr_scan") return "awaiting_qr_scan";
     if (state.manualStop) return String(state.status || "disconnected");
+    const limit =
+      state.status === "authenticated"
+        ? WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS
+        : WHATSAPP_STARTUP_READY_TIMEOUT_MS;
+    if (Date.now() - started >= limit) break;
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
   const timedOut = ensureWhatsappState(cleanUserId);
   if (timedOut.status === "connected") return "connected";
   if (timedOut.status === "awaiting_qr_scan") return "awaiting_qr_scan";
+  if (timedOut.status === "authenticated") {
+    // Keep the browser running; the authenticated-stuck timer restarts it.
+    return "authenticated";
+  }
   if (!timedOut.manualStop) {
     scheduleSilentWhatsappReconnect(cleanUserId, { reason: "startup-wait-timeout" });
   }
@@ -904,6 +940,7 @@ async function waitForStartupWhatsappSession(userId) {
 }
 
 async function initializeWhatsappSessionsOnStartup() {
+  whatsappBootRestoreActive = true;
   try {
     const users = await readUsers();
     const userIds = await listSavedWhatsappSessionUserIds(users);
@@ -926,6 +963,8 @@ async function initializeWhatsappSessionsOnStartup() {
           console.log(`WhatsApp: restored ${userId}`);
         } else if (status === "awaiting_qr_scan") {
           console.warn(`WhatsApp: ${userId} needs a QR scan after restart`);
+        } else if (status === "authenticated") {
+          console.warn(`WhatsApp: ${userId} is authenticated after restart — waiting for ready`);
         } else {
           console.warn(`WhatsApp: ${userId} is ${status} after restart — retrying in the background`);
         }
@@ -938,6 +977,8 @@ async function initializeWhatsappSessionsOnStartup() {
     await syncBranchWhatsappMessengersFromSessions();
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);
+  } finally {
+    whatsappBootRestoreActive = false;
   }
 }
 
@@ -1006,31 +1047,88 @@ async function waitForWhatsappSessionConnected(userId, timeoutMs = 120000) {
   throw new Error("WhatsApp did not finish reconnecting in time.");
 }
 
+function getWhatsappReadyAtMs(state) {
+  const readyAt = Number(state?.readyAt || 0);
+  if (readyAt > 0) return readyAt;
+  const connectedAt = Date.parse(String(state?.connectedAt || ""));
+  return Number.isFinite(connectedAt) ? connectedAt : 0;
+}
+
+function isWhatsappSessionWarmedUp(state) {
+  if (!state?.client || state.status !== "connected") return false;
+  const readyAt = getWhatsappReadyAtMs(state);
+  if (!readyAt) return false;
+  return Date.now() - readyAt >= WHATSAPP_SEND_WARMUP_MS;
+}
+
 async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_MS) {
   const key = String(userId || "").trim();
   if (!key) return false;
-  const state = ensureWhatsappState(key);
-  if (state.manualStop) return false;
-  if (state.client && state.status === "connected") return true;
-  const waitable = new Set(["authenticated", "reconnecting", "connecting"]);
-  const status = String(state.status || "");
-  if (!waitable.has(status)) {
-    let hasSaved = false;
-    try {
-      hasSaved = await userHasSavedWhatsappSession(key);
-    } catch {
-      hasSaved = false;
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || WHATSAPP_SEND_WAIT_MS);
+  let restartedUnhealthy = false;
+
+  const waitForConnected = async () => {
+    const state = ensureWhatsappState(key);
+    if (state.manualStop) return false;
+    if (state.client && state.status === "connected") return true;
+    const waitable = new Set(["authenticated", "reconnecting", "connecting"]);
+    const status = String(state.status || "");
+    if (!waitable.has(status)) {
+      let hasSaved = false;
+      try {
+        hasSaved = await userHasSavedWhatsappSession(key);
+      } catch {
+        hasSaved = false;
+      }
+      if (!hasSaved) return false;
+      scheduleSilentWhatsappReconnect(key, { reason: "send-restore" });
     }
-    if (!hasSaved) return false;
-    scheduleSilentWhatsappReconnect(key, { reason: "send-restore" });
-  }
-  try {
-    await waitForWhatsappSessionConnected(key, timeoutMs);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    try {
+      await waitForWhatsappSessionConnected(key, remaining);
+      const live = ensureWhatsappState(key);
+      return Boolean(live.client && live.status === "connected");
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await waitForConnected())) return false;
+
+  while (Date.now() < deadline) {
     const live = ensureWhatsappState(key);
-    return Boolean(live.client && live.status === "connected");
-  } catch {
-    return false;
+    if (live.manualStop) return false;
+    if (!live.client || live.status !== "connected") {
+      if (!(await waitForConnected())) return false;
+      continue;
+    }
+    if (!isWhatsappSessionWarmedUp(live)) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      continue;
+    }
+    const healthy = await isWhatsappClientHealthy(live, 8000);
+    if (healthy) return true;
+    if (!restartedUnhealthy) {
+      restartedUnhealthy = true;
+      logEvent("whatsapp", "sender connected but not healthy; restarting before send", {
+        userId: key,
+      });
+      try {
+        await withTimeout(
+          restartWhatsappBrowserSession(key),
+          Math.max(5000, deadline - Date.now())
+        );
+      } catch {
+        // Keep waiting until the send deadline.
+      }
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
+
+  const finalState = ensureWhatsappState(key);
+  return Boolean(finalState.client && finalState.status === "connected" && isWhatsappSessionWarmedUp(finalState));
 }
 
 async function restartWhatsappBrowserSession(userId) {
@@ -1073,10 +1171,10 @@ async function withTimeout(promise, timeoutMs) {
   }
 }
 
-async function isWhatsappClientHealthy(state) {
+async function isWhatsappClientHealthy(state, timeoutMs = 15000) {
   if (!state?.client || state.status !== "connected") return false;
   try {
-    const waState = await withTimeout(state.client.getState(), 15000);
+    const waState = await withTimeout(state.client.getState(), timeoutMs);
     return String(waState || "").toUpperCase() === "CONNECTED";
   } catch {
     return false;
@@ -1420,9 +1518,6 @@ async function waitForWhatsappMessageAck(client, sentMsg, timeoutMs = WHATSAPP_A
     throw new Error("WhatsApp did not return a sent message.");
   }
   const initialAck = readWhatsappMessageAck(sentMsg);
-  if (initialAck <= WHATSAPP_ACK_ERROR) {
-    throw new Error("WhatsApp rejected the message.");
-  }
   if (initialAck >= WHATSAPP_ACK_SERVER) return initialAck;
 
   const serialized = normalizeWhatsappMessageId(sentMsg).serialized;
@@ -1445,10 +1540,7 @@ async function waitForWhatsappMessageAck(client, sentMsg, timeoutMs = WHATSAPP_A
       const id = normalizeWhatsappMessageId(msg).serialized;
       if (serialized && id && id !== serialized) return;
       const nextAck = Number(ack);
-      if (nextAck <= WHATSAPP_ACK_ERROR) {
-        finish(new Error("WhatsApp rejected the message."));
-        return;
-      }
+      // WhatsApp Web often reports -1 immediately after restore, then recovers.
       if (nextAck >= WHATSAPP_ACK_SERVER) finish(null, nextAck);
     };
 
@@ -1466,10 +1558,6 @@ async function waitForWhatsappMessageAck(client, sentMsg, timeoutMs = WHATSAPP_A
         // Keep using the last known message object.
       }
       const ack = readWhatsappMessageAck(current);
-      if (ack <= WHATSAPP_ACK_ERROR) {
-        finish(new Error("WhatsApp rejected the message."));
-        return;
-      }
       if (ack >= WHATSAPP_ACK_SERVER) finish(null, ack);
     }, 700);
 
@@ -2285,6 +2373,9 @@ async function deliverCounselorMessageToStudentWhatsapp({
             };
           };
 
+          const isRejectedSendError = (error) =>
+            /rejected the message/i.test(String(error?.message || ""));
+
           let lastSendError = null;
           for (const candidateId of chatIds) {
             waChatId = candidateId;
@@ -2302,6 +2393,26 @@ async function deliverCounselorMessageToStudentWhatsapp({
                 chatId: candidateId,
                 reason: String(error?.message || ""),
               });
+              if (isRejectedSendError(error)) {
+                try {
+                  const senderReady = await ensureWhatsappSenderReady(sender.id, 25000);
+                  if (senderReady) {
+                    const sentMsg = await sendAndConfirm(candidateId);
+                    logSent();
+                    deliveryResult = buildSentResult(sentMsg);
+                    lastSendError = null;
+                    break;
+                  }
+                } catch (retryError) {
+                  lastSendError = retryError;
+                  logEvent("whatsapp", "message send retry after rejection failed", {
+                    from: sender.id,
+                    to: receiverId,
+                    chatId: candidateId,
+                    reason: String(retryError?.message || ""),
+                  });
+                }
+              }
               if (isWhatsappPuppeteerStaleSessionError(error)) {
                 logEvent("whatsapp", "stale session detected; restarting client", {
                   from: sender.id,
@@ -2310,6 +2421,7 @@ async function deliverCounselorMessageToStudentWhatsapp({
                 });
                 try {
                   await restartWhatsappBrowserSession(sender.id);
+                  await ensureWhatsappSenderReady(sender.id, 30000);
                   const sentMsg = await sendAndConfirm(candidateId);
                   logSent();
                   deliveryResult = buildSentResult(sentMsg);
