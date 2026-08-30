@@ -391,12 +391,17 @@ async function validateStudentBranchWhatsappMessengerUserId(student, userId) {
 async function resolveEffectiveWhatsappSenderId(actorUserId, student = null) {
   const actor = await resolveUserRecord(actorUserId);
   if (!actor) return null;
+  const actorId = String(actor.id || "").trim();
+  if (!actorId) return null;
   if (!(await isBranchWhatsappEnabled())) {
-    return String(actor.id || "").trim() || null;
+    return actorId;
   }
 
-  // Branch mode: student WhatsApp always uses the student's Primary WhatsApp contact.
+  // Prefer the caller when that account is live so Admin/staff chat can send
+  // even if the branch messenger is down. Callers that want branch-first
+  // should pass the branch messenger id themselves.
   if (student) {
+    if (isWhatsappSessionAvailable(actorId)) return actorId;
     return resolveStudentBranchWhatsappSenderId(student);
   }
 

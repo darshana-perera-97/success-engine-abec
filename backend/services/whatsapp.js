@@ -59,7 +59,7 @@ const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
 const WHATSAPP_SEND_WAIT_MS = 45 * 1000;
-const WHATSAPP_ACK_WAIT_MS = 15 * 1000;
+const WHATSAPP_ACK_WAIT_MS = 4 * 1000;
 const WHATSAPP_ACK_SERVER = 1;
 const WHATSAPP_ACK_ERROR = -1;
 const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
@@ -1013,7 +1013,17 @@ async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_
   if (state.manualStop) return false;
   if (state.client && state.status === "connected") return true;
   const waitable = new Set(["authenticated", "reconnecting", "connecting"]);
-  if (!waitable.has(String(state.status || ""))) return false;
+  const status = String(state.status || "");
+  if (!waitable.has(status)) {
+    let hasSaved = false;
+    try {
+      hasSaved = await userHasSavedWhatsappSession(key);
+    } catch {
+      hasSaved = false;
+    }
+    if (!hasSaved) return false;
+    scheduleSilentWhatsappReconnect(key, { reason: "send-restore" });
+  }
   try {
     await waitForWhatsappSessionConnected(key, timeoutMs);
     const live = ensureWhatsappState(key);
@@ -1245,10 +1255,19 @@ async function collectWhatsappSendChatIds(client, student, phone) {
   };
 
   if (client && typeof client.getNumberId === "function") {
-    try {
-      pushCandidate(await client.getNumberId(normalizePhoneDigits(phone)));
-    } catch {
-      // Number lookup can fail when WhatsApp Web has not synced the contact yet.
+    const digitVariants = [
+      ...new Set(
+        [phone, fallback, student?.whatsappNumber, student?.phone]
+          .map((value) => normalizePhoneDigits(value))
+          .filter(Boolean)
+      ),
+    ];
+    for (const digits of digitVariants) {
+      try {
+        pushCandidate(await client.getNumberId(digits));
+      } catch {
+        // Number lookup can fail when WhatsApp Web has not synced the contact yet.
+      }
     }
   }
   if (client && typeof client.getContactLidAndPhone === "function" && fallback) {
@@ -1339,11 +1358,12 @@ async function waitForWhatsappMessageAck(client, sentMsg, timeoutMs = WHATSAPP_A
 
     const timer = setTimeout(() => {
       const ack = readWhatsappMessageAck(current);
-      if (ack >= WHATSAPP_ACK_SERVER) {
-        finish(null, ack);
+      if (ack <= WHATSAPP_ACK_ERROR) {
+        finish(new Error("WhatsApp rejected the message."));
         return;
       }
-      finish(new Error("WhatsApp accepted the message locally but did not deliver it."));
+      // WhatsApp Web often never emits server ack. A returned message id is enough.
+      finish(null, ack);
     }, timeoutMs);
   });
 }

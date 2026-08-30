@@ -13,6 +13,7 @@ const {
 const {
   resolveStudentBranchWhatsappSenderId,
   isBranchWhatsappEnabled,
+  isWhatsappSessionAvailable,
   studentPrimaryWhatsappUnavailableReason,
 } = require("./branchWhatsapp");
 const {
@@ -50,16 +51,25 @@ function addStudentWhatsappSenderCandidate(candidates, seen, rawId) {
   candidates.push(id);
 }
 
-/** Personal mode: counselor → branch messenger → admin. Branch mode: student's branch account only. */
+/** Branch first when connected, then the person chatting, then Admin. */
 async function collectStudentWhatsappSenderCandidates(student, preferredSenderIds = []) {
-  if (student && (await isBranchWhatsappEnabled())) {
-    const branchSenderId = await resolveStudentBranchWhatsappSenderId(student);
-    return branchSenderId ? [branchSenderId] : [];
-  }
-
   const candidates = [];
   const seen = new Set();
   const preferred = Array.isArray(preferredSenderIds) ? preferredSenderIds : [preferredSenderIds];
+  const addAvailable = (rawId) => {
+    const id = String(rawId || "").trim();
+    if (!id || id.toLowerCase() === "unassigned") return;
+    if (!isWhatsappSessionAvailable(id)) return;
+    addStudentWhatsappSenderCandidate(candidates, seen, id);
+  };
+
+  if (student && (await isBranchWhatsappEnabled())) {
+    addAvailable(await resolveStudentBranchWhatsappSenderId(student));
+    for (const id of preferred) addStudentWhatsappSenderCandidate(candidates, seen, id);
+    addAvailable(ADMIN_WHATSAPP_USER_ID);
+    return candidates;
+  }
+
   for (const id of preferred) addStudentWhatsappSenderCandidate(candidates, seen, id);
   if (student && typeof student === "object") {
     addStudentWhatsappSenderCandidate(candidates, seen, student.inquiryCounselorId);
