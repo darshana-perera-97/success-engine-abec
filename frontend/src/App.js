@@ -1386,7 +1386,7 @@ function App({ initialView = "dashboard" }) {
       if (elapsed < WHATSAPP_DISCONNECT_NOTIFY_AFTER_MS) return;
       const status = whatsappConnectionStatus;
       const isLive = status === "connected" || status === "authenticated";
-      const isPending = status === "connecting" || status === "awaiting_qr_scan";
+      const isPending = status === "connecting" || status === "reconnecting" || status === "awaiting_qr_scan";
       if (!isLive && !isPending) {
         whatsappDisconnectNotifiedRef.current = true;
         addNotification(

@@ -54,6 +54,11 @@ async function fetchLatestWhatsappWebVersion() {
   return latest;
 }
 
+function invalidateWhatsappWebVersionCache() {
+  cachedLatestVersion = "";
+  cachedAt = 0;
+}
+
 async function resolveWhatsappWebVersion() {
   if (process.env.WHATSAPP_WEB_VERSION) {
     return String(process.env.WHATSAPP_WEB_VERSION).trim();
@@ -74,4 +79,5 @@ async function resolveWhatsappWebVersion() {
 
 module.exports = {
   resolveWhatsappWebVersion,
+  invalidateWhatsappWebVersionCache,
 };

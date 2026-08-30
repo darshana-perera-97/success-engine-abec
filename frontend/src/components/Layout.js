@@ -35,6 +35,7 @@ const whatsappNavStatusLabel = (status, branchWhatsappEnabled = false) => {
   const s = String(status || "").trim();
   const branchPrefix = branchWhatsappEnabled ? "Branch WhatsApp" : "WhatsApp";
   if (s === "connected" || s === "authenticated") return `${branchPrefix} connected`;
+  if (s === "reconnecting") return `${branchPrefix} reconnecting`;
   if (s === "connecting" || s === "awaiting_qr_scan") return `${branchPrefix} connecting — scan QR in Integrations`;
   if (s === "auth_failed" || s === "error") return `${branchPrefix} error — open Integrations to reconnect`;
   return branchWhatsappEnabled
@@ -44,7 +45,7 @@ const whatsappNavStatusLabel = (status, branchWhatsappEnabled = false) => {
 const whatsappNavStatusClass = (status) => {
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "text-emerald-600 hover:text-emerald-700";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600 hover:text-amber-700";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "text-amber-600 hover:text-amber-700";
   return "text-rose-600 hover:text-rose-700";
 };
 const WhatsappGlyph = ({ className = "" }) => /* @__PURE__ */ jsx(

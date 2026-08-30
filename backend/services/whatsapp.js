@@ -9,7 +9,6 @@ const {
   whatsappSessions,
   whatsappSessionRecoveryChains,
   WHATSAPP_CONNECTIONS_DIR,
-  WHATSAPP_RECONNECT_INTERVAL_MS,
   WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
 } = require("../config");
 const { readUsers } = require("../models/users");
@@ -42,6 +41,7 @@ const { readBranches } = require("../models/branches");
 
 const BRANCH_WHATSAPP_ACTIVE_STATUSES = new Set([
   "connecting",
+  "reconnecting",
   "awaiting_qr_scan",
   "authenticated",
   "connected",
@@ -51,11 +51,14 @@ const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl, extensionFromFileName, mimeFromExtension } = require("./uploads");
 const { appendWhatsappIncoming, readWhatsappIncoming } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
-const { resolveWhatsappWebVersion } = require("./whatsappWebVersion");
+const { resolveWhatsappWebVersion, invalidateWhatsappWebVersionCache } = require("./whatsappWebVersion");
 
 const AUTHENTICATED_STUCK_TIMEOUT_MS = 180 * 1000;
 const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
+const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 4;
+const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
+const WHATSAPP_LOGOUT_REASON_RE = /logout|unpaired|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 let isWhatsappShuttingDown = false;
 let whatsappInitChain = Promise.resolve();
@@ -126,9 +129,9 @@ function buildWhatsappClientOptions(cleanUserId, webVersion) {
       dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
     }),
     webVersion,
-    authTimeoutMs: 120000,
+    authTimeoutMs: 180000,
     takeoverOnConflict: true,
-    takeoverTimeoutMs: 10000,
+    takeoverTimeoutMs: 15000,
     bypassCSP: true,
     puppeteer: buildPuppeteerOptions(),
   };
@@ -169,6 +172,9 @@ function buildPuppeteerOptions() {
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
     ],
   };
   const executablePath = resolvePuppeteerExecutablePath();
@@ -195,9 +201,11 @@ function markWhatsappInitializeFailed(state, userId, error) {
     });
   }
   const cleanUserId = String(userId || "").trim();
-  if (cleanUserId) {
-    notifyWhatsappSessionDisconnected(cleanUserId);
+  if (!cleanUserId || state.manualStop) {
+    if (cleanUserId) notifyWhatsappSessionDisconnected(cleanUserId);
+    return;
   }
+  scheduleSilentWhatsappReconnect(cleanUserId, { reason: "initialize_failed" });
 }
 
 async function resolveCounselor(userId) {
@@ -392,6 +400,12 @@ function ensureWhatsappState(userId) {
     client: null,
     authenticatedTimeout: null,
     authTimedOut: false,
+    manualStop: false,
+    recovering: false,
+    silentReconnect: false,
+    reconnectAttempts: 0,
+    reconnectTimer: null,
+    sessionGeneration: 0,
   };
   whatsappSessions.set(key, created);
   return created;
@@ -401,6 +415,63 @@ function clearWhatsappAuthenticatedTimeout(state) {
   if (!state || !state.authenticatedTimeout) return;
   clearTimeout(state.authenticatedTimeout);
   state.authenticatedTimeout = null;
+}
+
+function clearWhatsappReconnectTimer(state) {
+  if (!state || !state.reconnectTimer) return;
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+}
+
+function isWhatsappLogoutDisconnectReason(reason) {
+  return WHATSAPP_LOGOUT_REASON_RE.test(String(reason || ""));
+}
+
+function isCurrentWhatsappClient(state, client) {
+  return Boolean(state && client && state.client === client);
+}
+
+function scheduleSilentWhatsappReconnect(userId, { reason = "" } = {}) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId || isWhatsappShuttingDown) return;
+  const state = ensureWhatsappState(cleanUserId);
+  if (state.manualStop) return;
+  if (state.status === "connected" || state.status === "authenticated" || state.status === "awaiting_qr_scan") {
+    return;
+  }
+  if (state.reconnectAttempts >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS) {
+    state.status = "disconnected";
+    state.error =
+      "WhatsApp disconnected and could not be restored automatically. Connect again to generate a fresh QR code.";
+    state.lastUpdatedAt = new Date().toISOString();
+    notifyWhatsappSessionDisconnected(cleanUserId);
+    return;
+  }
+  const attempt = state.reconnectAttempts + 1;
+  state.reconnectAttempts = attempt;
+  state.status = "reconnecting";
+  state.error = "";
+  state.lastUpdatedAt = new Date().toISOString();
+  clearWhatsappReconnectTimer(state);
+  const delayMs = WHATSAPP_SILENT_RECONNECT_BASE_MS * 2 ** (attempt - 1);
+  logEvent("whatsapp", "scheduling silent reconnect", {
+    userId: cleanUserId,
+    attempt,
+    delayMs,
+    reason: String(reason || ""),
+  });
+  state.reconnectTimer = setTimeout(async () => {
+    if (isWhatsappShuttingDown) return;
+    const current = ensureWhatsappState(cleanUserId);
+    if (current.manualStop || current.status === "connected") return;
+    try {
+      await startWhatsappSession(cleanUserId, { awaitInitialize: true, silentReconnect: true });
+    } catch (error) {
+      console.warn(`WhatsApp silent reconnect failed for ${cleanUserId}:`, error);
+      scheduleSilentWhatsappReconnect(cleanUserId, { reason: "retry" });
+    }
+  }, delayMs);
+  if (typeof state.reconnectTimer.unref === "function") state.reconnectTimer.unref();
 }
 
 function markWhatsappAuthenticatedTimeout(state, userId = "") {
@@ -458,7 +529,7 @@ function snapshotWhatsappState(userId) {
   };
 }
 
-async function startWhatsappSession(userId, { awaitInitialize = false, initAttempt = 1 } = {}) {
+async function startWhatsappSession(userId, { awaitInitialize = false, initAttempt = 1, silentReconnect = false } = {}) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) throw new Error("Counselor user id is required.");
   const state = ensureWhatsappState(cleanUserId);
@@ -471,6 +542,9 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   ) {
     return snapshotWhatsappState(cleanUserId);
   }
+  state.manualStop = false;
+  state.recovering = true;
+  clearWhatsappReconnectTimer(state);
   if (state.client) {
     try {
       await state.client.destroy();
@@ -483,19 +557,26 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
   const webVersion = await resolveWhatsappWebVersion();
   const client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion));
+  state.sessionGeneration = Number(state.sessionGeneration || 0) + 1;
   state.client = client;
-  state.status = "connecting";
+  state.recovering = false;
+  state.silentReconnect = silentReconnect === true;
+  state.status = silentReconnect ? "reconnecting" : "connecting";
   state.qrCodeDataUrl = "";
   state.error = "";
-  state.connectedAt = "";
-  state.whatsappName = "";
-  state.whatsappNumber = "";
-  state.whatsappProfilePicUrl = "";
+  if (!silentReconnect) {
+    state.connectedAt = "";
+    state.whatsappName = "";
+    state.whatsappNumber = "";
+    state.whatsappProfilePicUrl = "";
+    state.reconnectAttempts = 0;
+  }
   state.authTimedOut = false;
   clearWhatsappAuthenticatedTimeout(state);
   state.lastUpdatedAt = new Date().toISOString();
 
   client.on("qr", async (qr) => {
+    if (!isCurrentWhatsappClient(state, client)) return;
     try {
       state.qrCodeDataUrl = await QRCode.toDataURL(qr);
       state.status = "awaiting_qr_scan";
@@ -503,6 +584,10 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
       state.authTimedOut = false;
       clearWhatsappAuthenticatedTimeout(state);
       state.lastUpdatedAt = new Date().toISOString();
+      if (state.silentReconnect) {
+        state.silentReconnect = false;
+        notifyWhatsappSessionDisconnected(cleanUserId);
+      }
     } catch {
       state.error = "Failed to render WhatsApp QR code.";
       state.lastUpdatedAt = new Date().toISOString();
@@ -510,6 +595,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   });
 
   client.on("authenticated", () => {
+    if (!isCurrentWhatsappClient(state, client)) return;
     state.status = "authenticated";
     state.error = "";
     state.authTimedOut = false;
@@ -518,6 +604,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   });
 
   client.on("ready", async () => {
+    if (!isCurrentWhatsappClient(state, client)) return;
     clearWhatsappAuthenticatedTimeout(state);
     const info = client.info || {};
     const widSerialized =
@@ -540,6 +627,8 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     state.whatsappNumber = String(numberFromWid || "");
     state.whatsappProfilePicUrl = profilePicUrl;
     state.authTimedOut = false;
+    state.silentReconnect = false;
+    state.reconnectAttempts = 0;
     state.lastUpdatedAt = new Date().toISOString();
     onWhatsappSessionReady(cleanUserId).catch(() => {
       // Branch linkage is best-effort; session remains connected.
@@ -547,39 +636,66 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
   });
 
   client.on("auth_failure", (message) => {
+    if (!isCurrentWhatsappClient(state, client)) return;
     clearWhatsappAuthenticatedTimeout(state);
+    const reason = String(message || "WhatsApp authentication failed.");
     state.status = "auth_failed";
-    state.error = String(message || "WhatsApp authentication failed.");
+    state.error = reason;
     state.lastUpdatedAt = new Date().toISOString();
-    notifyWhatsappSessionDisconnected(cleanUserId);
+    if (state.manualStop || isWhatsappLogoutDisconnectReason(reason)) {
+      notifyWhatsappSessionDisconnected(cleanUserId);
+      return;
+    }
+    scheduleSilentWhatsappReconnect(cleanUserId, { reason: "auth_failure" });
   });
 
   client.on("change_state", (nextState) => {
+    if (!isCurrentWhatsappClient(state, client)) return;
     if (String(nextState || "") !== "DEPRECATED_VERSION") return;
     clearWhatsappAuthenticatedTimeout(state);
-    state.status = "error";
-    state.error =
-      "WhatsApp web version is outdated. Disconnect, then connect again to generate a fresh QR code.";
+    logEvent("whatsapp", "web version outdated; refreshing and reconnecting", {
+      userId: cleanUserId,
+    });
+    invalidateWhatsappWebVersionCache();
+    state.status = "reconnecting";
+    state.error = "";
     state.qrCodeDataUrl = "";
     state.lastUpdatedAt = new Date().toISOString();
+    state.recovering = true;
     if (state.client && typeof state.client.destroy === "function") {
       state.client.destroy().catch(() => {
-        // Ignore cleanup failure; user can reconnect manually.
+        // Ignore cleanup failure; silent reconnect will start a fresh client.
       });
       state.client = null;
     }
+    state.recovering = false;
+    scheduleSilentWhatsappReconnect(cleanUserId, { reason: "deprecated_version" });
   });
 
-  client.on("disconnected", () => {
+  client.on("disconnected", (reason) => {
+    if (!isCurrentWhatsappClient(state, client)) return;
+    if (isWhatsappShuttingDown || state.manualStop || state.recovering) return;
     clearWhatsappAuthenticatedTimeout(state);
-    state.status = state.authTimedOut ? "error" : "disconnected";
+    const reasonText = String(reason || "");
+    const loggedOut = isWhatsappLogoutDisconnectReason(reasonText);
     state.qrCodeDataUrl = "";
-    state.connectedAt = "";
-    if (!state.authTimedOut) {
-      state.error = "";
+    if (state.authTimedOut) {
+      state.status = "error";
+      state.lastUpdatedAt = new Date().toISOString();
+      return;
     }
+    if (loggedOut) {
+      state.status = "disconnected";
+      state.connectedAt = "";
+      state.error = "";
+      state.lastUpdatedAt = new Date().toISOString();
+      notifyWhatsappSessionDisconnected(cleanUserId);
+      return;
+    }
+    state.status = "reconnecting";
+    state.error = "";
     state.lastUpdatedAt = new Date().toISOString();
-    notifyWhatsappSessionDisconnected(cleanUserId);
+    scheduleSilentWhatsappReconnect(cleanUserId, { reason: reasonText || "disconnected" });
   });
 
   const handleIncomingMessage = async (message) => {
@@ -612,6 +728,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
       return startWhatsappSession(cleanUserId, {
         awaitInitialize,
         initAttempt: initAttempt + 1,
+        silentReconnect,
       });
     }
     markWhatsappInitializeFailed(state, cleanUserId, error);
@@ -628,6 +745,10 @@ async function stopWhatsappSession(userId) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return snapshotWhatsappState(cleanUserId);
   const state = ensureWhatsappState(cleanUserId);
+  state.manualStop = true;
+  state.silentReconnect = false;
+  state.reconnectAttempts = 0;
+  clearWhatsappReconnectTimer(state);
   if (state.client) {
     try {
       await state.client.destroy();
@@ -684,11 +805,15 @@ async function regenerateWhatsappQrCode(userId) {
     }
   }
   clearWhatsappAuthenticatedTimeout(state);
+  clearWhatsappReconnectTimer(state);
   state.client = null;
   state.status = "disconnected";
   state.qrCodeDataUrl = "";
   state.error = "";
   state.authTimedOut = false;
+  state.manualStop = false;
+  state.silentReconnect = false;
+  state.reconnectAttempts = 0;
   state.lastUpdatedAt = new Date().toISOString();
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   await terminateBrowserProcessesUsingProfile(sessionDataDir);
@@ -714,7 +839,7 @@ async function startSavedWhatsappSessionIfExists(userId) {
   const hasSavedSession = await userHasSavedWhatsappSession(cleanUserId);
   if (!hasSavedSession) return;
   try {
-    await startWhatsappSession(cleanUserId, { awaitInitialize: true });
+    await startWhatsappSession(cleanUserId, { awaitInitialize: true, silentReconnect: true });
   } catch (error) {
     console.error(`Failed to restore WhatsApp session for ${cleanUserId}:`, error);
   }
@@ -777,7 +902,9 @@ async function initializeWhatsappSessionsOnStartup({ branchMessengersOnly = fals
 async function shutdownWhatsappSessions() {
   isWhatsappShuttingDown = true;
   for (const [, state] of whatsappSessions.entries()) {
+    state.manualStop = true;
     clearWhatsappAuthenticatedTimeout(state);
+    clearWhatsappReconnectTimer(state);
     if (!state.client) continue;
     try {
       await state.client.destroy();
@@ -791,11 +918,17 @@ async function shutdownWhatsappSessions() {
 async function reconnectActiveWhatsappSessions() {
   for (const [userId, state] of whatsappSessions.entries()) {
     const status = String(state?.status || "");
-    if (status !== "connected" && status !== "authenticated" && status !== "awaiting_qr_scan" && status !== "connecting") {
+    if (
+      status !== "connected" &&
+      status !== "authenticated" &&
+      status !== "awaiting_qr_scan" &&
+      status !== "connecting" &&
+      status !== "reconnecting"
+    ) {
       continue;
     }
     try {
-      await startWhatsappSession(userId);
+      await startWhatsappSession(userId, { silentReconnect: status === "connected" || status === "reconnecting" });
     } catch (error) {
       console.error(`Failed to reconnect WhatsApp session for ${userId}:`, error);
     }
@@ -838,6 +971,8 @@ async function restartWhatsappBrowserSession(userId) {
   const previous = whatsappSessionRecoveryChains.get(key) || Promise.resolve();
   const recovery = previous.then(async () => {
     const state = ensureWhatsappState(key);
+    if (state.manualStop) return;
+    state.recovering = true;
     if (state.client) {
       try {
         await state.client.destroy();
@@ -846,37 +981,74 @@ async function restartWhatsappBrowserSession(userId) {
       }
       state.client = null;
     }
-    state.status = "disconnected";
+    state.status = "reconnecting";
     state.error = "";
-    await startWhatsappSession(key);
+    state.recovering = false;
+    await startWhatsappSession(key, { silentReconnect: true });
     await waitForWhatsappSessionConnected(key, 120000);
   });
   whatsappSessionRecoveryChains.set(key, recovery.catch(() => {}));
   await recovery;
 }
 
-async function restartActiveWhatsappSessions() {
-  const activeUserIds = [];
+async function withTimeout(promise, timeoutMs) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function isWhatsappClientHealthy(state) {
+  if (!state?.client || state.status !== "connected") return false;
+  try {
+    const waState = await withTimeout(state.client.getState(), 15000);
+    return String(waState || "").toUpperCase() === "CONNECTED";
+  } catch (error) {
+    if (isWhatsappPuppeteerStaleSessionError(error)) return false;
+    const msg = String(error?.message || error || "").toLowerCase();
+    if (!msg) return false;
+    return !(
+      msg.includes("timeout") ||
+      msg.includes("not connected") ||
+      msg.includes("browser") ||
+      msg.includes("closed")
+    );
+  }
+}
+
+async function healthCheckActiveWhatsappSessions() {
+  const unhealthyUserIds = [];
   for (const [userId, state] of whatsappSessions.entries()) {
     const status = String(state?.status || "");
-    if (
-      status === "connected" ||
-      status === "authenticated" ||
-      status === "awaiting_qr_scan" ||
-      status === "connecting"
-    ) {
-      activeUserIds.push(userId);
+    if (status === "reconnecting" || status === "connecting" || status === "awaiting_qr_scan" || status === "authenticated") {
+      continue;
     }
+    if (status !== "connected") continue;
+    const healthy = await isWhatsappClientHealthy(state);
+    if (healthy) continue;
+    unhealthyUserIds.push(userId);
   }
-  if (!activeUserIds.length) return;
-  console.log(`WhatsApp: periodic browser restart for ${activeUserIds.length} session(s)`);
-  for (const userId of activeUserIds) {
+  if (!unhealthyUserIds.length) return;
+  console.log(`WhatsApp: health check restoring ${unhealthyUserIds.length} session(s)`);
+  for (const userId of unhealthyUserIds) {
     try {
       await restartWhatsappBrowserSession(userId);
     } catch (error) {
-      console.error(`Failed to restart WhatsApp browser for ${userId}:`, error);
+      console.error(`Failed to restore WhatsApp session for ${userId}:`, error);
+      scheduleSilentWhatsappReconnect(userId, { reason: "health-check" });
     }
   }
+}
+
+async function restartActiveWhatsappSessions() {
+  return healthCheckActiveWhatsappSessions();
 }
 
 function toWhatsAppChatId(phone) {
@@ -1898,6 +2070,7 @@ module.exports = {
   shutdownWhatsappSessions,
   reconnectActiveWhatsappSessions,
   restartActiveWhatsappSessions,
+  healthCheckActiveWhatsappSessions,
   isWhatsappPuppeteerStaleSessionError,
   waitForWhatsappSessionConnected,
   restartWhatsappBrowserSession,

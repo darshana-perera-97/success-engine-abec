@@ -186,7 +186,7 @@ server.listen(PORT, HOST, async () => {
   }
   setInterval(() => {
     restartActiveWhatsappSessions().catch((error) => {
-      console.error("Periodic WhatsApp browser restart failed:", error);
+      console.error("WhatsApp session health check failed:", error);
     });
   }, WHATSAPP_RECONNECT_INTERVAL_MS);
   setInterval(() => {

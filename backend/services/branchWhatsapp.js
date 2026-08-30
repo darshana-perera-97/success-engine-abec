@@ -148,6 +148,7 @@ const BRANCH_WHATSAPP_STATUS_PRIORITY = [
   "connected",
   "authenticated",
   "awaiting_qr_scan",
+  "reconnecting",
   "connecting",
   "error",
   "auth_failed",

@@ -24,6 +24,7 @@ function IntegrationSpinner({ title, description }) {
 const STATUS_COPY = {
   disconnected: "Disconnected",
   connecting: "Connecting",
+  reconnecting: "Reconnecting",
   awaiting_qr_scan: "Awaiting QR Scan",
   authenticated: "Authenticated",
   connected: "Connected",
@@ -34,6 +35,7 @@ const STATUS_COPY = {
 const BRANCH_STATUS_COPY = {
   disconnected: "Disconnected",
   connecting: "Connecting",
+  reconnecting: "Reconnecting",
   awaiting_qr_scan: "Awaiting QR",
   authenticated: "Linking",
   connected: "Connected",
@@ -66,7 +68,7 @@ function branchWhatsappStatusTextClass(status, hasMessenger) {
   if (!hasMessenger) return "text-slate-500";
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "text-emerald-600";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "text-amber-600";
   return "text-rose-600";
 }
 
@@ -74,7 +76,7 @@ function branchWhatsappStatusDotClass(status, hasMessenger) {
   if (!hasMessenger) return "bg-slate-300";
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "bg-emerald-500";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "bg-amber-500";
   return "bg-rose-500";
 }
 
@@ -82,7 +84,7 @@ function branchWhatsappAccentClass(status, hasMessenger) {
   if (!hasMessenger) return "bg-slate-200";
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "bg-emerald-500";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "bg-amber-500";
   return "bg-rose-400";
 }
 
@@ -152,11 +154,15 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
     !isLinkingWhatsapp &&
     (hasQrCode || statusKey === "awaiting_qr_scan" || statusKey === "connecting");
   const isBranchSetupInProgress =
-    branchMode && !canManage && (statusKey === "connecting" || statusKey === "awaiting_qr_scan");
+    branchMode &&
+    !canManage &&
+    (statusKey === "connecting" || statusKey === "reconnecting" || statusKey === "awaiting_qr_scan");
+  const isReconnecting = statusKey === "reconnecting";
   const isQrCodeLoading =
     canShowQrCode &&
     !isSessionReady &&
     !isLinkingWhatsapp &&
+    !isReconnecting &&
     !hasQrCode &&
     (loading || statusKey === "connecting");
   const formatDateTime = (value) => {
@@ -504,10 +510,16 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
               <button
                 type="button"
                 onClick={handleConnect}
-                disabled={loading}
+                disabled={loading || isReconnecting}
                 className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
               >
-                {loading ? "Working..." : branchMode ? "Connect branch WhatsApp" : "Connect WhatsApp"}
+                {loading || isReconnecting
+                  ? isReconnecting
+                    ? "Reconnecting..."
+                    : "Working..."
+                  : branchMode
+                    ? "Connect branch WhatsApp"
+                    : "Connect WhatsApp"}
               </button>
             ) : null}
             {canDisconnect ? (
@@ -557,6 +569,11 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
               <IntegrationSpinner
                 title="Linking WhatsApp to your account"
                 description="Finishing sign-in and loading your profile. This usually takes a few seconds."
+              />
+            ) : isReconnecting ? (
+              <IntegrationSpinner
+                title="Reconnecting WhatsApp"
+                description="Restoring your saved session. You should not need to scan a new QR code."
               />
             ) : isBranchSetupInProgress ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
@@ -637,11 +654,11 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
             ) : null}
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">WhatsApp Name</span>
-              <span className="text-sm font-semibold text-slate-900">{isSessionReady ? whatsappName : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting ? whatsappName : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Contact Number</span>
-              <span className="text-sm font-semibold text-slate-900">{isSessionReady ? whatsappNumber : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting ? whatsappNumber : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Connected At</span>

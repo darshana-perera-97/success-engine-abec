@@ -9,6 +9,7 @@ import { POLL_MS } from "../runtimeConfig";
 const WHATSAPP_STATUS_LABELS = {
   disconnected: "Disconnected",
   connecting: "Connecting",
+  reconnecting: "Reconnecting",
   awaiting_qr_scan: "Awaiting QR",
   authenticated: "Linking",
   connected: "Connected",
@@ -26,7 +27,7 @@ const whatsappStatusTextClass = (status, hasMessenger) => {
   if (!hasMessenger) return "text-slate-500";
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "text-emerald-600";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "text-amber-600";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "text-amber-600";
   return "text-rose-600";
 };
 
@@ -34,7 +35,7 @@ const whatsappStatusDotClass = (status, hasMessenger) => {
   if (!hasMessenger) return "bg-slate-300";
   const s = String(status || "").trim();
   if (s === "connected" || s === "authenticated") return "bg-emerald-500";
-  if (s === "connecting" || s === "awaiting_qr_scan") return "bg-amber-500";
+  if (s === "connecting" || s === "reconnecting" || s === "awaiting_qr_scan") return "bg-amber-500";
   return "bg-rose-500";
 };
 

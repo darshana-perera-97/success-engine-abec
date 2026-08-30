@@ -502,13 +502,17 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
   const whatsappSyncLabel =
     isWhatsappConnected
       ? "WhatsApp Connected"
-      : whatsappSyncStatus === "connecting" || whatsappSyncStatus === "awaiting_qr_scan"
+      : whatsappSyncStatus === "connecting" ||
+          whatsappSyncStatus === "reconnecting" ||
+          whatsappSyncStatus === "awaiting_qr_scan"
         ? "WhatsApp Connecting"
         : "WhatsApp Disconnected";
   const whatsappSyncDotClass =
     whatsappSyncStatus === "connected" || whatsappSyncStatus === "authenticated"
       ? "bg-emerald-500"
-      : whatsappSyncStatus === "connecting" || whatsappSyncStatus === "awaiting_qr_scan"
+      : whatsappSyncStatus === "connecting" ||
+          whatsappSyncStatus === "reconnecting" ||
+          whatsappSyncStatus === "awaiting_qr_scan"
         ? "bg-amber-500"
         : "bg-rose-500";
   const getSenderName = (senderId) => {

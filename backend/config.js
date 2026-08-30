@@ -140,7 +140,11 @@ const COUNSELOR_ROLES = new Set([
 ]);
 const whatsappSessions = new Map();
 const whatsappSessionRecoveryChains = new Map();
-const WHATSAPP_RECONNECT_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const parsedWhatsappHealthCheckMs = parseInt(process.env.WHATSAPP_HEALTH_CHECK_MS || "", 10);
+const WHATSAPP_RECONNECT_INTERVAL_MS =
+  Number.isFinite(parsedWhatsappHealthCheckMs) && parsedWhatsappHealthCheckMs >= 60_000
+    ? parsedWhatsappHealthCheckMs
+    : 15 * 60 * 1000;
 
 const PIPELINE_STEPS = [
   "Inquiry", "Registration", "Application", "Interview training",
