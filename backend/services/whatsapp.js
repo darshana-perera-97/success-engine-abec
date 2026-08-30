@@ -59,6 +59,9 @@ const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
 const WHATSAPP_SEND_WAIT_MS = 45 * 1000;
+const WHATSAPP_ACK_WAIT_MS = 15 * 1000;
+const WHATSAPP_ACK_SERVER = 1;
+const WHATSAPP_ACK_ERROR = -1;
 const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_LOGOUT_REASON_RE = /logout|unpaired|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
@@ -1231,7 +1234,7 @@ async function findKnownStudentWhatsappChatId(studentId) {
   return "";
 }
 
-async function resolveWhatsappSendChatId(client, student, phone) {
+async function collectWhatsappSendChatIds(client, student, phone) {
   const fallback = toWhatsAppChatId(phone);
   const candidates = [];
   const pushCandidate = (value) => {
@@ -1241,7 +1244,6 @@ async function resolveWhatsappSendChatId(client, student, phone) {
     }
   };
 
-  pushCandidate(await findKnownStudentWhatsappChatId(String(student?.id || "")));
   if (client && typeof client.getNumberId === "function") {
     try {
       pushCandidate(await client.getNumberId(normalizePhoneDigits(phone)));
@@ -1251,7 +1253,7 @@ async function resolveWhatsappSendChatId(client, student, phone) {
   }
   if (client && typeof client.getContactLidAndPhone === "function" && fallback) {
     try {
-      const pairs = await client.getContactLidAndPhone([fallback, ...candidates.slice(0, 1)]);
+      const pairs = await client.getContactLidAndPhone([fallback]);
       for (const pair of Array.isArray(pairs) ? pairs : []) {
         pushCandidate(pair?.lid);
         pushCandidate(pair?.pn);
@@ -1260,10 +1262,90 @@ async function resolveWhatsappSendChatId(client, student, phone) {
       // LID lookup is best-effort.
     }
   }
-  const syncedLid = await resolveLidViaUsync(client, phone || fallback);
-  pushCandidate(syncedLid);
+  pushCandidate(await resolveLidViaUsync(client, phone || fallback));
+  pushCandidate(await findKnownStudentWhatsappChatId(String(student?.id || "")));
   pushCandidate(fallback);
-  return candidates[0] || fallback;
+
+  const lids = candidates.filter((id) => id.includes("@lid"));
+  const others = candidates.filter((id) => !id.includes("@lid"));
+  return [...lids, ...others];
+}
+
+async function resolveWhatsappSendChatId(client, student, phone) {
+  const candidates = await collectWhatsappSendChatIds(client, student, phone);
+  return candidates[0] || toWhatsAppChatId(phone);
+}
+
+function readWhatsappMessageAck(message) {
+  const ack = Number(message?.ack);
+  return Number.isFinite(ack) ? ack : 0;
+}
+
+async function waitForWhatsappMessageAck(client, sentMsg, timeoutMs = WHATSAPP_ACK_WAIT_MS) {
+  if (!sentMsg) throw new Error("WhatsApp did not return a sent message.");
+  const initialAck = readWhatsappMessageAck(sentMsg);
+  if (initialAck <= WHATSAPP_ACK_ERROR) {
+    throw new Error("WhatsApp rejected the message.");
+  }
+  if (initialAck >= WHATSAPP_ACK_SERVER) return initialAck;
+
+  const serialized = String(sentMsg.id?._serialized || "").trim();
+  let current = sentMsg;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error, ack) => {
+      if (settled) return;
+      settled = true;
+      if (client && typeof client.off === "function") client.off("message_ack", onAck);
+      else if (client && typeof client.removeListener === "function") client.removeListener("message_ack", onAck);
+      clearInterval(poller);
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(ack);
+    };
+
+    const onAck = (msg, ack) => {
+      const id = String(msg?.id?._serialized || "").trim();
+      if (serialized && id && id !== serialized) return;
+      const nextAck = Number(ack);
+      if (nextAck <= WHATSAPP_ACK_ERROR) {
+        finish(new Error("WhatsApp rejected the message."));
+        return;
+      }
+      if (nextAck >= WHATSAPP_ACK_SERVER) finish(null, nextAck);
+    };
+
+    if (client && typeof client.on === "function") {
+      client.on("message_ack", onAck);
+    }
+
+    const poller = setInterval(async () => {
+      try {
+        if (serialized && client && typeof client.getMessageById === "function") {
+          const fresh = await client.getMessageById(serialized);
+          if (fresh) current = fresh;
+        }
+      } catch {
+        // Keep using the last known message object.
+      }
+      const ack = readWhatsappMessageAck(current);
+      if (ack <= WHATSAPP_ACK_ERROR) {
+        finish(new Error("WhatsApp rejected the message."));
+        return;
+      }
+      if (ack >= WHATSAPP_ACK_SERVER) finish(null, ack);
+    }, 700);
+
+    const timer = setTimeout(() => {
+      const ack = readWhatsappMessageAck(current);
+      if (ack >= WHATSAPP_ACK_SERVER) {
+        finish(null, ack);
+        return;
+      }
+      finish(new Error("WhatsApp accepted the message locally but did not deliver it."));
+    }, timeoutMs);
+  });
 }
 
 function normalizePhoneDigits(phone) {
@@ -1958,9 +2040,10 @@ async function deliverCounselorMessageToStudentWhatsapp({
         if (!senderReady || !senderState.client || senderState.status !== "connected") {
           deliveryResult = { attempted: true, status: "failed", reason: "WhatsApp is not connected." };
         } else {
+          let chatIds = [waChatId].filter(Boolean);
           try {
-            const resolvedChatId = await resolveWhatsappSendChatId(senderState.client, student, phone);
-            if (resolvedChatId) waChatId = resolvedChatId;
+            const resolvedIds = await collectWhatsappSendChatIds(senderState.client, student, phone);
+            if (resolvedIds.length) chatIds = resolvedIds;
           } catch {
             // Keep the normalized @c.us fallback when lookup fails.
           }
@@ -1982,18 +2065,24 @@ async function deliverCounselorMessageToStudentWhatsapp({
             }
             const targetChatId = String(chatId || waChatId || "").trim();
             if (!targetChatId) throw new Error("Student WhatsApp number is missing.");
-            if (preparedMedia) {
-              return live.client.sendMessage(
-                targetChatId,
-                preparedMedia,
-                Object.keys(sendOptions).length ? sendOptions : undefined
-              );
+            const payload = preparedMedia || whatsappBody || messageText;
+            const options = Object.keys(sendOptions).length ? sendOptions : undefined;
+            try {
+              const chat = await live.client.getChatById(targetChatId);
+              if (chat && typeof chat.sendMessage === "function") {
+                return chat.sendMessage(payload, options);
+              }
+            } catch (error) {
+              if (isWhatsappLidError(error)) throw error;
             }
-            return live.client.sendMessage(
-              targetChatId,
-              whatsappBody || messageText,
-              Object.keys(sendOptions).length ? sendOptions : undefined
-            );
+            return live.client.sendMessage(targetChatId, payload, options);
+          };
+
+          const sendAndConfirm = async (chatId) => {
+            const sentMsg = await performSend(chatId);
+            const live = ensureWhatsappState(sender.id);
+            await waitForWhatsappMessageAck(live.client, sentMsg);
+            return sentMsg;
           };
 
           const logSent = () => {
@@ -2027,76 +2116,54 @@ async function deliverCounselorMessageToStudentWhatsapp({
             };
           };
 
-          try {
-            const sentMsg = await performSend();
-            logSent();
-            deliveryResult = buildSentResult(sentMsg);
-          } catch (error) {
-            if (isWhatsappLidError(error)) {
-              logEvent("whatsapp", "LID missing; resolving contact and retrying", {
+          let lastSendError = null;
+          for (const candidateId of chatIds) {
+            waChatId = candidateId;
+            try {
+              const sentMsg = await sendAndConfirm(candidateId);
+              logSent();
+              deliveryResult = buildSentResult(sentMsg);
+              lastSendError = null;
+              break;
+            } catch (error) {
+              lastSendError = error;
+              logEvent("whatsapp", "message send attempt failed", {
                 from: sender.id,
                 to: receiverId,
-                chatId: waChatId,
+                chatId: candidateId,
                 reason: String(error?.message || ""),
               });
-              try {
-                const live = ensureWhatsappState(sender.id);
-                const lidChatId =
-                  (await resolveLidViaUsync(live.client, phone || waChatId)) ||
-                  (await resolveWhatsappSendChatId(live.client, student, phone));
-                if (lidChatId && lidChatId !== waChatId) {
-                  waChatId = lidChatId;
+              if (isWhatsappPuppeteerStaleSessionError(error)) {
+                logEvent("whatsapp", "stale session detected; restarting client", {
+                  from: sender.id,
+                  to: receiverId,
+                  reason: String(error?.message || ""),
+                });
+                try {
+                  await restartWhatsappBrowserSession(sender.id);
+                  const sentMsg = await sendAndConfirm(candidateId);
+                  logSent();
+                  deliveryResult = buildSentResult(sentMsg);
+                  lastSendError = null;
+                  break;
+                } catch (errorAfter) {
+                  lastSendError = errorAfter;
                 }
-                const sentMsg = await performSend(waChatId);
-                logSent();
-                deliveryResult = buildSentResult(sentMsg);
-              } catch (errorAfter) {
-                logEvent("whatsapp", "message send failed", {
-                  from: sender.id,
-                  to: receiverId,
-                  reason: String(errorAfter?.message || ""),
-                });
-                deliveryResult = {
-                  attempted: true,
-                  status: "failed",
-                  reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
-                };
               }
-            } else if (isWhatsappPuppeteerStaleSessionError(error)) {
-              logEvent("whatsapp", "stale session detected; restarting client", {
-                from: sender.id,
-                to: receiverId,
-                reason: String(error?.message || ""),
-              });
-              try {
-                await restartWhatsappBrowserSession(sender.id);
-                const sentMsg = await performSend();
-                logSent();
-                deliveryResult = buildSentResult(sentMsg);
-              } catch (errorAfter) {
-                logEvent("whatsapp", "message send failed", {
-                  from: sender.id,
-                  to: receiverId,
-                  reason: String(errorAfter?.message || ""),
-                });
-                deliveryResult = {
-                  attempted: true,
-                  status: "failed",
-                  reason: String(errorAfter?.message || "Failed to send message via WhatsApp."),
-                };
-              }
-            } else {
-              logEvent("whatsapp", "message send failed", {
-                from: sender.id,
-                to: receiverId,
-                reason: String(error?.message || ""),
-              });
-              deliveryResult = {
-                attempted: true,
-                status: "failed",
-                reason: String(error?.message || "Failed to send message via WhatsApp."),
-              };
             }
+          }
+
+          if (deliveryResult.status !== "sent" && lastSendError) {
+            logEvent("whatsapp", "message send failed", {
+              from: sender.id,
+              to: receiverId,
+              reason: String(lastSendError?.message || ""),
+            });
+            deliveryResult = {
+              attempted: true,
+              status: "failed",
+              reason: String(lastSendError?.message || "Failed to send message via WhatsApp."),
+            };
           }
         }
       }
