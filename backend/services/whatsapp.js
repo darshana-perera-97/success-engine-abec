@@ -318,8 +318,44 @@ function patchWhatsappWebJsClient() {
     try {
       return await originalInject.apply(this, args);
     } catch (error) {
-      if (swallowWhatsappPuppeteerError(error)) return;
+      if (swallowWhatsappPuppeteerError(error)) {
+        try {
+          await reinjectWhatsappWebJsHelpers(this);
+        } catch {
+          // Helpers are restored again before the next send if this page is still alive.
+        }
+        return;
+      }
       throw error;
+    }
+  };
+
+  const originalSendMessage = Client.prototype.sendMessage;
+  Client.prototype.sendMessage = async function patchedSendMessage(...args) {
+    const helpersReady = await ensureWhatsappWebJsReady(this);
+    if (!helpersReady) {
+      throw new Error("WhatsApp web helpers are not injected.");
+    }
+    try {
+      return await originalSendMessage.apply(this, args);
+    } catch (error) {
+      if (!isWhatsappWebJsMissingError(error)) throw error;
+      const restored = await reinjectWhatsappWebJsHelpers(this);
+      if (!restored) throw error;
+      return await originalSendMessage.apply(this, args);
+    }
+  };
+
+  const originalGetChatById = Client.prototype.getChatById;
+  Client.prototype.getChatById = async function patchedGetChatById(...args) {
+    await ensureWhatsappWebJsReady(this);
+    try {
+      return await originalGetChatById.apply(this, args);
+    } catch (error) {
+      if (!isWhatsappWebJsMissingError(error)) throw error;
+      const restored = await reinjectWhatsappWebJsHelpers(this);
+      if (!restored) throw error;
+      return await originalGetChatById.apply(this, args);
     }
   };
 }
@@ -1914,7 +1950,11 @@ async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts,
     try {
       const waState = String(await withTimeout(state.client.getState(), slice) || "").toUpperCase();
       lastWaState = waState;
-      if (waState === "CONNECTED") return finish({ verdict: "healthy", waState });
+      if (waState === "CONNECTED") {
+        if (await probeWhatsappWebJsReady(state.client)) return finish({ verdict: "healthy", waState });
+        if (await ensureWhatsappWebJsReady(state.client)) return finish({ verdict: "healthy", waState });
+        return finish({ verdict: "dead", waState });
+      }
       if (attempt < probeAttempts) await delay(400);
     } catch {
       timedOut = true;
@@ -2093,6 +2133,67 @@ function isUsableSentWhatsappMessage(message) {
 function isWhatsappLidError(error) {
   const msg = String(error?.message || error || "").toLowerCase();
   return msg.includes("no lid") || msg.includes("lid is missing") || msg.includes("accountlid");
+}
+
+function isWhatsappWebJsMissingError(error) {
+  const msg = String(error?.message || error?.cause?.message || error || "").toLowerCase();
+  if (!msg) return false;
+  if (msg.includes("web helpers are not injected")) return true;
+  if (msg.includes("wwebjs is not defined") || msg.includes("wwebjs is undefined")) return true;
+  return msg.includes("getchat") && (msg.includes("undefined") || msg.includes("null"));
+}
+
+function findWhatsappUserIdForClient(client) {
+  if (!client) return "";
+  for (const [userId, state] of whatsappSessions.entries()) {
+    if (state?.client === client) return String(userId || "");
+  }
+  return "";
+}
+
+async function probeWhatsappWebJsReady(client) {
+  if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return false;
+  try {
+    if (typeof client.pupPage.isClosed === "function" && client.pupPage.isClosed()) return false;
+    return Boolean(
+      await client.pupPage.evaluate(
+        () =>
+          typeof window.WWebJS === "object" &&
+          window.WWebJS !== null &&
+          typeof window.WWebJS.getChat === "function" &&
+          typeof window.WWebJS.sendMessage === "function"
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function reinjectWhatsappWebJsHelpers(client) {
+  if (!client?.pupPage || typeof client.pupPage.evaluate !== "function") return false;
+  try {
+    if (typeof client.pupPage.isClosed === "function" && client.pupPage.isClosed()) return false;
+    const { LoadUtils } = require("whatsapp-web.js/src/util/Injected/Utils");
+    await client.pupPage.evaluate(LoadUtils);
+    await installWhatsappWebCompatPatch(client);
+    return probeWhatsappWebJsReady(client);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureWhatsappWebJsReady(client) {
+  if (await probeWhatsappWebJsReady(client)) {
+    await installWhatsappWebCompatPatch(client);
+    return true;
+  }
+  const restored = await reinjectWhatsappWebJsHelpers(client);
+  if (restored) {
+    logEvent("whatsapp", "re-injected missing web helpers", {
+      userId: findWhatsappUserIdForClient(client),
+    });
+  }
+  return restored;
 }
 
 function isWhatsappLidChatId(chatId) {
@@ -2289,7 +2390,13 @@ async function recoverRecentlySentWhatsappMessage(client, chatId, sentAfterMs) {
           if (typeof value === "string") return value;
           return String(value._serialized || value.$1 || "").trim();
         };
-        const chat = await window.WWebJS.getChat(serializedChatId, { getAsModel: false });
+        let chat = null;
+        if (window.WWebJS && typeof window.WWebJS.getChat === "function") {
+          chat = await window.WWebJS.getChat(serializedChatId, { getAsModel: false });
+        } else if (typeof window.require === "function") {
+          const chatWid = window.require("WAWebWidFactory").createWid(serializedChatId);
+          chat = window.require("WAWebCollections").Chat.get(chatWid) || null;
+        }
         if (!chat) return null;
         const fromChat =
           (typeof chat.msgs?.getModelsArray === "function" ? chat.msgs.getModelsArray() : []) || [];
@@ -2313,7 +2420,10 @@ async function recoverRecentlySentWhatsappMessage(client, chatId, sentAfterMs) {
         if (latest.id && !latest.id._serialized) {
           latest.id._serialized = latest.id.$1 || latest.id._serialized;
         }
-        return window.WWebJS.getMessageModel(latest);
+        if (window.WWebJS && typeof window.WWebJS.getMessageModel === "function") {
+          return window.WWebJS.getMessageModel(latest);
+        }
+        return { id: latest.id, ack: latest.ack, fromMe: true, t: latest.t };
       },
       targetChatId,
       minTimestamp
@@ -3427,7 +3537,10 @@ async function deliverCounselorMessageToStudentWhatsapp({
             const targetChatId = String(chatId || waChatId || "").trim();
             if (!targetChatId) throw new Error("Student WhatsApp number is missing.");
             const payload = preparedMedia || whatsappBody || messageText;
-            await installWhatsappWebCompatPatch(live.client);
+            const helpersReady = await ensureWhatsappWebJsReady(live.client);
+            if (!helpersReady) {
+              throw new Error("WhatsApp web helpers are not injected.");
+            }
             const sendChatId = (await ensureWhatsappChatReady(live.client, targetChatId)) || targetChatId;
             const options = {
               ...sendOptions,
@@ -3543,13 +3656,22 @@ async function deliverCounselorMessageToStudentWhatsapp({
                 chatId: candidateId,
                 reason: String(error?.message || ""),
               });
-              if (!restartedForStale && isWhatsappPuppeteerStaleSessionError(error)) {
+              if (
+                !restartedForStale &&
+                (isWhatsappPuppeteerStaleSessionError(error) || isWhatsappWebJsMissingError(error))
+              ) {
                 restartedForStale = true;
-                logEvent("whatsapp", "stale session detected; restarting client", {
-                  from: sender.id,
-                  to: receiverId,
-                  reason: String(error?.message || ""),
-                });
+                logEvent(
+                  "whatsapp",
+                  isWhatsappWebJsMissingError(error)
+                    ? "web helpers missing; restarting client"
+                    : "stale session detected; restarting client",
+                  {
+                    from: sender.id,
+                    to: receiverId,
+                    reason: String(error?.message || ""),
+                  }
+                );
                 try {
                   await restartWhatsappBrowserSession(sender.id);
                   await ensureWhatsappSenderReady(sender.id, 30000);
