@@ -357,7 +357,7 @@ function IncomingMessagesSection({ rows, loading, error, onView }) {
   const filtered = useMemo(
     () =>
       rows.filter((row) =>
-        matchesQuery(query, row.account, row.userName, row.receivedNumber, row.messagePreview, row.mappedStudentName)
+        matchesQuery(query, row.account, row.userName, row.receivedNumber, row.messagePreview, row.mappedStudentName, row.timestamp)
       ),
     [rows, query]
   );
@@ -382,14 +382,18 @@ function IncomingMessagesSection({ rows, loading, error, onView }) {
                 <th className={dt.th}>User name</th>
                 <th className={dt.th}>Received number</th>
                 <th className={dt.th}>Message preview</th>
+                <th className={dt.th}>Date</th>
+                <th className={dt.th}>Time</th>
                 <th className={dt.thRight}>Actions</th>
               </tr>
             </thead>
             <tbody className={dt.body}>
               {loading ? (
-                <TableSkeletonRows rows={6} cols={5} />
+                <TableSkeletonRows rows={6} cols={7} />
               ) : pageItems.length ? (
-                pageItems.map((row) => (
+                pageItems.map((row) => {
+                  const { date, time } = formatLogDateTime(row.timestamp);
+                  return (
                   <tr key={row.id} className={dt.row}>
                     <td className={dt.tdPrimary}>{row.account || "—"}</td>
                     <td className={dt.td}>{row.userName || "—"}</td>
@@ -397,6 +401,8 @@ function IncomingMessagesSection({ rows, loading, error, onView }) {
                     <td className={`${dt.td} max-w-xs`}>
                       <span className="line-clamp-2">{row.messagePreview || "—"}</span>
                     </td>
+                    <td className={dt.td}>{date}</td>
+                    <td className={dt.td}>{time}</td>
                     <td className={dt.tdActions}>
                       <Button variant="secondary" size="sm" onClick={() => onView(row)}>
                         <Eye size={14} className="mr-1.5" />
@@ -404,10 +410,11 @@ function IncomingMessagesSection({ rows, loading, error, onView }) {
                       </Button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan={5} className={dt.emptyRow}>
+                  <td colSpan={7} className={dt.emptyRow}>
                     {error || "No incoming WhatsApp messages yet."}
                   </td>
                 </tr>
@@ -433,7 +440,7 @@ function OutgoingMessagesSection({ rows, loading, error }) {
   const filtered = useMemo(
     () =>
       rows.filter((row) =>
-        matchesQuery(query, row.userName, row.message, row.messagePreview, row.whatsappAccount, row.status)
+        matchesQuery(query, row.userName, row.message, row.messagePreview, row.whatsappAccount, row.status, row.timestamp)
       ),
     [rows, query]
   );
@@ -459,13 +466,17 @@ function OutgoingMessagesSection({ rows, loading, error }) {
                 <th className={dt.th}>WhatsApp account</th>
                 <th className={dt.th}>Message preview</th>
                 <th className={dt.th}>Status</th>
+                <th className={dt.th}>Date</th>
+                <th className={dt.th}>Time</th>
               </tr>
             </thead>
             <tbody className={dt.body}>
               {loading ? (
-                <TableSkeletonRows rows={6} cols={5} />
+                <TableSkeletonRows rows={6} cols={7} />
               ) : pageItems.length ? (
-                pageItems.map((row) => (
+                pageItems.map((row) => {
+                  const { date, time } = formatLogDateTime(row.timestamp);
+                  return (
                   <tr key={row.id} className={dt.row}>
                     <td className={dt.tdPrimary}>{row.userName || "—"}</td>
                     <td className={`${dt.td} max-w-xs`}>
@@ -485,11 +496,14 @@ function OutgoingMessagesSection({ rows, loading, error }) {
                         <div className="mt-1 max-w-[180px] text-xs text-slate-400 line-clamp-2">{row.reason}</div>
                       ) : null}
                     </td>
+                    <td className={dt.td}>{date}</td>
+                    <td className={dt.td}>{time}</td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan={5} className={dt.emptyRow}>
+                  <td colSpan={7} className={dt.emptyRow}>
                     {error || "No outgoing WhatsApp messages yet."}
                   </td>
                 </tr>
