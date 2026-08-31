@@ -7,6 +7,7 @@ const { readUsers } = require("../models/users");
 const { readStudemts } = require("../models/students");
 const {
   snapshotWhatsappState,
+  refreshWhatsappSessionHealth,
   stopWhatsappSession,
   listSavedWhatsappSessionUserIds,
   userHasSavedWhatsappSession,
@@ -110,8 +111,23 @@ async function listWhatsappIntegrations(directory) {
       lastUpdatedAt: String(snap.lastUpdatedAt || "").trim(),
       hasSavedSession,
       canLogout: status !== "disconnected" || hasSavedSession,
+      healthScore: Number.isFinite(Number(snap.healthScore)) ? Number(snap.healthScore) : 0,
+      healthLabel: String(snap.healthLabel || "").trim() || "Unknown",
+      healthVerdict: String(snap.healthVerdict || "").trim(),
     });
   }
+  await Promise.all(
+    rows.map(async (row) => {
+      try {
+        const health = await refreshWhatsappSessionHealth(row.userId);
+        row.healthScore = Number.isFinite(Number(health?.score)) ? Number(health.score) : row.healthScore;
+        row.healthLabel = String(health?.label || row.healthLabel || "").trim() || "Unknown";
+        row.healthVerdict = String(health?.verdict || row.healthVerdict || "").trim();
+      } catch {
+        // Keep cached snapshot health if a live probe fails.
+      }
+    })
+  );
   rows.sort((a, b) => {
     const rank = (status) => {
       if (status === "connected" || status === "authenticated") return 0;

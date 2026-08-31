@@ -177,8 +177,14 @@ server.listen(PORT, HOST, async () => {
       console.warn("JSON cache warm-up failed:", error.message);
     });
   }
-  console.log("WhatsApp: restoring previously connected accounts on server boot...");
+  console.log("WhatsApp: queuing previously connected accounts for sequential reconnect...");
   await initializeWhatsappSessionsOnStartup();
+  const bootFollowUp = setTimeout(() => {
+    restartActiveWhatsappSessions().catch((error) => {
+      console.error("WhatsApp session health check failed:", error);
+    });
+  }, 60_000);
+  if (typeof bootFollowUp.unref === "function") bootFollowUp.unref();
   setInterval(() => {
     restartActiveWhatsappSessions().catch((error) => {
       console.error("WhatsApp session health check failed:", error);

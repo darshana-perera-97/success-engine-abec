@@ -62,6 +62,38 @@ function statusLabel(status) {
   return s.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
+function healthBarClass(score) {
+  if (score >= 80) return "bg-emerald-500";
+  if (score >= 50) return "bg-amber-500";
+  if (score > 0) return "bg-rose-500";
+  return "bg-slate-300";
+}
+
+function healthScoreClass(score) {
+  if (score >= 80) return "text-emerald-700";
+  if (score >= 50) return "text-amber-700";
+  if (score > 0) return "text-rose-700";
+  return "text-slate-500";
+}
+
+function WhatsappHealthCell({ score, label }) {
+  const n = Number(score);
+  const value = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+  if (value == null) return <span className="text-slate-400">—</span>;
+  return (
+    <div className="min-w-[92px]">
+      <div className="flex items-baseline gap-1">
+        <span className={`text-sm font-semibold tabular-nums ${healthScoreClass(value)}`}>{value}</span>
+        <span className="text-[11px] text-slate-400">/ 100</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${healthBarClass(value)}`} style={{ width: `${value}%` }} />
+      </div>
+      <div className="mt-1 text-xs text-slate-500">{label || "—"}</div>
+    </div>
+  );
+}
+
 function LogSection({ icon, title, description, toolbar, children }) {
   return (
     <section className="space-y-3">
@@ -212,7 +244,10 @@ function LoginLogsSection({ rows, loading, error }) {
 function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogout }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(
-    () => rows.filter((row) => matchesQuery(query, row.userName, row.account, row.status, row.email)),
+    () =>
+      rows.filter((row) =>
+        matchesQuery(query, row.userName, row.account, row.status, row.email, row.healthLabel, row.healthScore)
+      ),
     [rows, query]
   );
   const { page, setPage, pageSize, setPageSize, pageItems, totalRows } = useClientPagination(
@@ -224,7 +259,7 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
     <LogSection
       icon={<Plug size={16} />}
       title="WhatsApp integrations"
-      description="Every WhatsApp account connected to the system. Admins can log them out from here."
+      description="Every WhatsApp account connected to the system, with live health scores. Admins can log them out from here."
       toolbar={<SearchField value={query} onChange={setQuery} placeholder="Search accounts…" />}
     >
       <div className={dt.card}>
@@ -235,12 +270,13 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
                 <th className={dt.th}>Account</th>
                 <th className={dt.th}>User name</th>
                 <th className={dt.th}>Status</th>
+                <th className={dt.th}>Health</th>
                 <th className={dt.thRight}>Actions</th>
               </tr>
             </thead>
             <tbody className={dt.body}>
               {loading ? (
-                <TableSkeletonRows rows={5} cols={4} />
+                <TableSkeletonRows rows={5} cols={5} />
               ) : pageItems.length ? (
                 pageItems.map((row) => (
                   <tr key={row.userId} className={dt.row}>
@@ -257,6 +293,9 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
                       >
                         {statusLabel(row.status)}
                       </span>
+                    </td>
+                    <td className={dt.td}>
+                      <WhatsappHealthCell score={row.healthScore} label={row.healthLabel} />
                     </td>
                     <td className={dt.tdActions}>
                       {row.canLogout ? (
@@ -277,7 +316,7 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4} className={dt.emptyRow}>
+                  <td colSpan={5} className={dt.emptyRow}>
                     {error || "No WhatsApp integrations found."}
                   </td>
                 </tr>

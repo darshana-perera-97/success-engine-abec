@@ -16,6 +16,7 @@ const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
 const { readChats, writeChats, appendPortalChatMessage, normalizeReplyTo } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
+const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { isWhatsappIntegratedStaffRole } = require("./roles");
 const {
   isBranchWhatsappManagerRole,
@@ -59,6 +60,18 @@ const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
+const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
+const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 2000;
+const WHATSAPP_HEALTH_PROBE_ATTEMPTS = 3;
+const WHATSAPP_HEALTH_CACHE_MS = 20_000;
+const WHATSAPP_WARMING_STATES = new Set(["CONNECTING", "OPENING", "PAIRING"]);
+const WHATSAPP_BUSY_STATUSES = new Set([
+  "connecting",
+  "reconnecting",
+  "awaiting_qr_scan",
+  "authenticated",
+  "connected",
+]);
 const WHATSAPP_SEND_WAIT_MS = 75 * 1000;
 const WHATSAPP_SEND_WARMUP_MS = 8 * 1000;
 const WHATSAPP_ACK_WAIT_MS = 8 * 1000;
@@ -68,9 +81,16 @@ const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS = 150 * 1000;
 const WHATSAPP_LOGOUT_REASON_RE = /logout|unpaired|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
+const RESTORABLE_SESSIONS_FILE = path.join(WHATSAPP_CONNECTIONS_DIR, "restorable-sessions.json");
 let isWhatsappShuttingDown = false;
 let whatsappBootRestoreActive = false;
 let whatsappInitChain = Promise.resolve();
+let restorableSessionsCache = null;
+const whatsappReconnectQueue = [];
+const whatsappReconnectQueuedIds = new Set();
+const whatsappReconnectQueueIdleWaiters = [];
+let whatsappReconnectQueueRunning = false;
+let whatsappReconnectActiveUserId = "";
 
 function notifyWhatsappSessionDisconnected(userId) {
   if (isWhatsappShuttingDown) return;
@@ -191,14 +211,143 @@ function buildPuppeteerOptions() {
   return options;
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
 function enqueueWhatsappInit(task) {
   const run = whatsappInitChain.then(task);
   whatsappInitChain = run.catch(() => {});
   return run;
 }
 
+function isWhatsappReconnectQueueIdle() {
+  return (
+    !whatsappReconnectQueueRunning &&
+    whatsappReconnectQueue.length === 0 &&
+    !whatsappReconnectActiveUserId
+  );
+}
+
+function notifyWhatsappReconnectQueueIdle() {
+  if (!isWhatsappReconnectQueueIdle()) return;
+  const waiters = whatsappReconnectQueueIdleWaiters.splice(0);
+  for (const resolve of waiters) resolve();
+}
+
+function waitForWhatsappReconnectQueueIdle() {
+  if (isWhatsappReconnectQueueIdle()) return Promise.resolve();
+  return new Promise((resolve) => {
+    whatsappReconnectQueueIdleWaiters.push(resolve);
+  });
+}
+
+function enqueueWhatsappReconnect(
+  userId,
+  { reason = "", silentReconnect = true, force = false } = {}
+) {
+  const id = String(userId || "").trim();
+  if (!id || isWhatsappShuttingDown) return;
+  if (whatsappReconnectActiveUserId === id) return;
+  if (whatsappReconnectQueuedIds.has(id)) return;
+  whatsappReconnectQueuedIds.add(id);
+  whatsappReconnectQueue.push({
+    userId: id,
+    reason: String(reason || ""),
+    silentReconnect: silentReconnect !== false,
+    force: force === true,
+  });
+  logEvent("whatsapp", "queued reconnect", {
+    userId: id,
+    reason: String(reason || ""),
+    position: whatsappReconnectQueue.length,
+  });
+  void processWhatsappReconnectQueue();
+}
+
+async function processWhatsappReconnectQueue() {
+  if (whatsappReconnectQueueRunning) return;
+  whatsappReconnectQueueRunning = true;
+  try {
+    while (whatsappReconnectQueue.length && !isWhatsappShuttingDown) {
+      const job = whatsappReconnectQueue.shift();
+      whatsappReconnectQueuedIds.delete(job.userId);
+      await runQueuedWhatsappReconnect(job);
+      if (whatsappReconnectQueue.length) {
+        await delay(WHATSAPP_RECONNECT_QUEUE_GAP_MS);
+      }
+    }
+  } finally {
+    whatsappReconnectQueueRunning = false;
+    if (whatsappReconnectQueue.length && !isWhatsappShuttingDown) {
+      void processWhatsappReconnectQueue();
+      return;
+    }
+    notifyWhatsappReconnectQueueIdle();
+  }
+}
+
+async function runQueuedWhatsappReconnect(job) {
+  const userId = String(job?.userId || "").trim();
+  if (!userId) return "";
+  const state = ensureWhatsappState(userId);
+  if (state.manualStop) {
+    console.log(`WhatsApp: reconnect queue skip ${userId} (disconnected by user)`);
+    return String(state.status || "disconnected");
+  }
+  if (!job.force && state.status === "connected" && state.client && !state.initializing) {
+    console.log(`WhatsApp: reconnect queue skip ${userId} (already connected)`);
+    return "connected";
+  }
+  whatsappReconnectActiveUserId = userId;
+  const waiting = whatsappReconnectQueue.length;
+  console.log(
+    `WhatsApp: reconnect queue trying ${userId}` +
+      `${job.reason ? ` (${job.reason})` : ""} — 1 connection, ${waiting} waiting`
+  );
+  try {
+    await startWhatsappSession(userId, {
+      awaitInitialize: true,
+      silentReconnect: job.silentReconnect !== false,
+      force: true,
+    });
+    const status = await waitForStartupWhatsappSession(userId);
+    if (status === "connected") {
+      console.log(`WhatsApp: reconnect queue restored ${userId}`);
+    } else if (status === "awaiting_qr_scan") {
+      console.warn(`WhatsApp: reconnect queue ${userId} needs a QR scan`);
+    } else if (status === "authenticated") {
+      console.warn(`WhatsApp: reconnect queue ${userId} authenticated — waiting for ready`);
+    } else {
+      console.warn(`WhatsApp: reconnect queue ${userId} finished as ${status}`);
+    }
+    return status;
+  } catch (error) {
+    console.error(`WhatsApp: reconnect queue failed for ${userId}:`, error);
+    return "error";
+  } finally {
+    whatsappReconnectActiveUserId = "";
+  }
+}
+
+function withWhatsappSessionLock(userId, task) {
+  const key = String(userId || "").trim();
+  const previous = whatsappSessionRecoveryChains.get(key) || Promise.resolve();
+  const next = previous.catch(() => {}).then(task);
+  whatsappSessionRecoveryChains.set(key, next.catch(() => {}));
+  return next;
+}
+
+function isWhatsappSessionBusy(state) {
+  if (!state) return false;
+  if (state.initializing) return true;
+  if (!state.client) return false;
+  return WHATSAPP_BUSY_STATUSES.has(String(state.status || ""));
+}
+
 function markWhatsappInitializeFailed(state, userId, error) {
   clearWhatsappAuthenticatedTimeout(state);
+  state.initializing = false;
   state.status = "error";
   state.readyAt = 0;
   state.error = String(error?.message || "Failed to initialize WhatsApp client.");
@@ -322,6 +471,52 @@ function resolveWhatsappSessionDataDir(userId) {
   );
 }
 
+async function readRestorableWhatsappSessions() {
+  if (restorableSessionsCache) return restorableSessionsCache;
+  try {
+    const raw = await fs.readFile(RESTORABLE_SESSIONS_FILE, "utf8");
+    const parsed = safeJsonParse(raw, RESTORABLE_SESSIONS_FILE);
+    restorableSessionsCache =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    if (!(error && error.code === "ENOENT")) {
+      console.warn("Failed to read restorable WhatsApp sessions:", error);
+    }
+    restorableSessionsCache = {};
+  }
+  return restorableSessionsCache;
+}
+
+async function writeRestorableWhatsappSessions(data) {
+  restorableSessionsCache = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  await withFileLock(RESTORABLE_SESSIONS_FILE, async () => {
+    await atomicWriteFile(RESTORABLE_SESSIONS_FILE, JSON.stringify(restorableSessionsCache, null, 2));
+  });
+}
+
+async function rememberRestorableWhatsappSession(userId, extra = {}) {
+  const id = String(userId || "").trim();
+  if (!id) return;
+  const current = { ...(await readRestorableWhatsappSessions()) };
+  const previous = current[id] && typeof current[id] === "object" ? current[id] : {};
+  current[id] = {
+    userId: id,
+    connectedAt: extra.connectedAt || previous.connectedAt || new Date().toISOString(),
+    whatsappNumber: extra.whatsappNumber || previous.whatsappNumber || "",
+    whatsappName: extra.whatsappName || previous.whatsappName || "",
+  };
+  await writeRestorableWhatsappSessions(current);
+}
+
+async function forgetRestorableWhatsappSession(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return;
+  const current = { ...(await readRestorableWhatsappSessions()) };
+  if (!current[id]) return;
+  delete current[id];
+  await writeRestorableWhatsappSessions(current);
+}
+
 function listBrowserProcessIdsForProfile(profileDir) {
   if (!profileDir) return [];
   try {
@@ -357,7 +552,7 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
   const initialPids = listBrowserProcessIdsForProfile(profileDir);
   if (!initialPids.length) {
     await removeStaleBrowserLockFiles(profileDir);
-    return;
+    return false;
   }
   for (const pid of initialPids) {
     try {
@@ -370,7 +565,7 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
   while (Date.now() < deadline) {
     const remaining = listBrowserProcessIdsForProfile(profileDir);
     if (!remaining.length) break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await delay(200);
   }
   for (const pid of listBrowserProcessIdsForProfile(profileDir)) {
     try {
@@ -380,6 +575,7 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
     }
   }
   await removeStaleBrowserLockFiles(profileDir);
+  return true;
 }
 
 async function removeStaleBrowserLockFiles(profileDir) {
@@ -417,6 +613,8 @@ function ensureWhatsappState(userId) {
     reconnectTimer: null,
     sessionGeneration: 0,
     readyAt: 0,
+    initializing: false,
+    lastHealth: null,
   };
   whatsappSessions.set(key, created);
   return created;
@@ -448,7 +646,26 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
   const state = ensureWhatsappState(cleanUserId);
   if (state.manualStop) return;
   if (state.status === "awaiting_qr_scan") return;
+  if (!force && state.initializing) return;
   if (!force && (state.status === "connected" || state.status === "authenticated")) {
+    return;
+  }
+  if (
+    !force &&
+    state.client &&
+    (state.status === "reconnecting" || state.status === "connecting")
+  ) {
+    return;
+  }
+  if (whatsappReconnectActiveUserId === cleanUserId) return;
+  if (whatsappReconnectQueuedIds.has(cleanUserId)) return;
+  // During the boot pass, each account gets one queued try. Failed accounts
+  // are retried later by the health check so the queue can move to the next.
+  if (whatsappBootRestoreActive) {
+    logEvent("whatsapp", "deferring silent reconnect during boot queue", {
+      userId: cleanUserId,
+      reason: String(reason || ""),
+    });
     return;
   }
   const exhausted = state.reconnectAttempts >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS;
@@ -472,16 +689,15 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
     delayMs,
     reason: String(reason || ""),
   });
-  state.reconnectTimer = setTimeout(async () => {
+  state.reconnectTimer = setTimeout(() => {
     if (isWhatsappShuttingDown) return;
     const current = ensureWhatsappState(cleanUserId);
     if (current.manualStop || current.status === "connected") return;
-    try {
-      await startWhatsappSession(cleanUserId, { awaitInitialize: true, silentReconnect: true });
-    } catch (error) {
-      console.warn(`WhatsApp silent reconnect failed for ${cleanUserId}:`, error);
-      scheduleSilentWhatsappReconnect(cleanUserId, { reason: "retry" });
-    }
+    enqueueWhatsappReconnect(cleanUserId, {
+      reason: reason || "silent",
+      silentReconnect: true,
+      force: true,
+    });
   }, delayMs);
   if (typeof state.reconnectTimer.unref === "function") state.reconnectTimer.unref();
 }
@@ -533,6 +749,7 @@ function scheduleWhatsappAuthenticatedTimeout(state, userId = "") {
 
 function snapshotWhatsappState(userId) {
   const state = ensureWhatsappState(userId);
+  const health = summarizeWhatsappHealth(state);
   return {
     userId: String(userId || "").trim(),
     status: state.status,
@@ -543,37 +760,69 @@ function snapshotWhatsappState(userId) {
     whatsappNumber: state.whatsappNumber,
     whatsappProfilePicUrl: state.whatsappProfilePicUrl,
     lastUpdatedAt: state.lastUpdatedAt,
+    healthScore: health.score,
+    healthLabel: health.label,
+    healthVerdict: health.verdict,
+    waState: health.waState,
+    healthCheckedAt: health.checkedAt,
   };
 }
 
-async function startWhatsappSession(userId, { awaitInitialize = false, initAttempt = 1, silentReconnect = false } = {}) {
+async function startWhatsappSession(
+  userId,
+  {
+    awaitInitialize = false,
+    initAttempt = 1,
+    silentReconnect = false,
+    alreadyLocked = false,
+    force = false,
+  } = {}
+) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) throw new Error("Counselor user id is required.");
+  if (!alreadyLocked) {
+    return withWhatsappSessionLock(cleanUserId, () =>
+      startWhatsappSession(cleanUserId, {
+        awaitInitialize,
+        initAttempt,
+        silentReconnect,
+        alreadyLocked: true,
+        force,
+      })
+    );
+  }
   const state = ensureWhatsappState(cleanUserId);
-  if (
-    state.client &&
-    (state.status === "connecting" ||
-      state.status === "awaiting_qr_scan" ||
-      state.status === "authenticated" ||
-      state.status === "connected")
-  ) {
+  if (!force && initAttempt === 1 && isWhatsappSessionBusy(state)) {
     return snapshotWhatsappState(cleanUserId);
   }
   state.manualStop = false;
   state.recovering = true;
+  state.initializing = true;
   clearWhatsappReconnectTimer(state);
+  const hadClient = Boolean(state.client);
   if (state.client) {
     try {
       await state.client.destroy();
     } catch {
       // Ignore cleanup failure and allow creating a fresh session.
     }
+    state.client = null;
   }
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
-  await terminateBrowserProcessesUsingProfile(sessionDataDir);
+  const killedOrphaned = await terminateBrowserProcessesUsingProfile(sessionDataDir);
+  if (hadClient || killedOrphaned || initAttempt > 1) {
+    await delay(WHATSAPP_BROWSER_RESTART_PAUSE_MS);
+  }
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
-  const webVersion = await resolveWhatsappWebVersion();
-  const client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion));
+  let client;
+  try {
+    const webVersion = await resolveWhatsappWebVersion();
+    client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion));
+  } catch (error) {
+    state.initializing = false;
+    state.recovering = false;
+    throw error;
+  }
   state.sessionGeneration = Number(state.sessionGeneration || 0) + 1;
   state.client = client;
   state.recovering = false;
@@ -595,6 +844,33 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
 
   client.on("qr", async (qr) => {
     if (!isCurrentWhatsappClient(state, client)) return;
+    if (state.silentReconnect) {
+      const exhausted = Number(state.reconnectAttempts || 0) >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS;
+      if (!exhausted) {
+        logEvent("whatsapp", "qr during silent restore; retrying saved session", {
+          userId: cleanUserId,
+          attempt: Number(state.reconnectAttempts || 0) + 1,
+        });
+        clearWhatsappAuthenticatedTimeout(state);
+        state.status = "reconnecting";
+        state.qrCodeDataUrl = "";
+        state.error = "";
+        state.lastUpdatedAt = new Date().toISOString();
+        const staleClient = state.client;
+        state.client = null;
+        Promise.resolve()
+          .then(() => (staleClient && typeof staleClient.destroy === "function" ? staleClient.destroy() : undefined))
+          .catch(() => {
+            // Ignore cleanup failure; silent reconnect starts a fresh client.
+          })
+          .finally(() => {
+            if (state.manualStop || isWhatsappShuttingDown) return;
+            scheduleSilentWhatsappReconnect(cleanUserId, { reason: "qr-during-restore" });
+          });
+        return;
+      }
+      state.silentReconnect = false;
+    }
     try {
       state.qrCodeDataUrl = await QRCode.toDataURL(qr);
       state.status = "awaiting_qr_scan";
@@ -602,9 +878,6 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
       state.authTimedOut = false;
       clearWhatsappAuthenticatedTimeout(state);
       state.lastUpdatedAt = new Date().toISOString();
-      if (state.silentReconnect) {
-        state.silentReconnect = false;
-      }
     } catch {
       state.error = "Failed to render WhatsApp QR code.";
       state.lastUpdatedAt = new Date().toISOString();
@@ -637,6 +910,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
       }
     }
     state.status = "connected";
+    state.initializing = false;
     state.qrCodeDataUrl = "";
     state.error = "";
     state.readyAt = Date.now();
@@ -654,6 +928,13 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     onWhatsappSessionReady(cleanUserId).catch(() => {
       // Branch linkage is best-effort; session remains connected.
     });
+    rememberRestorableWhatsappSession(cleanUserId, {
+      connectedAt: state.connectedAt,
+      whatsappNumber: state.whatsappNumber,
+      whatsappName: state.whatsappName,
+    }).catch((error) => {
+      console.warn(`Failed to persist restorable WhatsApp session for ${cleanUserId}:`, error);
+    });
   });
 
   client.on("auth_failure", (message) => {
@@ -664,6 +945,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
     state.error = reason;
     state.lastUpdatedAt = new Date().toISOString();
     if (state.manualStop || isWhatsappLogoutDisconnectReason(reason)) {
+      forgetRestorableWhatsappSession(cleanUserId).catch(() => {});
       notifyWhatsappSessionDisconnected(cleanUserId);
       return;
     }
@@ -718,6 +1000,7 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
       state.readyAt = 0;
       state.error = "";
       state.lastUpdatedAt = new Date().toISOString();
+      forgetRestorableWhatsappSession(cleanUserId).catch(() => {});
       notifyWhatsappSessionDisconnected(cleanUserId);
       return;
     }
@@ -741,28 +1024,37 @@ async function startWhatsappSession(userId, { awaitInitialize = false, initAttem
 
   const initPromise = enqueueWhatsappInit(async () => {
     await client.initialize();
-  }).catch(async (error) => {
-    const canRetry =
-      initAttempt < WHATSAPP_INIT_MAX_ATTEMPTS && isWhatsappPuppeteerStaleSessionError(error);
-    if (canRetry) {
-      console.warn(
-        `WhatsApp init retry ${initAttempt}/${WHATSAPP_INIT_MAX_ATTEMPTS - 1} for ${cleanUserId}: ${String(error?.message || error)}`
-      );
-      try {
-        await client.destroy();
-      } catch {
-        // Client may already be partially torn down.
+  })
+    .catch(async (error) => {
+      if (!isCurrentWhatsappClient(state, client)) return;
+      const canRetry =
+        initAttempt < WHATSAPP_INIT_MAX_ATTEMPTS && isWhatsappPuppeteerStaleSessionError(error);
+      if (canRetry) {
+        console.warn(
+          `WhatsApp init retry ${initAttempt}/${WHATSAPP_INIT_MAX_ATTEMPTS - 1} for ${cleanUserId}: ${String(error?.message || error)}`
+        );
+        try {
+          await client.destroy();
+        } catch {
+          // Client may already be partially torn down.
+        }
+        state.client = null;
+        await delay(1500 * initAttempt);
+        return startWhatsappSession(cleanUserId, {
+          awaitInitialize,
+          initAttempt: initAttempt + 1,
+          silentReconnect,
+          alreadyLocked: true,
+          force: true,
+        });
       }
-      state.client = null;
-      await new Promise((resolve) => setTimeout(resolve, 1500 * initAttempt));
-      return startWhatsappSession(cleanUserId, {
-        awaitInitialize,
-        initAttempt: initAttempt + 1,
-        silentReconnect,
-      });
-    }
-    markWhatsappInitializeFailed(state, cleanUserId, error);
-  });
+      markWhatsappInitializeFailed(state, cleanUserId, error);
+    })
+    .finally(() => {
+      if (state.client === client || state.client == null) {
+        state.initializing = false;
+      }
+    });
 
   if (awaitInitialize) {
     await initPromise;
@@ -778,6 +1070,7 @@ async function stopWhatsappSession(userId) {
   state.manualStop = true;
   state.silentReconnect = false;
   state.reconnectAttempts = 0;
+  state.initializing = false;
   clearWhatsappReconnectTimer(state);
   if (state.client) {
     try {
@@ -817,6 +1110,7 @@ async function stopWhatsappSession(userId) {
   onWhatsappSessionDisconnected(cleanUserId).catch(() => {
     // Branch unlink is best-effort.
   });
+  forgetRestorableWhatsappSession(cleanUserId).catch(() => {});
   return snapshotWhatsappState(cleanUserId);
 }
 
@@ -846,6 +1140,7 @@ async function regenerateWhatsappQrCode(userId) {
   state.manualStop = false;
   state.silentReconnect = false;
   state.reconnectAttempts = 0;
+  state.initializing = false;
   state.lastUpdatedAt = new Date().toISOString();
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   await terminateBrowserProcessesUsingProfile(sessionDataDir);
@@ -899,6 +1194,22 @@ async function listSavedWhatsappSessionUserIds(users = []) {
   return userIds;
 }
 
+async function listRestorableWhatsappSessionUserIds(users = []) {
+  const saved = await listSavedWhatsappSessionUserIds(users);
+  const registry = await readRestorableWhatsappSessions();
+  const registered = Object.keys(registry || {}).map((id) => String(id || "").trim()).filter(Boolean);
+  const source = registered.length ? registered : saved;
+  const userIds = [];
+  const seen = new Set();
+  for (const userId of source) {
+    if (!userId || seen.has(userId)) continue;
+    if (!(await userHasSavedWhatsappSession(userId))) continue;
+    seen.add(userId);
+    userIds.push(userId);
+  }
+  return userIds;
+}
+
 async function startSavedWhatsappSessionIfExists(userId) {
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return;
@@ -917,8 +1228,11 @@ async function waitForStartupWhatsappSession(userId) {
   while (true) {
     const state = ensureWhatsappState(cleanUserId);
     if (state.status === "connected") return "connected";
-    if (state.status === "awaiting_qr_scan") return "awaiting_qr_scan";
+    if (state.status === "awaiting_qr_scan" && !state.silentReconnect) return "awaiting_qr_scan";
     if (state.manualStop) return String(state.status || "disconnected");
+    if (!state.initializing && !state.client) {
+      return String(state.status || "reconnecting");
+    }
     const limit =
       state.status === "authenticated"
         ? WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS
@@ -928,12 +1242,12 @@ async function waitForStartupWhatsappSession(userId) {
   }
   const timedOut = ensureWhatsappState(cleanUserId);
   if (timedOut.status === "connected") return "connected";
-  if (timedOut.status === "awaiting_qr_scan") return "awaiting_qr_scan";
+  if (timedOut.status === "awaiting_qr_scan" && !timedOut.silentReconnect) return "awaiting_qr_scan";
   if (timedOut.status === "authenticated") {
     // Keep the browser running; the authenticated-stuck timer restarts it.
     return "authenticated";
   }
-  if (!timedOut.manualStop) {
+  if (!timedOut.manualStop && !timedOut.client) {
     scheduleSilentWhatsappReconnect(cleanUserId, { reason: "startup-wait-timeout" });
   }
   return String(timedOut.status || "reconnecting");
@@ -943,37 +1257,31 @@ async function initializeWhatsappSessionsOnStartup() {
   whatsappBootRestoreActive = true;
   try {
     const users = await readUsers();
-    const userIds = await listSavedWhatsappSessionUserIds(users);
+    const userIds = await listRestorableWhatsappSessionUserIds(users);
     if (!userIds.length) {
       console.log("WhatsApp: no saved sessions found to restore on boot.");
       await syncBranchWhatsappMessengersFromSessions();
       return;
     }
 
-    console.log(`WhatsApp: restoring ${userIds.length} saved session(s) on boot...`);
-    for (const userId of userIds) {
-      console.log(`WhatsApp: starting saved session for ${userId}`);
-      await startSavedWhatsappSessionIfExists(userId);
-    }
-
-    const results = await Promise.all(
-      userIds.map(async (userId) => {
-        const status = await waitForStartupWhatsappSession(userId);
-        if (status === "connected") {
-          console.log(`WhatsApp: restored ${userId}`);
-        } else if (status === "awaiting_qr_scan") {
-          console.warn(`WhatsApp: ${userId} needs a QR scan after restart`);
-        } else if (status === "authenticated") {
-          console.warn(`WhatsApp: ${userId} is authenticated after restart — waiting for ready`);
-        } else {
-          console.warn(`WhatsApp: ${userId} is ${status} after restart — retrying in the background`);
-        }
-        return { userId, status };
-      })
+    console.log(
+      `WhatsApp: queuing ${userIds.length} saved session(s) for sequential reconnect (one account at a time)...`
     );
+    for (const userId of userIds) {
+      enqueueWhatsappReconnect(userId, {
+        reason: "server-boot",
+        silentReconnect: true,
+        force: true,
+      });
+    }
+    await waitForWhatsappReconnectQueueIdle();
 
-    const connectedCount = results.filter((row) => row.status === "connected").length;
-    console.log(`WhatsApp: ${connectedCount}/${userIds.length} saved session(s) connected after boot.`);
+    const connectedCount = userIds.filter(
+      (userId) => ensureWhatsappState(userId).status === "connected"
+    ).length;
+    console.log(
+      `WhatsApp: ${connectedCount}/${userIds.length} saved session(s) connected after boot.`
+    );
     await syncBranchWhatsappMessengersFromSessions();
   } catch (error) {
     console.error("Failed to initialize WhatsApp sessions on startup:", error);
@@ -984,6 +1292,10 @@ async function initializeWhatsappSessionsOnStartup() {
 
 async function shutdownWhatsappSessions() {
   isWhatsappShuttingDown = true;
+  whatsappReconnectQueue.length = 0;
+  whatsappReconnectQueuedIds.clear();
+  whatsappReconnectActiveUserId = "";
+  notifyWhatsappReconnectQueueIdle();
   for (const [, state] of whatsappSessions.entries()) {
     state.manualStop = true;
     clearWhatsappAuthenticatedTimeout(state);
@@ -1073,7 +1385,7 @@ async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_
     if (state.client && state.status === "connected") return true;
     const waitable = new Set(["authenticated", "reconnecting", "connecting"]);
     const status = String(state.status || "");
-    if (!waitable.has(status)) {
+    if (!state.initializing && !waitable.has(status)) {
       let hasSaved = false;
       try {
         hasSaved = await userHasSavedWhatsappSession(key);
@@ -1104,15 +1416,20 @@ async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_
       continue;
     }
     if (!isWhatsappSessionWarmedUp(live)) {
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
       continue;
     }
-    const healthy = await isWhatsappClientHealthy(live, 8000);
-    if (healthy) return true;
+    const inspection = await inspectWhatsappClientHealth(live, 8000);
+    if (inspection.verdict === "healthy") return true;
+    if (inspection.verdict === "warming") {
+      await delay(400);
+      continue;
+    }
     if (!restartedUnhealthy) {
       restartedUnhealthy = true;
       logEvent("whatsapp", "sender connected but not healthy; restarting before send", {
         userId: key,
+        waState: inspection.waState || "",
       });
       try {
         await withTimeout(
@@ -1124,7 +1441,7 @@ async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_
       }
       continue;
     }
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await delay(400);
   }
 
   const finalState = ensureWhatsappState(key);
@@ -1134,10 +1451,20 @@ async function ensureWhatsappSenderReady(userId, timeoutMs = WHATSAPP_SEND_WAIT_
 async function restartWhatsappBrowserSession(userId) {
   const key = String(userId || "").trim();
   if (!key) throw new Error("Counselor user id is required.");
-  const previous = whatsappSessionRecoveryChains.get(key) || Promise.resolve();
-  const recovery = previous.then(async () => {
+  return withWhatsappSessionLock(key, async () => {
     const state = ensureWhatsappState(key);
     if (state.manualStop) return;
+    const status = String(state.status || "");
+    const alreadyStarting =
+      state.initializing ||
+      status === "connecting" ||
+      status === "reconnecting" ||
+      status === "authenticated" ||
+      status === "awaiting_qr_scan";
+    if (alreadyStarting) {
+      await waitForWhatsappSessionConnected(key, 120000);
+      return;
+    }
     state.recovering = true;
     if (state.client) {
       try {
@@ -1149,12 +1476,16 @@ async function restartWhatsappBrowserSession(userId) {
     }
     state.status = "reconnecting";
     state.error = "";
+    state.initializing = false;
     state.recovering = false;
-    await startWhatsappSession(key, { silentReconnect: true });
+    await delay(WHATSAPP_BROWSER_RESTART_PAUSE_MS);
+    await startWhatsappSession(key, {
+      silentReconnect: true,
+      alreadyLocked: true,
+      force: true,
+    });
     await waitForWhatsappSessionConnected(key, 120000);
   });
-  whatsappSessionRecoveryChains.set(key, recovery.catch(() => {}));
-  await recovery;
 }
 
 async function withTimeout(promise, timeoutMs) {
@@ -1171,55 +1502,223 @@ async function withTimeout(promise, timeoutMs) {
   }
 }
 
-async function isWhatsappClientHealthy(state, timeoutMs = 15000) {
-  if (!state?.client || state.status !== "connected") return false;
+function isWhatsappPuppeteerPageOpen(state) {
+  const page = state?.client?.pupPage;
+  if (!page) return false;
   try {
-    const waState = await withTimeout(state.client.getState(), timeoutMs);
-    return String(waState || "").toUpperCase() === "CONNECTED";
+    if (typeof page.isClosed === "function" && page.isClosed()) return false;
   } catch {
     return false;
   }
+  const browser = state?.client?.pupBrowser;
+  try {
+    if (browser && typeof browser.isConnected === "function" && !browser.isConnected()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function summarizeWhatsappHealth(state, inspection = null) {
+  const status = String(state?.status || "disconnected");
+  const cached = state?.lastHealth && typeof state.lastHealth === "object" ? state.lastHealth : {};
+  const verdict = String(inspection?.verdict || cached.verdict || "")
+    .trim()
+    .toLowerCase();
+  const waState = String(inspection?.waState || cached.waState || "").trim();
+  const checkedAt = inspection ? new Date().toISOString() : String(cached.checkedAt || "");
+  const pageOpen = isWhatsappPuppeteerPageOpen(state);
+  const warmed = isWhatsappSessionWarmedUp(state);
+
+  if (status === "connected") {
+    if (verdict === "healthy") {
+      return {
+        score: warmed ? 100 : 90,
+        label: warmed ? "Healthy" : "Ready",
+        verdict,
+        waState,
+        checkedAt,
+      };
+    }
+    if (verdict === "warming") {
+      return { score: 70, label: "Warming up", verdict, waState, checkedAt };
+    }
+    if (verdict === "dead") {
+      return {
+        score: pageOpen ? 25 : 15,
+        label: "Unhealthy",
+        verdict,
+        waState,
+        checkedAt,
+      };
+    }
+    return {
+      score: pageOpen ? 80 : 55,
+      label: "Checking",
+      verdict: verdict || "unknown",
+      waState,
+      checkedAt,
+    };
+  }
+  if (status === "authenticated") {
+    return { score: 55, label: "Linking", verdict: verdict || "n/a", waState, checkedAt };
+  }
+  if (status === "connecting" || status === "reconnecting") {
+    return { score: 40, label: "Connecting", verdict: verdict || "n/a", waState, checkedAt };
+  }
+  if (status === "awaiting_qr_scan") {
+    return { score: 35, label: "Awaiting QR", verdict: verdict || "n/a", waState, checkedAt };
+  }
+  if (status === "error" || status === "auth_failed") {
+    return { score: 10, label: "Error", verdict: verdict || "n/a", waState, checkedAt };
+  }
+  return { score: 0, label: "Disconnected", verdict: verdict || "n/a", waState, checkedAt };
+}
+
+function rememberWhatsappHealth(state, inspection) {
+  const health = summarizeWhatsappHealth(state, inspection);
+  if (state) state.lastHealth = health;
+  return health;
+}
+
+async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts, remember = true } = {}) {
+  const finish = (result) => {
+    if (remember) rememberWhatsappHealth(state, result);
+    return result;
+  };
+  if (!state?.client || state.status !== "connected") {
+    return finish({ verdict: "dead", waState: "" });
+  }
+  const probeAttempts = Math.max(1, Number(attempts) || WHATSAPP_HEALTH_PROBE_ATTEMPTS);
+  const slice = Math.max(1500, Math.floor(Math.max(Number(timeoutMs) || 15000, 1500) / probeAttempts));
+  let lastWaState = "";
+  for (let attempt = 1; attempt <= probeAttempts; attempt += 1) {
+    if (!isWhatsappPuppeteerPageOpen(state)) {
+      return finish({ verdict: "dead", waState: lastWaState });
+    }
+    try {
+      const waState = String(await withTimeout(state.client.getState(), slice) || "").toUpperCase();
+      lastWaState = waState;
+      if (waState === "CONNECTED") return finish({ verdict: "healthy", waState });
+      if (attempt < probeAttempts) await delay(400);
+    } catch {
+      if (!isWhatsappPuppeteerPageOpen(state)) {
+        return finish({ verdict: "dead", waState: lastWaState });
+      }
+      if (attempt < probeAttempts) await delay(400);
+    }
+  }
+  if (WHATSAPP_WARMING_STATES.has(lastWaState)) {
+    return finish({ verdict: "warming", waState: lastWaState });
+  }
+  return finish({ verdict: "dead", waState: lastWaState });
+}
+
+async function refreshWhatsappSessionHealth(userId, options = {}) {
+  const state = ensureWhatsappState(userId);
+  const status = String(state.status || "disconnected");
+  if (status !== "connected") {
+    return rememberWhatsappHealth(state, { verdict: "n/a", waState: "" });
+  }
+  const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
+    ? Number(options.maxAgeMs)
+    : WHATSAPP_HEALTH_CACHE_MS;
+  const checkedAt = Date.parse(String(state.lastHealth?.checkedAt || ""));
+  const age = Number.isFinite(checkedAt) ? Date.now() - checkedAt : Infinity;
+  const cachedVerdict = String(state.lastHealth?.verdict || "").toLowerCase();
+  if (age < maxAgeMs && cachedVerdict && cachedVerdict !== "unknown" && cachedVerdict !== "n/a") {
+    return summarizeWhatsappHealth(state);
+  }
+  const inspection = await inspectWhatsappClientHealth(state, options.timeoutMs || 4000, {
+    attempts: options.attempts || 1,
+    remember: false,
+  });
+  if (inspection.verdict === "healthy" || inspection.verdict === "warming") {
+    return rememberWhatsappHealth(state, inspection);
+  }
+  const previous = String(state.lastHealth?.verdict || "").toLowerCase();
+  if (previous === "healthy" || previous === "warming") {
+    return summarizeWhatsappHealth(state);
+  }
+  return rememberWhatsappHealth(state, inspection);
+}
+
+async function isWhatsappClientHealthy(state, timeoutMs = 15000) {
+  const { verdict } = await inspectWhatsappClientHealth(state, timeoutMs);
+  return verdict === "healthy";
 }
 
 async function healthCheckActiveWhatsappSessions() {
+  if (isWhatsappShuttingDown || whatsappBootRestoreActive) return;
   const unhealthyUserIds = [];
   const restoreUserIds = [];
+  const seenRestore = new Set();
+  const considerSavedRestore = async (userId, state) => {
+    const id = String(userId || "").trim();
+    if (!id || seenRestore.has(id) || state?.manualStop || state?.initializing) return;
+    const status = String(state?.status || "disconnected");
+    if (
+      status === "reconnecting" ||
+      status === "connecting" ||
+      status === "awaiting_qr_scan" ||
+      status === "authenticated" ||
+      status === "connected"
+    ) {
+      return;
+    }
+    try {
+      if (await userHasSavedWhatsappSession(id)) {
+        seenRestore.add(id);
+        restoreUserIds.push(id);
+      }
+    } catch {
+      // Ignore lookup errors and continue other sessions.
+    }
+  };
+
   for (const [userId, state] of whatsappSessions.entries()) {
     const status = String(state?.status || "");
+    if (state?.initializing || state?.recovering) continue;
     if (status === "reconnecting" || status === "connecting" || status === "awaiting_qr_scan" || status === "authenticated") {
       continue;
     }
     if (status === "connected") {
-      const healthy = await isWhatsappClientHealthy(state);
-      if (healthy) continue;
+      const { verdict } = await inspectWhatsappClientHealth(state);
+      if (verdict === "healthy" || verdict === "warming") continue;
       unhealthyUserIds.push(userId);
       continue;
     }
-    if (state.manualStop) continue;
-    if (status === "disconnected" || status === "error" || status === "auth_failed") {
-      try {
-        if (await userHasSavedWhatsappSession(userId)) {
-          restoreUserIds.push(userId);
-        }
-      } catch {
-        // Ignore lookup errors and continue other sessions.
-      }
-    }
+    await considerSavedRestore(userId, state);
   }
+
+  try {
+    const restorableIds = await listRestorableWhatsappSessionUserIds(await readUsers());
+    for (const userId of restorableIds) {
+      await considerSavedRestore(userId, whatsappSessions.get(userId) || ensureWhatsappState(userId));
+    }
+  } catch {
+    // Registry lookup is best-effort during health checks.
+  }
+
   if (!unhealthyUserIds.length && !restoreUserIds.length) return;
   console.log(
     `WhatsApp: health check restoring ${unhealthyUserIds.length} live session(s) and ${restoreUserIds.length} saved session(s)`
   );
   for (const userId of unhealthyUserIds) {
-    try {
-      await restartWhatsappBrowserSession(userId);
-    } catch (error) {
-      console.error(`Failed to restore WhatsApp session for ${userId}:`, error);
-      scheduleSilentWhatsappReconnect(userId, { reason: "health-check" });
-    }
+    enqueueWhatsappReconnect(userId, {
+      reason: "health-check",
+      silentReconnect: true,
+      force: true,
+    });
   }
   for (const userId of restoreUserIds) {
-    scheduleSilentWhatsappReconnect(userId, { reason: "health-check-saved-session" });
+    enqueueWhatsappReconnect(userId, {
+      reason: "health-check-saved-session",
+      silentReconnect: true,
+      force: true,
+    });
   }
 }
 
@@ -2951,6 +3450,8 @@ module.exports = {
   sanitizeUserIdForPath,
   ensureWhatsappState,
   snapshotWhatsappState,
+  summarizeWhatsappHealth,
+  refreshWhatsappSessionHealth,
   startWhatsappSession,
   stopWhatsappSession,
   regenerateWhatsappQrCode,
