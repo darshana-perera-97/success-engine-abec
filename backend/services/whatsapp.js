@@ -61,10 +61,12 @@ const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
 const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
-const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 300;
-const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
+const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 500;
+const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 800;
 const WHATSAPP_HEALTH_PROBE_ATTEMPTS = 3;
 const WHATSAPP_HEALTH_CACHE_MS = 20_000;
+const WHATSAPP_HEALTH_FAIL_STREAK_LIMIT = 2;
+const WHATSAPP_HEALTH_GRACE_MS = 60 * 1000;
 const WHATSAPP_WARMING_STATES = new Set(["CONNECTING", "OPENING", "PAIRING"]);
 const WHATSAPP_BUSY_STATUSES = new Set([
   "connecting",
@@ -308,7 +310,7 @@ async function runQueuedWhatsappReconnect(job) {
   );
   try {
     await startWhatsappSession(userId, {
-      awaitInitialize: false,
+      awaitInitialize: true,
       silentReconnect: job.silentReconnect !== false,
       force: true,
     });
@@ -325,7 +327,23 @@ async function runQueuedWhatsappReconnect(job) {
     console.error(`WhatsApp: reconnect queue failed for ${userId}:`, error);
     return "error";
   } finally {
+    const live = ensureWhatsappState(userId);
+    const retryAfter = live.retryAfterCurrentTry === true;
+    live.retryAfterCurrentTry = false;
     whatsappReconnectActiveUserId = "";
+    if (
+      retryAfter &&
+      !whatsappBootRestoreActive &&
+      !live.manualStop &&
+      live.status !== "connected" &&
+      live.status !== "authenticated"
+    ) {
+      enqueueWhatsappReconnect(userId, {
+        reason: "qr-during-restore",
+        silentReconnect: true,
+        force: true,
+      });
+    }
   }
 }
 
@@ -613,6 +631,9 @@ function ensureWhatsappState(userId) {
     sessionGeneration: 0,
     readyAt: 0,
     initializing: false,
+    sawQrDuringSilentRestore: false,
+    retryAfterCurrentTry: false,
+    healthFailStreak: 0,
     lastHealth: null,
   };
   whatsappSessions.set(key, created);
@@ -637,6 +658,33 @@ function isWhatsappLogoutDisconnectReason(reason) {
 
 function isCurrentWhatsappClient(state, client) {
   return Boolean(state && client && state.client === client);
+}
+
+async function finishSilentRestoreIfQr(state, client, userId, reason) {
+  if (!state?.sawQrDuringSilentRestore) return;
+  if (state.status === "connected" || state.status === "authenticated") {
+    state.sawQrDuringSilentRestore = false;
+    return;
+  }
+  if (client && state.client && state.client !== client) return;
+  state.sawQrDuringSilentRestore = false;
+  const staleClient = state.client || client;
+  state.client = null;
+  state.status = "reconnecting";
+  state.qrCodeDataUrl = "";
+  state.error = "";
+  state.lastUpdatedAt = new Date().toISOString();
+  try {
+    if (staleClient && typeof staleClient.destroy === "function") {
+      await staleClient.destroy();
+    }
+  } catch {
+    // Page may already be closed after a QR-during-restore.
+  }
+  await delay(400);
+  if (state.manualStop || isWhatsappShuttingDown) return;
+  state.retryAfterCurrentTry = true;
+  scheduleSilentWhatsappReconnect(userId, { reason: reason || "qr-during-restore" });
 }
 
 function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } = {}) {
@@ -828,6 +876,8 @@ async function startWhatsappSession(
   state.client = client;
   state.recovering = false;
   state.silentReconnect = silentReconnect === true;
+  state.sawQrDuringSilentRestore = false;
+  state.retryAfterCurrentTry = false;
   state.status = silentReconnect ? "reconnecting" : "connecting";
   state.qrCodeDataUrl = "";
   state.error = "";
@@ -856,18 +906,12 @@ async function startWhatsappSession(
         state.status = "reconnecting";
         state.qrCodeDataUrl = "";
         state.error = "";
+        state.sawQrDuringSilentRestore = true;
         state.lastUpdatedAt = new Date().toISOString();
-        const staleClient = state.client;
-        state.client = null;
-        Promise.resolve()
-          .then(() => (staleClient && typeof staleClient.destroy === "function" ? staleClient.destroy() : undefined))
-          .catch(() => {
-            // Ignore cleanup failure; silent reconnect starts a fresh client.
-          })
-          .finally(() => {
-            if (state.manualStop || isWhatsappShuttingDown) return;
-            scheduleSilentWhatsappReconnect(cleanUserId, { reason: "qr-during-restore" });
-          });
+        // Destroying the browser while initialize() is still running closes the
+        // CDP target and throws ProtocolError: Target closed.
+        if (state.initializing) return;
+        await finishSilentRestoreIfQr(state, client, cleanUserId, "qr-during-restore");
         return;
       }
       state.silentReconnect = false;
@@ -922,7 +966,9 @@ async function startWhatsappSession(
     state.authTimedOut = false;
     state.silentReconnect = false;
     state.reconnectAttempts = 0;
+    state.healthFailStreak = 0;
     state.lastUpdatedAt = new Date().toISOString();
+    rememberWhatsappHealth(state, { verdict: "healthy", waState: "CONNECTED" });
     installWhatsappWebCompatPatch(client).catch(() => {
       // Compat patch is best-effort; send path still resolves chat IDs.
     });
@@ -1026,6 +1072,11 @@ async function startWhatsappSession(
   const initPromise = enqueueWhatsappInit(async () => {
     await client.initialize();
   })
+    .then(async () => {
+      if (!isCurrentWhatsappClient(state, client) && !state.sawQrDuringSilentRestore) return;
+      if (state.status === "connected" || state.status === "authenticated") return;
+      await finishSilentRestoreIfQr(state, client, cleanUserId, "qr-during-restore");
+    })
     .catch(async (error) => {
       if (!isCurrentWhatsappClient(state, client)) return;
       const canRetry =
@@ -1361,6 +1412,8 @@ function isWhatsappPuppeteerStaleSessionError(error) {
     msg.includes("navigating frame was detached") ||
     msg.includes("target closed") ||
     msg.includes("session closed") ||
+    msg.includes("getresponsebody") ||
+    msg.includes("runtime.addbinding") ||
     (msg.includes("protocol error") && msg.includes("target"))
   );
 }
@@ -1543,6 +1596,20 @@ function isWhatsappPuppeteerPageOpen(state) {
   return true;
 }
 
+function isWhatsappRestoreInProgress(state) {
+  return (
+    state?.silentReconnect === true ||
+    Boolean(String(state?.whatsappNumber || "").trim()) ||
+    Number(state?.readyAt || 0) > 0
+  );
+}
+
+function isWhatsappHealthInGrace(state) {
+  const readyAt = getWhatsappReadyAtMs(state);
+  if (!readyAt) return false;
+  return Date.now() - readyAt < WHATSAPP_HEALTH_GRACE_MS;
+}
+
 function summarizeWhatsappHealth(state, inspection = null) {
   const status = String(state?.status || "disconnected");
   const cached = state?.lastHealth && typeof state.lastHealth === "object" ? state.lastHealth : {};
@@ -1565,9 +1632,18 @@ function summarizeWhatsappHealth(state, inspection = null) {
       };
     }
     if (verdict === "warming") {
-      return { score: 70, label: "Warming up", verdict, waState, checkedAt };
+      return { score: 80, label: "Warming up", verdict, waState, checkedAt };
     }
     if (verdict === "dead") {
+      if (pageOpen && (isWhatsappHealthInGrace(state) || cached.verdict === "healthy")) {
+        return {
+          score: warmed ? 90 : 80,
+          label: warmed ? "Ready" : "Warming up",
+          verdict: "warming",
+          waState,
+          checkedAt,
+        };
+      }
       return {
         score: pageOpen ? 25 : 15,
         label: "Unhealthy",
@@ -1577,7 +1653,7 @@ function summarizeWhatsappHealth(state, inspection = null) {
       };
     }
     return {
-      score: pageOpen ? 80 : 55,
+      score: pageOpen ? 85 : 70,
       label: "Checking",
       verdict: verdict || "unknown",
       waState,
@@ -1585,10 +1661,26 @@ function summarizeWhatsappHealth(state, inspection = null) {
     };
   }
   if (status === "authenticated") {
-    return { score: 55, label: "Linking", verdict: verdict || "n/a", waState, checkedAt };
+    return { score: 85, label: "Linking", verdict: verdict || "n/a", waState, checkedAt };
   }
   if (status === "connecting" || status === "reconnecting") {
-    return { score: 40, label: "Connecting", verdict: verdict || "n/a", waState, checkedAt };
+    const restoring = isWhatsappRestoreInProgress(state);
+    if (pageOpen) {
+      return {
+        score: restoring ? 85 : 70,
+        label: restoring ? "Restoring" : "Connecting",
+        verdict: verdict || "n/a",
+        waState,
+        checkedAt,
+      };
+    }
+    return {
+      score: restoring ? 65 : 50,
+      label: restoring ? "Restoring" : "Connecting",
+      verdict: verdict || "n/a",
+      waState,
+      checkedAt,
+    };
   }
   if (status === "awaiting_qr_scan") {
     return { score: 35, label: "Awaiting QR", verdict: verdict || "n/a", waState, checkedAt };
@@ -1616,6 +1708,7 @@ async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts,
   const probeAttempts = Math.max(1, Number(attempts) || WHATSAPP_HEALTH_PROBE_ATTEMPTS);
   const slice = Math.max(1500, Math.floor(Math.max(Number(timeoutMs) || 15000, 1500) / probeAttempts));
   let lastWaState = "";
+  let timedOut = false;
   for (let attempt = 1; attempt <= probeAttempts; attempt += 1) {
     if (!isWhatsappPuppeteerPageOpen(state)) {
       return finish({ verdict: "dead", waState: lastWaState });
@@ -1626,6 +1719,7 @@ async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts,
       if (waState === "CONNECTED") return finish({ verdict: "healthy", waState });
       if (attempt < probeAttempts) await delay(400);
     } catch {
+      timedOut = true;
       if (!isWhatsappPuppeteerPageOpen(state)) {
         return finish({ verdict: "dead", waState: lastWaState });
       }
@@ -1634,6 +1728,14 @@ async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts,
   }
   if (WHATSAPP_WARMING_STATES.has(lastWaState)) {
     return finish({ verdict: "warming", waState: lastWaState });
+  }
+  const previous = String(state.lastHealth?.verdict || "").toLowerCase();
+  if (
+    isWhatsappPuppeteerPageOpen(state) &&
+    (timedOut || !lastWaState) &&
+    (isWhatsappHealthInGrace(state) || previous === "healthy" || previous === "warming")
+  ) {
+    return finish({ verdict: "warming", waState: lastWaState || "CONNECTING" });
   }
   return finish({ verdict: "dead", waState: lastWaState });
 }
@@ -1653,15 +1755,16 @@ async function refreshWhatsappSessionHealth(userId, options = {}) {
   if (age < maxAgeMs && cachedVerdict && cachedVerdict !== "unknown" && cachedVerdict !== "n/a") {
     return summarizeWhatsappHealth(state);
   }
-  const inspection = await inspectWhatsappClientHealth(state, options.timeoutMs || 4000, {
-    attempts: options.attempts || 1,
+  const inspection = await inspectWhatsappClientHealth(state, options.timeoutMs || 8000, {
+    attempts: options.attempts || 2,
     remember: false,
   });
   if (inspection.verdict === "healthy" || inspection.verdict === "warming") {
+    state.healthFailStreak = 0;
     return rememberWhatsappHealth(state, inspection);
   }
   const previous = String(state.lastHealth?.verdict || "").toLowerCase();
-  if (previous === "healthy" || previous === "warming") {
+  if (previous === "healthy" || previous === "warming" || isWhatsappHealthInGrace(state)) {
     return summarizeWhatsappHealth(state);
   }
   return rememberWhatsappHealth(state, inspection);
@@ -1707,8 +1810,25 @@ async function healthCheckActiveWhatsappSessions() {
       continue;
     }
     if (status === "connected") {
-      const { verdict } = await inspectWhatsappClientHealth(state);
-      if (verdict === "healthy" || verdict === "warming") continue;
+      if (isWhatsappHealthInGrace(state) || !isWhatsappSessionWarmedUp(state)) {
+        continue;
+      }
+      const { verdict } = await inspectWhatsappClientHealth(state, 8000, {
+        attempts: 2,
+        remember: true,
+      });
+      if (verdict === "healthy" || verdict === "warming") {
+        state.healthFailStreak = 0;
+        continue;
+      }
+      state.healthFailStreak = Number(state.healthFailStreak || 0) + 1;
+      if (state.healthFailStreak < WHATSAPP_HEALTH_FAIL_STREAK_LIMIT) {
+        logEvent("whatsapp", "health check probe failed; waiting for next streak", {
+          userId,
+          streak: state.healthFailStreak,
+        });
+        continue;
+      }
       unhealthyUserIds.push(userId);
       continue;
     }

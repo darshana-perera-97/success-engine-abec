@@ -23,7 +23,8 @@ function logNonFatalWhatsappPuppeteerError(source, error) {
 }
 
 process.on("unhandledRejection", (reason) => {
-  logNonFatalWhatsappPuppeteerError("unhandledRejection", reason);
+  if (logNonFatalWhatsappPuppeteerError("unhandledRejection", reason)) return;
+  console.error("Unhandled promise rejection:", reason);
 });
 
 process.on("uncaughtException", (error) => {
