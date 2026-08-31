@@ -243,9 +243,63 @@ async function resolveCachedWhatsappWebHtml(requestedVersion, cacheType, cacheOp
   }
 }
 
+function isWhatsappPageBindingExistsError(error) {
+  const msg = String(error?.message || error?.cause?.message || error || "").toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("failed to add page binding") ||
+    (msg.includes("already exists") &&
+      (msg.includes("window[") || msg.includes("page binding") || msg.includes("exposed function")))
+  );
+}
+
+function makeExposeFunctionIdempotent(page) {
+  if (!page || typeof page.exposeFunction !== "function" || page.__seExposeFunctionIdempotent) {
+    return;
+  }
+  page.__seExposeFunctionIdempotent = true;
+  const original = page.exposeFunction.bind(page);
+  page.exposeFunction = async function patchedExposeFunction(name, fn) {
+    try {
+      return await original(name, fn);
+    } catch (error) {
+      if (isWhatsappPageBindingExistsError(error)) return;
+      throw error;
+    }
+  };
+}
+
+function patchPuppeteerExposeFunctionIdempotent() {
+  const loaders = [
+    () => require("puppeteer-core/lib/cjs/puppeteer/cdp/Page.js").CdpPage,
+    () => require("puppeteer-core/lib/esm/puppeteer/cdp/Page.js").CdpPage,
+  ];
+  for (const load of loaders) {
+    try {
+      const CdpPage = load();
+      if (!CdpPage?.prototype?.exposeFunction || CdpPage.prototype.__seExposeFunctionIdempotent) {
+        continue;
+      }
+      CdpPage.prototype.__seExposeFunctionIdempotent = true;
+      const original = CdpPage.prototype.exposeFunction;
+      CdpPage.prototype.exposeFunction = async function patchedCdpExposeFunction(name, fn) {
+        try {
+          return await original.call(this, name, fn);
+        } catch (error) {
+          if (isWhatsappPageBindingExistsError(error)) return;
+          throw error;
+        }
+      };
+    } catch {
+      // puppeteer layout differs by version; instance wrapping still covers the page.
+    }
+  }
+}
+
 function guardWhatsappPuppeteerPage(page, browser) {
   if (page && !page.__sePuppeteerGuarded) {
     page.__sePuppeteerGuarded = true;
+    makeExposeFunctionIdempotent(page);
     page.on("error", (error) => {
       swallowWhatsappPuppeteerError(error, "page error");
     });
@@ -262,6 +316,8 @@ function guardWhatsappPuppeteerPage(page, browser) {
 function patchWhatsappWebJsClient() {
   if (Client.prototype.__sePuppeteerGuardsPatched) return;
   Client.prototype.__sePuppeteerGuardsPatched = true;
+
+  patchPuppeteerExposeFunctionIdempotent();
 
   const { WhatsWebURL } = require("whatsapp-web.js/src/util/Constants");
 
@@ -315,19 +371,26 @@ function patchWhatsappWebJsClient() {
 
   const originalInject = Client.prototype.inject;
   Client.prototype.inject = async function patchedInject(...args) {
-    try {
-      return await originalInject.apply(this, args);
-    } catch (error) {
-      if (swallowWhatsappPuppeteerError(error)) {
-        try {
-          await reinjectWhatsappWebJsHelpers(this);
-        } catch {
-          // Helpers are restored again before the next send if this page is still alive.
+    // WhatsApp Web fires inject() on every framenavigated. Concurrent injects
+    // race Puppeteer exposeFunction and throw "onQRChangedEvent already exists".
+    const run = async () => {
+      if (this.pupPage) makeExposeFunctionIdempotent(this.pupPage);
+      try {
+        return await originalInject.apply(this, args);
+      } catch (error) {
+        if (isWhatsappPageBindingExistsError(error) || swallowWhatsappPuppeteerError(error)) {
+          try {
+            await reinjectWhatsappWebJsHelpers(this);
+          } catch {
+            // Helpers are restored again before the next send if this page is still alive.
+          }
+          return;
         }
-        return;
+        throw error;
       }
-      throw error;
-    }
+    };
+    this.__seInjectChain = Promise.resolve(this.__seInjectChain).then(run, run);
+    return this.__seInjectChain;
   };
 
   const originalSendMessage = Client.prototype.sendMessage;
@@ -1630,6 +1693,7 @@ function isWhatsappPuppeteerStaleSessionError(error) {
     msg.includes("getresponsebody") ||
     msg.includes("no data found for resource") ||
     msg.includes("runtime.addbinding") ||
+    isWhatsappPageBindingExistsError(error) ||
     (msg.includes("protocol error") && msg.includes("target"))
   );
 }
@@ -1968,9 +2032,12 @@ async function inspectWhatsappClientHealth(state, timeoutMs = 15000, { attempts,
     return finish({ verdict: "warming", waState: lastWaState });
   }
   const previous = String(state.lastHealth?.verdict || "").toLowerCase();
+  const unpaired = lastWaState === "UNPAIRED" || lastWaState === "UNPAIRED_IDLE";
+  // A WhatsApp Web reload briefly reports UNPAIRED while inject() re-runs.
+  // Restarting the browser for that looks like an automatic logout.
   if (
     isWhatsappPuppeteerPageOpen(state) &&
-    (timedOut || !lastWaState) &&
+    (timedOut || !lastWaState || unpaired) &&
     (isWhatsappHealthInGrace(state) || previous === "healthy" || previous === "warming")
   ) {
     return finish({ verdict: "warming", waState: lastWaState || "CONNECTING" });
