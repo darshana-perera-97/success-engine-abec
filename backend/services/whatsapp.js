@@ -61,7 +61,8 @@ const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 8;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_RECONNECT_LONG_MS = 2 * 60 * 1000;
 const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
-const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 2000;
+const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 300;
+const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
 const WHATSAPP_HEALTH_PROBE_ATTEMPTS = 3;
 const WHATSAPP_HEALTH_CACHE_MS = 20_000;
 const WHATSAPP_WARMING_STATES = new Set(["CONNECTING", "OPENING", "PAIRING"]);
@@ -307,19 +308,17 @@ async function runQueuedWhatsappReconnect(job) {
   );
   try {
     await startWhatsappSession(userId, {
-      awaitInitialize: true,
+      awaitInitialize: false,
       silentReconnect: job.silentReconnect !== false,
       force: true,
     });
-    const status = await waitForStartupWhatsappSession(userId);
+    const status = String(ensureWhatsappState(userId).status || "reconnecting");
     if (status === "connected") {
       console.log(`WhatsApp: reconnect queue restored ${userId}`);
-    } else if (status === "awaiting_qr_scan") {
-      console.warn(`WhatsApp: reconnect queue ${userId} needs a QR scan`);
-    } else if (status === "authenticated") {
-      console.warn(`WhatsApp: reconnect queue ${userId} authenticated — waiting for ready`);
     } else {
-      console.warn(`WhatsApp: reconnect queue ${userId} finished as ${status}`);
+      console.log(
+        `WhatsApp: reconnect queue started ${userId} (${status}) — continuing in background`
+      );
     }
     return status;
   } catch (error) {
@@ -810,8 +809,10 @@ async function startWhatsappSession(
   }
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   const killedOrphaned = await terminateBrowserProcessesUsingProfile(sessionDataDir);
-  if (hadClient || killedOrphaned || initAttempt > 1) {
+  if (hadClient || initAttempt > 1) {
     await delay(WHATSAPP_BROWSER_RESTART_PAUSE_MS);
+  } else if (killedOrphaned) {
+    await delay(WHATSAPP_BROWSER_ORPHAN_PAUSE_MS);
   }
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
   let client;
@@ -1224,21 +1225,26 @@ async function startSavedWhatsappSessionIfExists(userId) {
 
 async function waitForStartupWhatsappSession(userId) {
   const cleanUserId = String(userId || "").trim();
-  const started = Date.now();
+  let readyWaitStarted = 0;
   while (true) {
     const state = ensureWhatsappState(cleanUserId);
     if (state.status === "connected") return "connected";
     if (state.status === "awaiting_qr_scan" && !state.silentReconnect) return "awaiting_qr_scan";
     if (state.manualStop) return String(state.status || "disconnected");
-    if (!state.initializing && !state.client) {
+    if (state.initializing) {
+      await delay(250);
+      continue;
+    }
+    if (!state.client) {
       return String(state.status || "reconnecting");
     }
+    if (!readyWaitStarted) readyWaitStarted = Date.now();
     const limit =
       state.status === "authenticated"
         ? WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS
         : WHATSAPP_STARTUP_READY_TIMEOUT_MS;
-    if (Date.now() - started >= limit) break;
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (Date.now() - readyWaitStarted >= limit) break;
+    await delay(250);
   }
   const timedOut = ensureWhatsappState(cleanUserId);
   if (timedOut.status === "connected") return "connected";
@@ -1276,9 +1282,25 @@ async function initializeWhatsappSessionsOnStartup() {
     }
     await waitForWhatsappReconnectQueueIdle();
 
-    const connectedCount = userIds.filter(
-      (userId) => ensureWhatsappState(userId).status === "connected"
-    ).length;
+    const results = await Promise.all(
+      userIds.map(async (userId) => {
+        const status = await waitForStartupWhatsappSession(userId);
+        if (status === "connected") {
+          console.log(`WhatsApp: restored ${userId}`);
+        } else if (status === "awaiting_qr_scan") {
+          console.warn(`WhatsApp: ${userId} needs a QR scan after restart`);
+        } else if (status === "authenticated") {
+          console.warn(`WhatsApp: ${userId} is authenticated after restart — waiting for ready`);
+        } else {
+          console.warn(
+            `WhatsApp: ${userId} is ${status} after restart — retrying saved session in the background`
+          );
+        }
+        return { userId, status };
+      })
+    );
+
+    const connectedCount = results.filter((row) => row.status === "connected").length;
     console.log(
       `WhatsApp: ${connectedCount}/${userIds.length} saved session(s) connected after boot.`
     );
