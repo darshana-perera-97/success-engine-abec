@@ -2414,6 +2414,52 @@ export async function createInvoiceAmountChangeRequest(payload) {
   }
 }
 
+async function fetchAdminLogList(path, fallbackError) {
+  try {
+    const res = await fetch(`${API_BASE}${path}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || fallbackError };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getAdminLoginLogs() {
+  return fetchAdminLogList("/api/admin/logs/logins", "Failed to load login logs.");
+}
+
+export async function getAdminWhatsappSessions() {
+  return fetchAdminLogList("/api/admin/logs/whatsapp-sessions", "Failed to load WhatsApp integrations.");
+}
+
+export async function getAdminWhatsappIncomingLogs() {
+  return fetchAdminLogList("/api/admin/logs/whatsapp-incoming", "Failed to load incoming WhatsApp messages.");
+}
+
+export async function getAdminWhatsappOutgoingLogs() {
+  return fetchAdminLogList("/api/admin/logs/whatsapp-outgoing", "Failed to load outgoing WhatsApp messages.");
+}
+
+export async function disconnectAdminWhatsappSession(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/logs/whatsapp-disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to log out WhatsApp account." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach WhatsApp server. Please contact the Support team." };
+  }
+}
+
 export async function decideInvoiceAmountChangeRequest(requestId, payload) {
   const id = String(requestId || "").trim();
   if (!id) return { ok: false, error: "Request id is required." };

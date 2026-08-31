@@ -33,6 +33,7 @@ import { CreateTaskModal } from "./components/CreateTaskModal";
 import { IntegrationPanel } from "./components/IntegrationPanel";
 import { DocMapping } from "./components/DocMapping";
 import { WebForms } from "./components/WebForms";
+import { AdminLogs } from "./components/AdminLogs";
 import { Bell, Clock, X } from "lucide-react";
 import { Button } from "./components/Button";
 import {
@@ -128,6 +129,7 @@ const VIEW_TO_PATH = {
   "stage-escalations": "/stage-escalations",
   maps: "/maps",
   "web-forms": "/web-forms",
+  logs: "/logs",
   report: "/report"
 };
 
@@ -2601,6 +2603,11 @@ function App({ initialView = "dashboard" }) {
     setCreateTaskModalOpen(false);
   };
   const renderContent = () => {
+    if (currentView === "logs") {
+      return currentRole === "Admin"
+        ? /* @__PURE__ */ jsx(AdminLogs, {})
+        : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Logs are available for Admin only." });
+    }
     if (currentView === "integration") {
       if (canAccessWhatsappIntegration(currentRole, adminChatEnabled, branchWhatsappEnabled)) {
         return /* @__PURE__ */ jsx(IntegrationPanel, { currentUser, branchWhatsappEnabled, branchWhatsappSharedEnabled, adminChatEnabled });
@@ -3120,6 +3127,8 @@ function App({ initialView = "dashboard" }) {
           : /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Enable branch WhatsApp or admin messaging in Settings to use Integrations." });
       case "web-forms":
         return /* @__PURE__ */ jsx(WebForms, {});
+      case "logs":
+        return /* @__PURE__ */ jsx(AdminLogs, {});
       default:
         return /* @__PURE__ */ jsx("div", { className: "text-center mt-20 text-slate-400", children: "Under Construction" });
     }

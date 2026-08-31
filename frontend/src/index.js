@@ -33,7 +33,8 @@ const ROUTE_VIEWS = [
   { path: "/finance", view: "finance" },
   { path: "/settings", view: "settings" },
   { path: "/maps", view: "maps" },
-  { path: "/web-forms", view: "web-forms" }
+  { path: "/web-forms", view: "web-forms" },
+  { path: "/logs", view: "logs" }
 ];
 
 function WebFormEmbedRoute() {

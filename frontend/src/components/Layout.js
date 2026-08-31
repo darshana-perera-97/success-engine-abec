@@ -1,5 +1,5 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { COMPANY_LOGO_ALT, COMPANY_NAME } from "../companyConfig";
 import { isCounselorEquivalentPortalRole, isBranchWhatsappManagerRole } from "../roles";
 import { getRoleDisplayName } from "../roleDisplay";
@@ -26,7 +26,8 @@ import {
   Plug,
   MapPin,
   FormInput,
-  FileBarChart
+  FileBarChart,
+  ScrollText
 } from "lucide-react";
 import { DEFAULT_USER_AVATAR } from "../apiConfig";
 import { getCompanyProfile } from "../authApi";
@@ -61,6 +62,7 @@ const WhatsappGlyph = ({ className = "" }) => /* @__PURE__ */ jsx(
     })
   }
 );
+const persistSidebarScroll = { desktop: 0, mobile: 0 };
 const Layout = ({
   children: pageBody,
   activeView,
@@ -99,6 +101,27 @@ const Layout = ({
   const [backendCompanyName, setBackendCompanyName] = useState("");
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const notificationsPanelRef = useRef(null);
+  const desktopNavRef = useRef(null);
+  const mobileAsideRef = useRef(null);
+  useLayoutEffect(() => {
+    const nodes = [
+      [desktopNavRef.current, "desktop"],
+      [mobileAsideRef.current, "mobile"]
+    ];
+    const cleanups = [];
+    for (const [el, key] of nodes) {
+      if (!el) continue;
+      el.scrollTop = persistSidebarScroll[key];
+      const onScroll = () => {
+        persistSidebarScroll[key] = el.scrollTop;
+      };
+      el.addEventListener("scroll", onScroll, { passive: true });
+      cleanups.push(() => el.removeEventListener("scroll", onScroll));
+    }
+    return () => {
+      cleanups.forEach((fn) => fn());
+    };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     getCompanyProfile().then((result) => {
@@ -332,7 +355,8 @@ const Layout = ({
           { id: "calendar", label: "Team Calendar", icon: /* @__PURE__ */ jsx(Calendar, { size: 20 }) },
           { id: "messages", label: "Omni-Channel", icon: /* @__PURE__ */ jsx(MessageSquare, { size: 20 }) },
           { id: "maps", label: "Doc Mapping", icon: /* @__PURE__ */ jsx(MapPin, { size: 20 }) },
-          { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) }
+          { id: "web-forms", label: "Web Forms", icon: /* @__PURE__ */ jsx(FormInput, { size: 20 }) },
+          { id: "logs", label: "Logs", icon: /* @__PURE__ */ jsx(ScrollText, { size: 20 }) }
         ];
         if (adminChatEnabled) {
           return withStaffMessagingNav(adminNavItems);
@@ -352,6 +376,14 @@ const Layout = ({
     }
   };
   const navItems = getNavItems();
+  const rememberSidebarScroll = () => {
+    if (desktopNavRef.current) persistSidebarScroll.desktop = desktopNavRef.current.scrollTop;
+    if (mobileAsideRef.current) persistSidebarScroll.mobile = mobileAsideRef.current.scrollTop;
+  };
+  const handleNavClick = (view) => {
+    rememberSidebarScroll();
+    onNavigate(view);
+  };
   return /* @__PURE__ */ jsxs("div", { className: "flex h-screen bg-[#F9FAFB] text-slate-900 font-sans overflow-hidden", children: [
     isMobileMenuOpen && /* @__PURE__ */ jsx(
       "div",
@@ -360,7 +392,7 @@ const Layout = ({
         onClick: () => setIsMobileMenuOpen(false)
       }
     ),
-    /* @__PURE__ */ jsxs("aside", { className: `
+    /* @__PURE__ */ jsxs("aside", { ref: mobileAsideRef, className: `
         fixed inset-y-0 left-0 z-[70] w-64 max-h-screen overflow-y-auto overscroll-contain bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out lg:hidden flex flex-col justify-between
         ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
       `, children: [
@@ -389,7 +421,7 @@ const Layout = ({
               label: item.label,
               isActive: activeView === item.id || activeView === "student-detail" && item.id === "students",
               onClick: () => {
-                onNavigate(item.id);
+                handleNavClick(item.id);
                 setIsMobileMenuOpen(false);
               },
               badge: item.badge
@@ -406,7 +438,7 @@ const Layout = ({
             label: "Settings",
             isActive: activeView === "settings",
             onClick: () => {
-              onNavigate("settings");
+              handleNavClick("settings");
               setIsMobileMenuOpen(false);
             }
           }
@@ -442,14 +474,14 @@ const Layout = ({
             currentRole,
             " Interface"
           ] }) }),
-          /* @__PURE__ */ jsxs("nav", { className: "flex-1 min-h-0 overflow-y-auto flex flex-col gap-1", children: [
+          /* @__PURE__ */ jsxs("nav", { ref: desktopNavRef, className: "flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-1 [overflow-anchor:none]", children: [
             navItems.map((item) => /* @__PURE__ */ jsx(
               NavItem,
               {
                 icon: item.icon,
                 label: item.label,
                 isActive: activeView === item.id || activeView === "student-detail" && item.id === "students",
-                onClick: () => onNavigate(item.id),
+                onClick: () => handleNavClick(item.id),
                 badge: item.badge
               },
               item.id
@@ -464,7 +496,7 @@ const Layout = ({
             icon: /* @__PURE__ */ jsx(Settings, { size: 20 }),
             label: "Settings",
             isActive: activeView === "settings",
-            onClick: () => onNavigate("settings")
+            onClick: () => handleNavClick("settings")
           }
         ) : null,
         /* @__PURE__ */ jsx(
@@ -637,6 +669,8 @@ const NavItem = ({ icon, label, isActive, onClick, badge, className }) => {
   return /* @__PURE__ */ jsxs(
     "button",
     {
+      type: "button",
+      onMouseDown: (event) => event.preventDefault(),
       onClick,
       className: `
         group flex items-center justify-center lg:justify-start w-full p-2.5 rounded-md text-sm font-medium transition-all duration-200

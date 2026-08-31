@@ -43,6 +43,7 @@ const chatRoutes = require("./routes/chats");
 const activityRoutes = require("./routes/activities");
 const appointmentRoutes = require("./routes/appointments");
 const whatsappRoutes = require("./routes/whatsapp");
+const adminLogsRoutes = require("./routes/adminLogs");
 const universityRoutes = require("./routes/university");
 const aiRoutes = require("./routes/ai");
 const docMappingRoutes = require("./routes/docMapping");
@@ -95,6 +96,7 @@ const server = http.createServer(async (req, res) => {
   if (await frontendRoutes.handleApi(req, res, url)) return;
   if (await authRoutes.handle(req, res, url)) return;
   if (await whatsappRoutes.handle(req, res, url)) return;
+  if (await adminLogsRoutes.handle(req, res, url)) return;
   if (await accountRoutes.handle(req, res, url)) return;
   if (await universityRoutes.handle(req, res, url)) return;
   if (await appointmentRoutes.handle(req, res, url)) return;

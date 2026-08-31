@@ -1750,12 +1750,121 @@ function studentPhoneDigitsMatch(incomingDigits, student) {
 }
 
 async function findStudentByWhatsappFrom(chatId) {
+  const matches = await findStudentsByWhatsappFrom(chatId);
+  return matches[0] || null;
+}
+
+async function findStudentsByWhatsappFrom(chatId) {
   const rawFrom = String(chatId || "");
+  if (!rawFrom || isWhatsappLidChatId(rawFrom)) return [];
   const numberPart = rawFrom.split("@")[0] || "";
   const incomingDigits = normalizePhoneDigits(numberPart);
-  if (!incomingDigits) return null;
+  if (!incomingDigits || incomingDigits.length < 8) return [];
   const students = await readStudemts();
-  return students.find((student) => studentPhoneDigitsMatch(incomingDigits, student)) || null;
+  return students.filter((student) => studentPhoneDigitsMatch(incomingDigits, student));
+}
+
+function collectWhatsappIdentityKeys(...values) {
+  const keys = new Set();
+  for (const value of values) {
+    const raw = String(value || "").trim();
+    if (!raw) continue;
+    keys.add(raw.toLowerCase());
+    const lidMatch = raw.match(/(\d{6,})@lid/i);
+    if (lidMatch) keys.add(`${lidMatch[1]}@lid`);
+    if (raw.includes("@c.us")) {
+      const digits = normalizePhoneDigits(raw.split("@")[0]);
+      if (digits) keys.add(digits);
+    }
+  }
+  return keys;
+}
+
+function whatsappIdentitiesMatch(left, right) {
+  const a = collectWhatsappIdentityKeys(left);
+  const b = collectWhatsappIdentityKeys(right);
+  if (!a.size || !b.size) return false;
+  for (const key of a) {
+    if (b.has(key)) return true;
+  }
+  return false;
+}
+
+function studentLinkedToStaff(student, staffId) {
+  const id = String(staffId || "").trim();
+  if (!id || !student) return false;
+  if (String(student.counselor || "").trim() === id) return true;
+  if (String(student.inquiryCounselorId || "").trim() === id) return true;
+  if (String(student.branchWhatsappMessengerUserId || "").trim() === id) return true;
+  const history = Array.isArray(student.counselorHistory) ? student.counselorHistory : [];
+  return history.some((item) => String(item || "").trim() === id);
+}
+
+function findStudentById(students, studentId) {
+  const id = String(studentId || "").trim();
+  if (!id) return null;
+  return (Array.isArray(students) ? students : []).find((item) => String(item.id || "").trim() === id) || null;
+}
+
+async function resolveIncomingWhatsappStudent({
+  fromChatId,
+  originalFrom = "",
+  counselorId = "",
+  whatsappMessageId = "",
+} = {}) {
+  const identityHints = [fromChatId, originalFrom, whatsappMessageId].filter(Boolean);
+  const phoneMatches = [
+    ...(await findStudentsByWhatsappFrom(fromChatId)),
+    ...(originalFrom && originalFrom !== fromChatId ? await findStudentsByWhatsappFrom(originalFrom) : []),
+  ];
+  const seenPhoneIds = new Set();
+  const phoneStudents = [];
+  for (const student of phoneMatches) {
+    const id = String(student?.id || "").trim();
+    if (!id || seenPhoneIds.has(id)) continue;
+    seenPhoneIds.add(id);
+    phoneStudents.push(student);
+  }
+
+  const students = await readStudemts();
+  const chats = await readChats();
+  for (let index = chats.length - 1; index >= 0; index -= 1) {
+    const chat = chats[index];
+    const deliveryChatId = String(chat?.whatsappDelivery?.chatId || "").trim();
+    const chatWaId = String(chat?.whatsappMessageId || "").trim();
+    const hintMatch = identityHints.some(
+      (hint) => whatsappIdentitiesMatch(hint, deliveryChatId) || whatsappIdentitiesMatch(hint, chatWaId)
+    );
+    if (!hintMatch) continue;
+    const receiverId = String(chat.receiverId || "").trim();
+    const senderId = String(chat.senderId || "").trim();
+    const receiverStudent = findStudentById(students, receiverId);
+    const senderStudent = findStudentById(students, senderId);
+    if (receiverStudent && senderId && senderId !== receiverId) {
+      return receiverStudent;
+    }
+    if (senderStudent && receiverId && senderId !== receiverId && String(chat?.whatsappDelivery?.status || "") === "received") {
+      continue;
+    }
+    if (receiverStudent) return receiverStudent;
+  }
+
+  if (phoneStudents.length === 1) return phoneStudents[0];
+  if (counselorId && phoneStudents.length > 1) {
+    const linked = phoneStudents.filter((student) => studentLinkedToStaff(student, counselorId));
+    if (linked.length === 1) return linked[0];
+    if (linked.length > 1) {
+      for (let index = chats.length - 1; index >= 0; index -= 1) {
+        const chat = chats[index];
+        const sid = String(chat.senderId || "").trim();
+        const rid = String(chat.receiverId || "").trim();
+        const match = linked.find((student) => String(student.id || "") === sid || String(student.id || "") === rid);
+        if (match) return match;
+      }
+      return linked[0];
+    }
+  }
+  return phoneStudents[0] || null;
 }
 
 function isIgnoredWhatsappIncomingChatId(chatId) {
@@ -2042,31 +2151,87 @@ async function syncWhatsappIncomingToChats() {
       .filter(Boolean)
   );
   const toAdd = [];
+  let repaired = false;
   for (const row of incoming) {
     if (row.isGroup === true) continue;
     const from = String(row.from || "").trim();
     if (isIgnoredWhatsappIncomingChatId(from)) continue;
     const incomingKey = buildWhatsappIncomingRowKey(row.id);
-    if (!incomingKey || existingKeys.has(incomingKey)) continue;
-    let student = null;
+    if (!incomingKey) continue;
+    const nativeWaId = String(row.whatsappMessageId || "").trim();
+    const resolvedStudent = await resolveIncomingWhatsappStudent({
+      fromChatId: from,
+      originalFrom: String(row.fromOriginal || from),
+      counselorId: String(row.counselorId || ""),
+      whatsappMessageId: nativeWaId,
+    });
+    let student = resolvedStudent;
     const mappedId = String(row.mappedStudentId || "").trim();
-    if (mappedId) {
+    if (!student && mappedId) {
       student = students.find((item) => String(item.id || "") === mappedId) || null;
     }
-    if (!student) {
-      student = await findStudentByWhatsappFrom(from);
-    }
     if (!student?.id) continue;
+    const matchingChats = chats.filter((chat) => {
+      const chatIncomingId = String(chat.whatsappIncomingId || "").trim();
+      const chatWaId = String(chat.whatsappMessageId || "").trim();
+      return (
+        (incomingKey && chatWaId === incomingKey) ||
+        (nativeWaId && chatWaId === nativeWaId) ||
+        (row.id && chatIncomingId === String(row.id))
+      );
+    });
+    if (matchingChats.length) {
+      const nextStudentId = String(student.id);
+      const nextReceiver =
+        String(row.counselorId || "").trim() ||
+        resolveStudentPrimaryCounselorId(student, String(row.counselorId || ""));
+      const incomingTs = new Date(row.timestamp || 0).getTime();
+      const canReassign = chats.some((chat) => {
+        if (String(chat.receiverId || "").trim() !== nextStudentId) return false;
+        if (String(chat.senderId || "").trim() === nextStudentId) return false;
+        const hintMatch = [from, nativeWaId, String(row.fromOriginal || "")].some(
+          (hint) =>
+            whatsappIdentitiesMatch(hint, chat?.whatsappDelivery?.chatId) ||
+            whatsappIdentitiesMatch(hint, chat?.whatsappMessageId)
+        );
+        if (!hintMatch) return false;
+        const ts = new Date(chat.timestamp || 0).getTime();
+        return Number.isFinite(incomingTs) && Number.isFinite(ts) && Math.abs(ts - incomingTs) <= 24 * 60 * 60 * 1000;
+      });
+      for (const existingChat of matchingChats) {
+        const currentSender = String(existingChat.senderId || "").trim();
+        const senderNeedsUpdate = currentSender !== nextStudentId && (currentSender === "" || canReassign);
+        const receiverNeedsUpdate = Boolean(nextReceiver) && String(existingChat.receiverId || "") !== nextReceiver;
+        if (!senderNeedsUpdate && !receiverNeedsUpdate) {
+          if (!existingChat.whatsappIncomingId && row.id) {
+            existingChat.whatsappIncomingId = String(row.id);
+            repaired = true;
+          }
+          continue;
+        }
+        if (senderNeedsUpdate) existingChat.senderId = nextStudentId;
+        if (receiverNeedsUpdate && (currentSender === nextStudentId || senderNeedsUpdate)) {
+          existingChat.receiverId = nextReceiver;
+        }
+        if (!existingChat.whatsappIncomingId && row.id) existingChat.whatsappIncomingId = String(row.id);
+        repaired = true;
+      }
+      existingKeys.add(incomingKey);
+      if (isNativeWhatsappMessageId(nativeWaId)) existingKeys.add(nativeWaId);
+      continue;
+    }
+    if (existingKeys.has(incomingKey) || (nativeWaId && existingKeys.has(nativeWaId))) continue;
     const content = String(row.message || "").trim();
     const rowAttachment =
       row.attachment && typeof row.attachment === "object" && row.attachment.url
         ? row.attachment
         : null;
     if (!content && !rowAttachment) continue;
-    const receiverId = resolveStudentPrimaryCounselorId(student, String(row.counselorId || ""));
+    const receiverId =
+      String(row.counselorId || "").trim() ||
+      resolveStudentPrimaryCounselorId(student, String(row.counselorId || ""));
     if (!receiverId) continue;
     const replyTo = normalizeReplyTo(row.replyTo);
-    const nativeWaId = String(row.whatsappMessageId || "").trim();
     toAdd.push({
       id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
       senderId: String(student.id),
@@ -2089,8 +2254,8 @@ async function syncWhatsappIncomingToChats() {
     existingKeys.add(incomingKey);
     if (isNativeWhatsappMessageId(nativeWaId)) existingKeys.add(nativeWaId);
   }
-  if (!toAdd.length) return 0;
-  await writeChats([...chats, ...toAdd]);
+  if (!toAdd.length && !repaired) return 0;
+  await writeChats(toAdd.length ? [...chats, ...toAdd] : chats);
   return toAdd.length;
 }
 
@@ -2114,7 +2279,12 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   if (isIgnoredWhatsappIncomingChatId(fromChatId)) return;
   const numberPart = fromChatId.split("@")[0] || "";
   const incomingContactNumber = normalizePhoneDigits(numberPart);
-  const student = await findStudentByWhatsappFrom(fromChatId);
+  const student = await resolveIncomingWhatsappStudent({
+    fromChatId,
+    originalFrom: from,
+    counselorId,
+    whatsappMessageId: incomingId,
+  });
   const content = String(message.body || "").trim();
   let attachment = null;
   if (message?.hasMedia === true && typeof message.downloadMedia === "function") {
@@ -2166,7 +2336,8 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     (attachment ? `Sent an attachment (${attachment.name || "file"}).` : "") ||
     (mediaDownloadFailed ? "Sent a media file (could not be downloaded)." : "");
   if (!normalizedContent && !attachment) return;
-  const receiverId = resolveStudentPrimaryCounselorId(student, counselorId);
+  const receiverId =
+    String(counselorId || "").trim() || resolveStudentPrimaryCounselorId(student, counselorId);
   const replyTo = await buildReplyToFromWhatsappQuotedMessage(message, {
     studentId: String(student?.id || ""),
     counselorId: String(receiverId || counselorId || ""),
@@ -2187,10 +2358,12 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
       // Raw data access may not be available in all whatsapp-web.js versions.
     }
   }
+  const incomingRowId = `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
   await appendWhatsappIncoming({
-    id: `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+    id: incomingRowId,
     counselorId: String(counselorId || ""),
     from: fromChatId,
+    ...(from && from !== fromChatId ? { fromOriginal: from } : {}),
     contactNumber: incomingContactNumber || numberPart || "",
     message: normalizedContent,
     timestamp: message.timestamp
@@ -2204,7 +2377,13 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
   });
   if (!student || !student.id) return;
   const chats = await readChats();
-  if (chats.some((chat) => String(chat.whatsappMessageId || "") === incomingId)) {
+  if (
+    chats.some(
+      (chat) =>
+        String(chat.whatsappMessageId || "") === incomingId ||
+        String(chat.whatsappIncomingId || "") === incomingRowId
+    )
+  ) {
     return;
   }
   const chat = {
@@ -2219,6 +2398,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     platform: "whatsapp",
     attachment,
     ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
+    whatsappIncomingId: incomingRowId,
     whatsappMessageId: incomingId,
     whatsappDelivery: {
       attempted: true,
@@ -2792,6 +2972,7 @@ module.exports = {
   resolveWhatsappThreadIdFromMessage,
   findStudentByWhatsappFrom,
   persistIncomingWhatsappMessage,
+  resolveIncomingWhatsappStudent,
   syncWhatsappIncomingToChats,
   syncWhatsappChatHistoryForStudent,
   syncAllWhatsappChatHistory,
@@ -2799,6 +2980,7 @@ module.exports = {
   resolveStudentPrimaryCounselorId,
   deliverCounselorMessageToStudentWhatsapp,
   persistOutgoingStudentChatMessage,
+  listSavedWhatsappSessionUserIds,
   resolveCounselor,
   resolveWhatsappMessenger,
   resolveWhatsappIntegrationContext,

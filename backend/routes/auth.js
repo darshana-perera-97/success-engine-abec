@@ -11,6 +11,7 @@ const {
 const { readUsers } = require("../models/users");
 const { readStudemts, writeStudemts, publicAssetUrl } = require("../models/students");
 const { sanitizeAccount, findResettableUserByEmail, writeUsers } = require("../models/users");
+const { appendLoginLog } = require("../models/loginLogs");
 const {
   normalizeEmail,
   normalizeLoginRole,
@@ -21,6 +22,18 @@ const {
   createOtpCode,
   sendForgotPasswordOtpEmail,
 } = require("../services/email");
+
+function recordLogin(user) {
+  if (!user) return;
+  appendLoginLog({
+    userId: user.id,
+    username: user.username || user.name || "",
+    email: user.email,
+    role: user.role,
+  }).catch((error) => {
+    logEvent("auth", "Failed to record login log", { message: String(error?.message || error) });
+  });
+}
 
 async function handle(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
@@ -38,33 +51,31 @@ async function handle(req, res, url) {
       }
 
       if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-        sendJson(res, 200, {
-          ok: true,
-          user: {
-            id: "ADM001",
-            username: ADMIN_DISPLAY_NAME,
-            name: ADMIN_DISPLAY_NAME,
-            email: ADMIN_EMAIL,
-            role: "Admin",
-          },
-        });
+        const user = {
+          id: "ADM001",
+          username: ADMIN_DISPLAY_NAME,
+          name: ADMIN_DISPLAY_NAME,
+          email: ADMIN_EMAIL,
+          role: "Admin",
+        };
+        recordLogin(user);
+        sendJson(res, 200, { ok: true, user });
         return true;
       }
 
       const users = await readUsers();
       const matchedUser = users.find((u) => normalizeEmail(u.email) === email && String(u.password || "") === password);
       if (matchedUser) {
-        sendJson(res, 200, {
-          ok: true,
-          user: {
-            id: matchedUser.id,
-            username: matchedUser.username || "",
-            email: matchedUser.email,
-            role: normalizeLoginRole(matchedUser.role),
-            branch: matchedUser.branch || null,
-            country: matchedUser.country || null,
-          },
-        });
+        const user = {
+          id: matchedUser.id,
+          username: matchedUser.username || "",
+          email: matchedUser.email,
+          role: normalizeLoginRole(matchedUser.role),
+          branch: matchedUser.branch || null,
+          country: matchedUser.country || null,
+        };
+        recordLogin(user);
+        sendJson(res, 200, { ok: true, user });
         return true;
       }
 
@@ -73,17 +84,16 @@ async function handle(req, res, url) {
         (s) => normalizeEmail(s.email) === email && String(s.password || "") === password
       );
       if (matchedStudent) {
-        sendJson(res, 200, {
-          ok: true,
-          user: {
-            id: matchedStudent.id,
-            username: matchedStudent.name || "",
-            email: matchedStudent.email,
-            role: "Student",
-            branch: matchedStudent.branch || null,
-            mustChangePassword: matchedStudent.forcePasswordChange === true,
-          },
-        });
+        const user = {
+          id: matchedStudent.id,
+          username: matchedStudent.name || "",
+          email: matchedStudent.email,
+          role: "Student",
+          branch: matchedStudent.branch || null,
+          mustChangePassword: matchedStudent.forcePasswordChange === true,
+        };
+        recordLogin(user);
+        sendJson(res, 200, { ok: true, user });
         return true;
       }
 

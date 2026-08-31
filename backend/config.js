@@ -27,6 +27,7 @@ const UNIVERSITY_FILE = path.join(DATA_DIR, "university.json");
 const CHATS_FILE = path.join(DATA_DIR, "chats.json");
 const ADMIN_CHATS_FILE = path.join(DATA_DIR, "adminChats.json");
 const ACTIVITIES_FILE = path.join(DATA_DIR, "activities.json");
+const LOGIN_LOGS_FILE = path.join(DATA_DIR, "loginLogs.json");
 const MEETING_DATA_FILE = path.join(DATA_DIR, "meetingData.json");
 const SYSTEM_DATA_FILE = path.join(DATA_DIR, "systemData.json");
 const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
@@ -206,6 +207,7 @@ module.exports = {
   CHATS_FILE,
   ADMIN_CHATS_FILE,
   ACTIVITIES_FILE,
+  LOGIN_LOGS_FILE,
   MEETING_DATA_FILE,
   SYSTEM_DATA_FILE,
   DEFAULT_SYSTEM_DATA,
