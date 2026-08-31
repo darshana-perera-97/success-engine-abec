@@ -2460,6 +2460,23 @@ export async function disconnectAdminWhatsappSession(userId) {
   }
 }
 
+export async function reconnectAdminWhatsappSession(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/logs/whatsapp-reconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to reconnect WhatsApp account." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach WhatsApp server. Please contact the Support team." };
+  }
+}
+
 export async function decideInvoiceAmountChangeRequest(requestId, payload) {
   const id = String(requestId || "").trim();
   if (!id) return { ok: false, error: "Request id is required." };

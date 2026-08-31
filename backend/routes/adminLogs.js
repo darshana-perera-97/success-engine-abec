@@ -9,6 +9,7 @@ const {
   snapshotWhatsappState,
   refreshWhatsappSessionHealth,
   stopWhatsappSession,
+  reconnectWhatsappSessionForAdmin,
   listSavedWhatsappSessionUserIds,
   userHasSavedWhatsappSession,
 } = require("../services/whatsapp");
@@ -177,6 +178,23 @@ async function handle(req, res, url) {
       sendJson(res, 200, { ok: true, data });
     } catch {
       sendJson(res, 500, { ok: false, error: "Failed to log out WhatsApp account." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/logs/whatsapp-reconnect") {
+    try {
+      const body = await parseBody(req);
+      const userId = String(body.userId || "").trim();
+      if (!userId) {
+        sendJson(res, 400, { ok: false, error: "userId is required." });
+        return true;
+      }
+      const data = await reconnectWhatsappSessionForAdmin(userId);
+      sendJson(res, 200, { ok: true, data });
+    } catch (error) {
+      const message = String(error?.message || "Failed to reconnect WhatsApp account.").trim();
+      sendJson(res, 500, { ok: false, error: message || "Failed to reconnect WhatsApp account." });
     }
     return true;
   }

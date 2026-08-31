@@ -17,6 +17,7 @@ import {
   getAdminWhatsappIncomingLogs,
   getAdminWhatsappOutgoingLogs,
   getAdminWhatsappSessions,
+  reconnectAdminWhatsappSession,
 } from "../authApi";
 import { getRoleDisplayName } from "../roleDisplay";
 import { POLL_MS } from "../runtimeConfig";
@@ -241,7 +242,7 @@ function LoginLogsSection({ rows, loading, error }) {
   );
 }
 
-function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogout }) {
+function WhatsappSessionsSection({ rows, loading, error, disconnectingId, reconnectingId, onLogout, onReconnect }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () =>
@@ -259,7 +260,7 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
     <LogSection
       icon={<Plug size={16} />}
       title="WhatsApp integrations"
-      description="Every WhatsApp account connected to the system, with live health scores. Admins can log them out from here."
+      description="Every WhatsApp account connected to the system, with live health scores. Admins can reconnect or log them out from here."
       toolbar={<SearchField value={query} onChange={setQuery} placeholder="Search accounts…" />}
     >
       <div className={dt.card}>
@@ -278,7 +279,9 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
               {loading ? (
                 <TableSkeletonRows rows={5} cols={5} />
               ) : pageItems.length ? (
-                pageItems.map((row) => (
+                pageItems.map((row) => {
+                  const busy = disconnectingId === row.userId || reconnectingId === row.userId;
+                  return (
                   <tr key={row.userId} className={dt.row}>
                     <td className={dt.tdPrimary}>
                       <div>{row.account || "Not linked"}</div>
@@ -298,22 +301,34 @@ function WhatsappSessionsSection({ rows, loading, error, disconnectingId, onLogo
                       <WhatsappHealthCell score={row.healthScore} label={row.healthLabel} />
                     </td>
                     <td className={dt.tdActions}>
-                      {row.canLogout ? (
+                      <div className="inline-flex items-center justify-end gap-2">
                         <Button
-                          variant="danger"
+                          variant="secondary"
                           size="sm"
-                          isLoading={disconnectingId === row.userId}
-                          onClick={() => onLogout(row)}
+                          disabled={busy}
+                          isLoading={reconnectingId === row.userId}
+                          onClick={() => onReconnect(row)}
                         >
-                          <LogOut size={14} className="mr-1.5" />
-                          Logout
+                          <RefreshCw size={14} className="mr-1.5" />
+                          Reconnect
                         </Button>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
+                        {row.canLogout ? (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            disabled={busy}
+                            isLoading={disconnectingId === row.userId}
+                            onClick={() => onLogout(row)}
+                          >
+                            <LogOut size={14} className="mr-1.5" />
+                            Logout
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={5} className={dt.emptyRow}>
@@ -513,6 +528,7 @@ export function AdminLogs() {
     outgoing: "",
   });
   const [disconnectingId, setDisconnectingId] = useState("");
+  const [reconnectingId, setReconnectingId] = useState("");
   const [incomingDetail, setIncomingDetail] = useState(null);
   const [notice, setNotice] = useState("");
   const [noticeTone, setNoticeTone] = useState("success");
@@ -565,6 +581,22 @@ export function AdminLogs() {
     }
     setNoticeTone("success");
     setNotice(`WhatsApp logged out for ${row.userName || row.userId}.`);
+    await loadSection("sessions", getAdminWhatsappSessions, setSessions);
+  };
+
+  const handleReconnectSession = async (row) => {
+    const label = row.account && row.account !== "Not linked" ? row.account : row.userName;
+    setReconnectingId(row.userId);
+    setNotice("");
+    const result = await reconnectAdminWhatsappSession(row.userId);
+    setReconnectingId("");
+    if (!result.ok) {
+      setNoticeTone("error");
+      setNotice(result.error || `Failed to reconnect WhatsApp for ${label}.`);
+      return;
+    }
+    setNoticeTone("success");
+    setNotice(`Reconnecting WhatsApp for ${row.userName || row.userId}.`);
     await loadSection("sessions", getAdminWhatsappSessions, setSessions);
   };
 
@@ -628,7 +660,9 @@ export function AdminLogs() {
         loading={loading.sessions}
         error={errors.sessions}
         disconnectingId={disconnectingId}
+        reconnectingId={reconnectingId}
         onLogout={handleLogoutSession}
+        onReconnect={handleReconnectSession}
       />
       <IncomingMessagesSection
         rows={incoming}
