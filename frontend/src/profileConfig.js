@@ -6,7 +6,7 @@ import * as nexgenai from "./profile/nexgenai/companyConfig";
 
 // Change this single value to switch the whole app between company profiles.
 // Supported values: "abec" | "beacanadian" | "ds" | "hsenid" | "nexgenai"
-export const ACTIVE_PROFILE = "beacanadian";
+export const ACTIVE_PROFILE = "hsenid";
 
 const profiles = { abec, beacanadian, ds, hsenid, nexgenai };
 const config = profiles[ACTIVE_PROFILE];
