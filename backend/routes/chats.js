@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { parseBody, sendJson } = require("../lib/httpUtils");
-const { readChats, writeChats, normalizeReplyTo } = require("../models/chats");
+const { readChats, appendUniqueChats, updateChats, normalizeReplyTo } = require("../models/chats");
 const { readStudemts, publicChatFileUrl } = require("../models/students");
 const { deliverCounselorMessageToStudentWhatsapp, resolveCounselor, syncWhatsappIncomingToChats, isWhatsappGroupChatRecord } = require("../services/whatsapp");
 const { deliverStudentNotificationWhatsapp } = require("../services/notifications");
@@ -117,25 +117,24 @@ async function handle(req, res, url) {
       const shouldMarkRead = url.searchParams.get("markRead") !== "0";
       const wantSummary = isTruthyQueryParam(url.searchParams.get("summary"));
       const wantThread = isTruthyQueryParam(url.searchParams.get("thread"));
-      const chatsAll = await readChats();
-      let chatsAllNext = chatsAll;
+      let chatsAllNext = await readChats();
       if (userId && shouldMarkRead) {
         // Mark messages as read when the receiver opens a conversation.
         // If peerId is set, only mark unread messages from that peer (per-thread).
-        let hasReadUpdates = false;
-        chatsAllNext = chatsAll.map((chat) => {
-          if (normalizeId(chat.receiverId) !== normalizedUserId || chat.read === true) {
-            return chat;
-          }
-          if (normalizedPeerId && normalizeId(chat.senderId) !== normalizedPeerId) {
-            return chat;
-          }
-          hasReadUpdates = true;
-          return { ...chat, read: true, readAt: new Date().toISOString() };
+        chatsAllNext = await updateChats((chatsAll) => {
+          let hasReadUpdates = false;
+          const next = chatsAll.map((chat) => {
+            if (normalizeId(chat.receiverId) !== normalizedUserId || chat.read === true) {
+              return chat;
+            }
+            if (normalizedPeerId && normalizeId(chat.senderId) !== normalizedPeerId) {
+              return chat;
+            }
+            hasReadUpdates = true;
+            return { ...chat, read: true, readAt: new Date().toISOString() };
+          });
+          return hasReadUpdates ? next : chatsAll;
         });
-        if (hasReadUpdates) {
-          await writeChats(chatsAllNext);
-        }
       }
       let chatsForResponse = chatsAllNext.filter((chat) => !isWhatsappGroupChatRecord(chat));
       const counselor = userId ? await resolveCounselor(userId) : null;
@@ -280,7 +279,6 @@ async function handle(req, res, url) {
           });
         }
       }
-      const chats = await readChats();
       const sentWhatsappMessageId = String(whatsappDelivery?.whatsappMessageId || "").trim();
       const chat = {
         id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
@@ -295,7 +293,7 @@ async function handle(req, res, url) {
         ...(sentWhatsappMessageId ? { whatsappMessageId: sentWhatsappMessageId } : {}),
         whatsappDelivery,
       };
-      await writeChats([...chats, chat]);
+      await appendUniqueChats([chat]);
       sendJson(res, 201, {
         ok: true,
         data: {

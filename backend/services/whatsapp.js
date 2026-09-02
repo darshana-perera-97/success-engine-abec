@@ -42,7 +42,7 @@ const {
 const { readUsers } = require("../models/users");
 const { readSystemData } = require("../models/systemData");
 const { readStudemts } = require("../models/students");
-const { readChats, writeChats, appendPortalChatMessage, normalizeReplyTo } = require("../models/chats");
+const { readChats, writeChats, appendUniqueChats, appendPortalChatMessage, normalizeReplyTo } = require("../models/chats");
 const { resolveChatFileDiskPath, resolveStudentDocDiskPath } = require("../models/students");
 const { withFileLock, atomicWriteFile, safeJsonParse } = require("../lib/fileUtils");
 const { isWhatsappIntegratedStaffRole } = require("./roles");
@@ -77,7 +77,7 @@ const BRANCH_WHATSAPP_ACTIVE_STATUSES = new Set([
 
 const STAFF_WHATSAPP_ROLES = new Set(["Admin", "Manager", "Team Lead"]);
 const { isSupportedWhatsappMediaMime, storeChatAttachmentDataUrl, extensionFromFileName, mimeFromExtension } = require("./uploads");
-const { appendWhatsappIncoming, readWhatsappIncoming } = require("../models/whatsappIncoming");
+const { appendWhatsappIncoming, readWhatsappIncoming, uniqueWhatsappIncomingRows } = require("../models/whatsappIncoming");
 const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion, invalidateWhatsappWebVersionCache } = require("./whatsappWebVersion");
 
@@ -1540,9 +1540,18 @@ async function startWhatsappSession(
   });
 
   const handleIncomingMessage = async (message) => {
+    let eventId = "";
     try {
+      if (!isCurrentWhatsappClient(state, client)) return;
+      const { serialized, rawId } = normalizeWhatsappMessageId(message);
+      if (message?.id && typeof message.id === "object" && !message.id._serialized && (serialized || rawId)) {
+        message.id._serialized = serialized || rawId;
+      }
+      eventId = serialized || rawId || buildFallbackIncomingWhatsappId(message);
+      if (eventId && !claimIncomingWhatsappMessageId(eventId)) return;
       await persistIncomingWhatsappMessage({ counselorId: cleanUserId, message });
     } catch (error) {
+      if (eventId) releaseIncomingWhatsappMessageId(eventId);
       console.error("Failed to persist incoming WhatsApp message:", error);
     }
   };
@@ -3338,6 +3347,37 @@ function isNativeWhatsappMessageId(value) {
   return id.includes("@") || id.includes("_");
 }
 
+const recentIncomingWhatsappMessageIds = new Map();
+const INCOMING_WHATSAPP_DEDUPE_MS = 10 * 60 * 1000;
+
+function buildFallbackIncomingWhatsappId(message) {
+  const from = String(message?.from || "").trim();
+  const timestamp = String(message?.timestamp || "").trim();
+  const body = String(message?.body || "").trim();
+  if (!from || !timestamp) return "";
+  return `fallback:${from}:${timestamp}:${body.slice(0, 50)}`;
+}
+
+function claimIncomingWhatsappMessageId(messageId) {
+  const id = String(messageId || "").trim();
+  if (!id) return true;
+  const now = Date.now();
+  const prev = recentIncomingWhatsappMessageIds.get(id);
+  if (prev && now - prev < INCOMING_WHATSAPP_DEDUPE_MS) return false;
+  recentIncomingWhatsappMessageIds.set(id, now);
+  if (recentIncomingWhatsappMessageIds.size > 2000) {
+    for (const [key, ts] of recentIncomingWhatsappMessageIds) {
+      if (now - ts > INCOMING_WHATSAPP_DEDUPE_MS) recentIncomingWhatsappMessageIds.delete(key);
+    }
+  }
+  return true;
+}
+
+function releaseIncomingWhatsappMessageId(messageId) {
+  const id = String(messageId || "").trim();
+  if (id) recentIncomingWhatsappMessageIds.delete(id);
+}
+
 function formatWhatsappReplyContent(content, replyTo) {
   const text = String(content || "").trim();
   const normalized = normalizeReplyTo(replyTo);
@@ -3408,7 +3448,7 @@ async function buildReplyToFromWhatsappQuotedMessage(message, { studentId = "", 
 }
 
 async function syncWhatsappIncomingToChats() {
-  const incoming = await readWhatsappIncoming();
+  const incoming = uniqueWhatsappIncomingRows(await readWhatsappIncoming());
   if (!incoming.length) return 0;
   const chats = await readChats();
   const students = await readStudemts();
@@ -3525,7 +3565,8 @@ async function syncWhatsappIncomingToChats() {
     if (isNativeWhatsappMessageId(nativeWaId)) existingKeys.add(nativeWaId);
   }
   if (!toAdd.length && !repaired) return 0;
-  await writeChats(toAdd.length ? [...chats, ...toAdd] : chats);
+  if (repaired && !toAdd.length) await writeChats(chats);
+  if (toAdd.length) await appendUniqueChats(toAdd);
   return toAdd.length;
 }
 
@@ -3629,7 +3670,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     }
   }
   const incomingRowId = `WAIN-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
-  await appendWhatsappIncoming({
+  const appendedIncoming = await appendWhatsappIncoming({
     id: incomingRowId,
     counselorId: String(counselorId || ""),
     from: fromChatId,
@@ -3645,17 +3686,8 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
     ...(effectiveReplyTo ? { replyTo: effectiveReplyTo } : {}),
     ...(incomingId ? { whatsappMessageId: incomingId } : {}),
   });
+  if (appendedIncoming === false) return;
   if (!student || !student.id) return;
-  const chats = await readChats();
-  if (
-    chats.some(
-      (chat) =>
-        String(chat.whatsappMessageId || "") === incomingId ||
-        String(chat.whatsappIncomingId || "") === incomingRowId
-    )
-  ) {
-    return;
-  }
   const chat = {
     id: `MSG-${crypto.randomUUID().slice(0, 8)}`,
     senderId: String(student.id),
@@ -3677,7 +3709,7 @@ async function persistIncomingWhatsappMessage({ counselorId, message }) {
       chatId: fromChatId,
     },
   };
-  await writeChats([...chats, chat]);
+  await appendUniqueChats([chat]);
 }
 
 async function persistOutgoingStudentChatMessage({
@@ -4174,7 +4206,7 @@ async function syncWhatsappChatHistoryForStudent(counselorUserId, studentId) {
   const deduped = toAdd.filter((m) => !latestWaIds.has(m.whatsappMessageId));
   if (!deduped.length) return { synced: 0 };
 
-  await writeChats([...latestChats, ...deduped]);
+  await appendUniqueChats(deduped);
   logEvent("whatsapp", "history sync completed", {
     counselorId: cleanCounselorId,
     studentId: cleanStudentId,

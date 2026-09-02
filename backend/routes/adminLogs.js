@@ -1,7 +1,7 @@
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { whatsappSessions, ADMIN_DISPLAY_NAME, ADMIN_EMAIL } = require("../config");
 const { readLoginLogs } = require("../models/loginLogs");
-const { readWhatsappIncoming } = require("../models/whatsappIncoming");
+const { readWhatsappIncoming, uniqueWhatsappIncomingRows } = require("../models/whatsappIncoming");
 const { readChats } = require("../models/chats");
 const { readUsers } = require("../models/users");
 const { readStudemts } = require("../models/students");
@@ -202,7 +202,7 @@ async function handle(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/admin/logs/whatsapp-incoming") {
     try {
       const directory = await buildPeopleDirectory();
-      const incoming = await readWhatsappIncoming();
+      const incoming = uniqueWhatsappIncomingRows(await readWhatsappIncoming());
       const data = incoming
         .filter((row) => row && row.isGroup !== true)
         .sort((a, b) => sortByTimeDesc(a, b, "timestamp"))

@@ -1,5 +1,5 @@
 const { parseBody, sendJson } = require("../lib/httpUtils");
-const { readWhatsappIncoming } = require("../models/whatsappIncoming");
+const { readWhatsappIncoming, uniqueWhatsappIncomingRows } = require("../models/whatsappIncoming");
 const {
   snapshotWhatsappState,
   startWhatsappSession,
@@ -94,7 +94,7 @@ async function handle(req, res, url) {
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
       const statusUserId = String(context.statusUserId || userId).trim() || userId;
-      const all = await readWhatsappIncoming();
+      const all = uniqueWhatsappIncomingRows(await readWhatsappIncoming());
       const data = all
         .filter((row) => String(row.counselorId || "") === statusUserId && row.isGroup !== true)
         .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())

@@ -254,7 +254,9 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       setLiveMessages(inboxPreview ? [inboxPreview] : []);
       setIsThreadLoading(true);
     }
+    let loadSeq = 0;
     const loadThread = async () => {
+      const seq = ++loadSeq;
       const shouldMarkRead = isFirstLoad && !isGhostMode;
       isFirstLoad = false;
       const myId = String(currentUser?.id || "").trim();
@@ -263,7 +265,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
         thread: true,
         markRead: shouldMarkRead && !shouldLoadAll
       });
-      if (cancelled) return;
+      if (cancelled || seq !== loadSeq) return;
       if (!result.ok) {
         setIsThreadLoading(false);
         return;
@@ -326,6 +328,7 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
     if (!Array.isArray(msgs) || msgs.length < 2) return msgs || [];
     const seenIds = /* @__PURE__ */ new Set();
     const seenWhatsappIds = /* @__PURE__ */ new Set();
+    const seenIncomingRowIds = /* @__PURE__ */ new Set();
     const kept = [];
     for (const msg of msgs) {
       if (!msg) continue;
@@ -333,6 +336,11 @@ const ChatInterface = ({ currentRole, currentUser, messages, onSendMessage, stud
       if (id) {
         if (seenIds.has(id)) continue;
         seenIds.add(id);
+      }
+      const incomingRowId = String(msg.whatsappIncomingId || "").trim();
+      if (incomingRowId) {
+        if (seenIncomingRowIds.has(incomingRowId)) continue;
+        seenIncomingRowIds.add(incomingRowId);
       }
       const waId = String(msg.whatsappMessageId || "").trim();
       if (waId) {
