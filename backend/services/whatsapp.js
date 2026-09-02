@@ -90,7 +90,12 @@ const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_QR_GRACE_MS = 12 * 1000;
 const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
 const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 500;
-const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 800;
+const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
+const parsedWhatsappInitConcurrency = parseInt(process.env.WHATSAPP_INIT_CONCURRENCY || "", 10);
+const WHATSAPP_INIT_CONCURRENCY =
+  Number.isFinite(parsedWhatsappInitConcurrency) && parsedWhatsappInitConcurrency > 0
+    ? Math.min(parsedWhatsappInitConcurrency, 4)
+    : 3;
 const WHATSAPP_HEALTH_PROBE_ATTEMPTS = 3;
 const WHATSAPP_HEALTH_CACHE_MS = 20_000;
 const WHATSAPP_HEALTH_FAIL_STREAK_LIMIT = 2;
@@ -117,7 +122,8 @@ const ADMIN_WHATSAPP_USER_ID = "ADM001";
 const RESTORABLE_SESSIONS_FILE = path.join(WHATSAPP_CONNECTIONS_DIR, "restorable-sessions.json");
 let isWhatsappShuttingDown = false;
 let whatsappBootRestoreActive = false;
-let whatsappInitChain = Promise.resolve();
+let whatsappInitActive = 0;
+const whatsappInitWaiters = [];
 let restorableSessionsCache = null;
 const whatsappReconnectQueue = [];
 const whatsappReconnectQueuedIds = new Set();
@@ -576,9 +582,28 @@ function delay(ms) {
 }
 
 function enqueueWhatsappInit(task) {
-  const run = whatsappInitChain.then(task);
-  whatsappInitChain = run.catch(() => {});
-  return run;
+  return new Promise((resolve, reject) => {
+    const run = async () => {
+      try {
+        resolve(await task());
+      } catch (error) {
+        reject(error);
+      } finally {
+        whatsappInitActive -= 1;
+        const next = whatsappInitWaiters.shift();
+        if (next) {
+          whatsappInitActive += 1;
+          next();
+        }
+      }
+    };
+    if (whatsappInitActive < WHATSAPP_INIT_CONCURRENCY) {
+      whatsappInitActive += 1;
+      void run();
+      return;
+    }
+    whatsappInitWaiters.push(run);
+  });
 }
 
 function isWhatsappReconnectQueueIdle() {
@@ -694,11 +719,11 @@ async function runQueuedWhatsappReconnect(job) {
   const waiting = whatsappReconnectQueue.length;
   console.log(
     `WhatsApp: reconnect queue trying ${userId}` +
-      `${job.reason ? ` (${job.reason})` : ""} — 1 connection, ${waiting} waiting`
+      `${job.reason ? ` (${job.reason})` : ""} — launching now, ${waiting} waiting`
   );
   try {
     await startWhatsappSession(userId, {
-      awaitInitialize: true,
+      awaitInitialize: false,
       silentReconnect: job.silentReconnect !== false,
       force: true,
     });
@@ -1152,15 +1177,6 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
   }
   if (whatsappReconnectActiveUserId === cleanUserId) return;
   if (whatsappReconnectQueuedIds.has(cleanUserId)) return;
-  // During the boot pass, each account gets one queued try. Failed accounts
-  // are retried later by the health check so the queue can move to the next.
-  if (whatsappBootRestoreActive) {
-    logEvent("whatsapp", "deferring silent reconnect during boot queue", {
-      userId: cleanUserId,
-      reason: String(reason || ""),
-    });
-    return;
-  }
   const exhausted = state.reconnectAttempts >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS;
   if (exhausted) {
     logEvent("whatsapp", "silent reconnect exhausted; showing QR", {
@@ -1821,7 +1837,7 @@ async function initializeWhatsappSessionsOnStartup() {
     }
 
     console.log(
-      `WhatsApp: queuing ${userIds.length} saved session(s) for sequential reconnect (one account at a time)...`
+      `WhatsApp: reconnecting ${userIds.length} saved session(s) immediately after restart...`
     );
     for (const userId of userIds) {
       enqueueWhatsappReconnect(userId, {
@@ -1830,10 +1846,22 @@ async function initializeWhatsappSessionsOnStartup() {
         force: true,
       });
     }
-    await waitForWhatsappReconnectQueueIdle();
+    await syncBranchWhatsappMessengersFromSessions();
+    void logWhatsappBootReconnectResults(userIds);
+  } catch (error) {
+    console.error("Failed to initialize WhatsApp sessions on startup:", error);
+  } finally {
+    whatsappBootRestoreActive = false;
+  }
+}
 
+async function logWhatsappBootReconnectResults(userIds) {
+  const ids = Array.isArray(userIds) ? userIds : [];
+  if (!ids.length) return;
+  try {
+    await waitForWhatsappReconnectQueueIdle();
     const results = await Promise.all(
-      userIds.map(async (userId) => {
+      ids.map(async (userId) => {
         const status = await waitForStartupWhatsappSession(userId);
         if (status === "connected") {
           console.log(`WhatsApp: restored ${userId}`);
@@ -1845,35 +1873,23 @@ async function initializeWhatsappSessionsOnStartup() {
           console.warn(
             `WhatsApp: ${userId} is ${status} after restart — retrying saved session in the background`
           );
+          if (!isWhatsappReconnectJobPending(userId)) {
+            enqueueWhatsappReconnect(userId, {
+              reason: "boot-followup",
+              silentReconnect: true,
+              force: true,
+            });
+          }
         }
         return { userId, status };
       })
     );
-
     const connectedCount = results.filter((row) => row.status === "connected").length;
     console.log(
-      `WhatsApp: ${connectedCount}/${userIds.length} saved session(s) connected after boot.`
+      `WhatsApp: ${connectedCount}/${ids.length} saved session(s) connected after boot.`
     );
-    await syncBranchWhatsappMessengersFromSessions();
   } catch (error) {
-    console.error("Failed to initialize WhatsApp sessions on startup:", error);
-  } finally {
-    whatsappBootRestoreActive = false;
-  }
-
-  for (const userId of userIds) {
-    const state = ensureWhatsappState(userId);
-    if (state.manualStop) continue;
-    const status = String(state.status || "");
-    if (status === "connected" || status === "authenticated" || status === "awaiting_qr_scan") {
-      continue;
-    }
-    if (state.initializing || isWhatsappReconnectJobPending(userId)) continue;
-    enqueueWhatsappReconnect(userId, {
-      reason: "boot-followup",
-      silentReconnect: true,
-      force: true,
-    });
+    console.error("WhatsApp boot reconnect progress logging failed:", error);
   }
 }
 

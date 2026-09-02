@@ -173,18 +173,19 @@ server.listen(PORT, HOST, async () => {
   const mode = IS_PRODUCTION ? "production" : "development";
   console.log(`Backend listening at http://${HOST}:${PORT} (${mode})`);
   await logDataStoreStatus();
-  if (WARM_JSON_CACHE_ON_START) {
-    await warmJsonCache().catch((error) => {
-      console.warn("JSON cache warm-up failed:", error.message);
-    });
-  }
-  console.log("WhatsApp: queuing previously connected accounts for sequential reconnect...");
-  await initializeWhatsappSessionsOnStartup();
+  console.log("WhatsApp: reconnecting previously connected accounts now...");
+  const whatsappBoot = initializeWhatsappSessionsOnStartup();
+  const cacheWarm = WARM_JSON_CACHE_ON_START
+    ? warmJsonCache().catch((error) => {
+        console.warn("JSON cache warm-up failed:", error.message);
+      })
+    : Promise.resolve();
+  await Promise.all([whatsappBoot, cacheWarm]);
   const bootFollowUp = setTimeout(() => {
     restartActiveWhatsappSessions().catch((error) => {
       console.error("WhatsApp session health check failed:", error);
     });
-  }, 60_000);
+  }, 8_000);
   if (typeof bootFollowUp.unref === "function") bootFollowUp.unref();
   setInterval(() => {
     restartActiveWhatsappSessions().catch((error) => {
