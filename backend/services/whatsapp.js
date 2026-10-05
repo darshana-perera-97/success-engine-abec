@@ -780,7 +780,7 @@ function markWhatsappInitializeFailed(state, userId, error) {
   state.initializing = false;
   state.status = "error";
   state.readyAt = 0;
-  state.error = String(error?.message || "Failed to initialize WhatsApp client.");
+  state.error = describeWhatsappInitError(error);
   state.lastUpdatedAt = new Date().toISOString();
   const staleClient = state.client;
   state.client = null;
@@ -947,35 +947,113 @@ async function forgetRestorableWhatsappSession(userId) {
   await writeRestorableWhatsappSessions(current);
 }
 
+function readProcessCommandLine(pid) {
+  if (process.platform === "linux") {
+    try {
+      return fsSync
+        .readFileSync(`/proc/${pid}/cmdline`)
+        .toString("utf8")
+        .replace(/\0/g, " ")
+        .trim();
+    } catch {
+      return "";
+    }
+  }
+  try {
+    return String(
+      execFileSync("ps", ["-p", String(pid), "-ww", "-o", "command="], {
+        encoding: "utf8",
+      })
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+function commandUsesBrowserProfile(command, profileDir) {
+  if (!command || !profileDir || !command.includes(profileDir)) return false;
+  return /(chrom(e|ium)|headless)/i.test(command);
+}
+
+function processCommLooksLikeBrowser(pid) {
+  if (process.platform !== "linux") return false;
+  try {
+    const comm = fsSync.readFileSync(`/proc/${pid}/comm`, "utf8").trim().toLowerCase();
+    return comm.includes("chrom");
+  } catch {
+    return false;
+  }
+}
+
+// Chrome's Linux profile lock is a symlink whose target ends in "-<pid>".
+function readSingletonLockPid(profileDir) {
+  try {
+    const target = fsSync.readlinkSync(path.join(profileDir, "SingletonLock"));
+    const match = String(target || "").match(/-(\d+)$/);
+    if (!match) return 0;
+    const pid = Number.parseInt(match[1], 10);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return 0;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return 0;
+    }
+    return pid;
+  } catch {
+    return 0;
+  }
+}
+
 function listBrowserProcessIdsForProfile(profileDir) {
   if (!profileDir) return [];
-  try {
-    const output = String(
-      execFileSync("ps", ["-ax", "-o", "pid=", "-o", "command="], {
-        encoding: "utf8",
-      }) || ""
-    );
-    return output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(.*)$/);
-        if (!match) return null;
-        const pid = Number.parseInt(match[1], 10);
-        const command = match[2] || "";
-        if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
-          return null;
-        }
-        const usesProfileDir = command.includes(profileDir);
-        const isBrowserProcess = /(chrom(e|ium)|headless)/i.test(command);
-        if (!usesProfileDir || !isBrowserProcess) return null;
-        return pid;
-      })
-      .filter((pid) => Number.isInteger(pid));
-  } catch {
-    return [];
+  const pids = new Set();
+  const consider = (pid, command) => {
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return;
+    if (!commandUsesBrowserProfile(command, profileDir)) return;
+    pids.add(pid);
+  };
+
+  // `ps` without -ww truncates Chrome's long command line, so --user-data-dir
+  // is missing and a live browser looks like it is not running.
+  if (process.platform === "linux") {
+    let entries = [];
+    try {
+      entries = fsSync.readdirSync("/proc");
+    } catch {
+      entries = [];
+    }
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      const pid = Number.parseInt(entry, 10);
+      consider(pid, readProcessCommandLine(pid));
+    }
+  } else {
+    try {
+      const output = String(
+        execFileSync("ps", ["-axww", "-o", "pid=", "-o", "command="], {
+          encoding: "utf8",
+          env: { ...process.env, COLUMNS: "100000" },
+        }) || ""
+      );
+      for (const line of output.split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+        if (!match) continue;
+        consider(Number.parseInt(match[1], 10), match[2] || "");
+      }
+    } catch {
+      // ps unavailable.
+    }
   }
+
+  const lockPid = readSingletonLockPid(profileDir);
+  if (lockPid && !pids.has(lockPid)) {
+    const command = readProcessCommandLine(lockPid);
+    if (commandUsesBrowserProfile(command, profileDir) || (!command && processCommLooksLikeBrowser(lockPid))) {
+      pids.add(lockPid);
+    }
+  }
+
+  return [...pids];
 }
 
 async function terminateBrowserProcessesUsingProfile(profileDir) {
@@ -984,6 +1062,10 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
     await removeStaleBrowserLockFiles(profileDir);
     return false;
   }
+  logEvent("whatsapp", "stopping leftover browser for session profile", {
+    profileDir,
+    pids: initialPids,
+  });
   for (const pid of initialPids) {
     try {
       process.kill(pid, "SIGTERM");
@@ -1321,6 +1403,12 @@ async function startWhatsappSession(
   }
   const state = ensureWhatsappState(cleanUserId);
   if (!force && initAttempt === 1 && isWhatsappSessionBusy(state)) {
+    return snapshotWhatsappState(cleanUserId);
+  }
+  // client.initialize() launches Chrome after this function returns when
+  // awaitInitialize is false. A second launch for the same profile hits
+  // "The browser is already running".
+  if (initAttempt === 1 && state.initializing && state.client) {
     return snapshotWhatsappState(cleanUserId);
   }
   state.manualStop = false;
@@ -1947,9 +2035,19 @@ function isWhatsappPuppeteerStaleSessionError(error) {
     msg.includes("getresponsebody") ||
     msg.includes("no data found for resource") ||
     msg.includes("runtime.addbinding") ||
+    msg.includes("browser is already running") ||
+    msg.includes("processsingleton") ||
     isWhatsappPageBindingExistsError(error) ||
     (msg.includes("protocol error") && msg.includes("target"))
   );
+}
+
+function describeWhatsappInitError(error) {
+  const msg = String(error?.message || error || "").trim();
+  if (/browser is already running/i.test(msg)) {
+    return "WhatsApp browser is already open for this account. Stop the other server copy using this session, then connect again.";
+  }
+  return msg || "Failed to initialize WhatsApp client.";
 }
 
 async function waitForWhatsappSessionConnected(userId, timeoutMs = 120000) {
