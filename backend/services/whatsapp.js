@@ -88,6 +88,7 @@ const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_QR_GRACE_MS = 12 * 1000;
+const WHATSAPP_SILENT_RESTORE_MAX_MS = 15 * 1000;
 const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
 const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 500;
 const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
@@ -1130,6 +1131,9 @@ function ensureWhatsappState(userId) {
     retryAfterCurrentTry: false,
     lastQr: "",
     silentQrFallbackTimer: null,
+    silentRestoreStartedAt: 0,
+    silentRestoreDeadlineTimer: null,
+    requireVisibleQr: false,
     healthFailStreak: 0,
     lastHealth: null,
   };
@@ -1155,10 +1159,24 @@ function clearSilentQrFallbackTimer(state) {
   state.silentQrFallbackTimer = null;
 }
 
+function clearSilentRestoreDeadline(state) {
+  if (!state || !state.silentRestoreDeadlineTimer) return;
+  clearTimeout(state.silentRestoreDeadlineTimer);
+  state.silentRestoreDeadlineTimer = null;
+}
+
+function clearSilentRestoreBudget(state) {
+  if (!state) return;
+  clearSilentRestoreDeadline(state);
+  state.silentRestoreStartedAt = 0;
+  state.requireVisibleQr = false;
+}
+
 async function applyWhatsappQrCode(state, qr) {
   const payload = String(qr || state?.lastQr || "").trim();
   if (!state || !payload) return false;
   clearSilentQrFallbackTimer(state);
+  clearSilentRestoreBudget(state);
   state.silentReconnect = false;
   state.sawQrDuringSilentRestore = false;
   state.lastQr = payload;
@@ -1195,6 +1213,7 @@ async function revealSilentRestoreQr(state, client, userId) {
   logEvent("whatsapp", "saved session needs QR scan", { userId: String(userId || "").trim() });
   const shown = await applyWhatsappQrCode(state, state.lastQr);
   if (shown) return;
+  state.requireVisibleQr = true;
   state.silentReconnect = false;
   if (!state.manualStop && !isWhatsappShuttingDown) {
     enqueueWhatsappReconnect(String(userId || "").trim(), {
@@ -1202,6 +1221,61 @@ async function revealSilentRestoreQr(state, client, userId) {
       silentReconnect: false,
       force: true,
     });
+  }
+}
+
+function scheduleSilentRestoreDeadline(state, client, userId) {
+  if (!state) return;
+  clearSilentRestoreDeadline(state);
+  if (!state.silentRestoreStartedAt) state.silentRestoreStartedAt = Date.now();
+  const remaining = Math.max(0, WHATSAPP_SILENT_RESTORE_MAX_MS - (Date.now() - state.silentRestoreStartedAt));
+  state.silentRestoreDeadlineTimer = setTimeout(() => {
+    state.silentRestoreDeadlineTimer = null;
+    void forceQrAfterSilentRestoreTimeout(state, client, userId);
+  }, remaining);
+  if (typeof state.silentRestoreDeadlineTimer.unref === "function") {
+    state.silentRestoreDeadlineTimer.unref();
+  }
+}
+
+async function forceQrAfterSilentRestoreTimeout(state, client, userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!isCurrentWhatsappClient(state, client)) return;
+  if (state.manualStop || isWhatsappShuttingDown) return;
+  if (
+    state.status === "connected" ||
+    state.status === "authenticated" ||
+    state.status === "awaiting_qr_scan"
+  ) {
+    return;
+  }
+  logEvent("whatsapp", "silent restore timed out; showing QR", { userId: cleanUserId });
+  state.requireVisibleQr = true;
+  state.silentReconnect = false;
+  if (state.lastQr) {
+    const shown = await applyWhatsappQrCode(state, state.lastQr);
+    if (shown) return;
+  }
+  if (!cleanUserId || state.manualStop || isWhatsappShuttingDown) return;
+  const blocked =
+    whatsappReconnectActiveUserId === cleanUserId || whatsappReconnectQueuedIds.has(cleanUserId);
+  clearWhatsappReconnectTimer(state);
+  state.status = "connecting";
+  state.error = "Saved session could not be restored. Scan the QR code to reconnect.";
+  state.lastUpdatedAt = new Date().toISOString();
+  enqueueWhatsappReconnect(cleanUserId, {
+    reason: "silent-restore-timeout",
+    silentReconnect: false,
+    force: true,
+  });
+  if (!blocked) return;
+  if (state.silentRestoreDeadlineTimer) return;
+  state.silentRestoreDeadlineTimer = setTimeout(() => {
+    state.silentRestoreDeadlineTimer = null;
+    void forceQrAfterSilentRestoreTimeout(state, client, cleanUserId);
+  }, 1000);
+  if (typeof state.silentRestoreDeadlineTimer.unref === "function") {
+    state.silentRestoreDeadlineTimer.unref();
   }
 }
 
@@ -1443,17 +1517,31 @@ async function startWhatsappSession(
     state.recovering = false;
     throw error;
   }
+  const requestedSilent = silentReconnect === true;
+  let restoreSilently = requestedSilent && !state.requireVisibleQr;
+  if (requestedSilent) {
+    if (!state.silentRestoreStartedAt) state.silentRestoreStartedAt = Date.now();
+    if (Date.now() - state.silentRestoreStartedAt >= WHATSAPP_SILENT_RESTORE_MAX_MS) {
+      restoreSilently = false;
+      state.requireVisibleQr = true;
+      logEvent("whatsapp", "silent restore timed out; showing QR", { userId: cleanUserId });
+    }
+  } else {
+    clearSilentRestoreBudget(state);
+  }
   state.sessionGeneration = Number(state.sessionGeneration || 0) + 1;
   state.client = client;
   state.recovering = false;
-  state.silentReconnect = silentReconnect === true;
+  state.silentReconnect = restoreSilently;
   state.sawQrDuringSilentRestore = false;
   state.retryAfterCurrentTry = false;
-  state.status = silentReconnect ? "reconnecting" : "connecting";
+  state.status = restoreSilently ? "reconnecting" : "connecting";
   state.qrCodeDataUrl = "";
-  state.error = "";
+  state.error = state.requireVisibleQr
+    ? "Saved session could not be restored. Scan the QR code to reconnect."
+    : "";
   state.readyAt = 0;
-  if (!silentReconnect) {
+  if (!requestedSilent) {
     state.connectedAt = "";
     state.whatsappName = "";
     state.whatsappNumber = "";
@@ -1462,14 +1550,18 @@ async function startWhatsappSession(
   }
   state.authTimedOut = false;
   clearWhatsappAuthenticatedTimeout(state);
+  clearSilentRestoreDeadline(state);
   state.lastUpdatedAt = new Date().toISOString();
+  if (restoreSilently) {
+    scheduleSilentRestoreDeadline(state, client, cleanUserId);
+  }
 
   client.on("qr", async (qr) => {
     if (!isCurrentWhatsappClient(state, client)) return;
     state.lastQr = String(qr || "");
     // A WhatsApp Web reload after send can briefly look unpaired and emit a QR
     // even though the saved session is still valid. Keep the connected UI.
-    if (state.silentReconnect || state.status === "connected") {
+    if (state.status === "connected" || (state.silentReconnect && !state.requireVisibleQr)) {
       logEvent(
         "whatsapp",
         state.status === "connected"
@@ -1528,6 +1620,7 @@ async function startWhatsappSession(
     state.initializing = false;
     state.qrCodeDataUrl = "";
     state.error = "";
+    clearSilentRestoreBudget(state);
     state.readyAt = Date.now();
     state.connectedAt = new Date().toISOString();
     state.whatsappName = String(info.pushname || info.platform || "WhatsApp User");
@@ -1640,7 +1733,14 @@ async function startWhatsappSession(
     state.readyAt = 0;
     state.error = "";
     state.lastUpdatedAt = new Date().toISOString();
-    scheduleSilentWhatsappReconnect(cleanUserId, { reason: reasonText || "disconnected" });
+    if (!state.requireVisibleQr && (state.sawQrDuringSilentRestore || state.lastQr)) {
+      scheduleSilentQrFallback(state, client, cleanUserId);
+      return;
+    }
+    scheduleSilentWhatsappReconnect(cleanUserId, {
+      reason: reasonText || "disconnected",
+      force: true,
+    });
   });
 
   const handleIncomingMessage = async (message) => {
@@ -1691,7 +1791,7 @@ async function startWhatsappSession(
         return startWhatsappSession(cleanUserId, {
           awaitInitialize,
           initAttempt: initAttempt + 1,
-          silentReconnect,
+          silentReconnect: restoreSilently,
           alreadyLocked: true,
           force: true,
         });
@@ -1991,6 +2091,7 @@ async function shutdownWhatsappSessions() {
     state.manualStop = true;
     clearWhatsappAuthenticatedTimeout(state);
     clearWhatsappReconnectTimer(state);
+    clearSilentRestoreDeadline(state);
     if (!state.client) continue;
     try {
       await state.client.destroy();
