@@ -128,6 +128,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const reconnectStartedAtRef = useRef(0);
   const forcedQrRef = useRef(false);
   const handleRegenerateQrRef = useRef(async () => {});
+  const preferQrUntilRef = useRef(0);
   const userId = String(currentUser?.id || "").trim();
   const isAdmin = String(currentUser?.role || "").trim() === "Admin";
   const showAdminBranchOverview = isAdmin && branchWhatsappEnabled === true;
@@ -197,6 +198,19 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
       return;
     }
     statusFailureCountRef.current = 0;
+    const nextStatus = String(response.data?.status || "");
+    const nextQr = String(response.data?.qrCodeDataUrl || "");
+    if (
+      preferQrUntilRef.current &&
+      Date.now() < preferQrUntilRef.current &&
+      !nextQr &&
+      (nextStatus === "reconnecting" || nextStatus === "connecting")
+    ) {
+      return;
+    }
+    if (nextQr || nextStatus === "connected" || nextStatus === "authenticated" || nextStatus === "disconnected") {
+      preferQrUntilRef.current = 0;
+    }
     setActionError("");
     setState(response.data);
     setContext({ ...defaultContext, ...(response.context || {}) });
@@ -335,9 +349,48 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
       setActionError(response.error || "Failed to disconnect WhatsApp.");
       return;
     }
+    preferQrUntilRef.current = 0;
     setState(response.data);
     if (response.context) {
       setContext({ ...defaultContext, ...response.context });
+    }
+  };
+
+  const handleDisconnectToQr = async () => {
+    if (!userId || !canShowQrCode || isSessionReady || isLinkingWhatsapp) return;
+    forcedQrRef.current = true;
+    preferQrUntilRef.current = Date.now() + 90 * 1000;
+    reconnectStartedAtRef.current = 0;
+    setReconnectWaitMs(0);
+    setLoading(true);
+    setActionError("");
+    setState((prev) =>
+      prev ? { ...prev, status: "connecting", qrCodeDataUrl: "", error: "" } : { status: "connecting", qrCodeDataUrl: "" }
+    );
+    const disconnected = await disconnectWhatsapp(userId);
+    if (!disconnected.ok) {
+      preferQrUntilRef.current = 0;
+      setLoading(false);
+      setActionError(disconnected.error || "Failed to disconnect WhatsApp.");
+      return;
+    }
+    const connected = await connectWhatsapp(userId);
+    setLoading(false);
+    if (!connected.ok) {
+      preferQrUntilRef.current = 0;
+      setActionError(connected.error || "Failed to start WhatsApp connection.");
+      if (disconnected.data) setState(disconnected.data);
+      return;
+    }
+    const next = connected.data || {};
+    if (next.qrCodeDataUrl) {
+      preferQrUntilRef.current = 0;
+      setState(next);
+    } else {
+      setState({ ...next, status: next.status === "reconnecting" ? "connecting" : next.status || "connecting", qrCodeDataUrl: "" });
+    }
+    if (connected.context) {
+      setContext({ ...defaultContext, ...connected.context });
     }
   };
 
@@ -574,6 +627,16 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                 Disconnect
               </button>
             ) : null}
+            {canShowQrCode && isReconnecting ? (
+              <button
+                type="button"
+                onClick={handleDisconnectToQr}
+                disabled={loading}
+                className="px-4 py-2 text-sm rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                {loading ? "Disconnecting..." : "Disconnect"}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -627,10 +690,22 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                 ) : null}
               </div>
             ) : isReconnecting && !reconnectTakingLong ? (
-              <IntegrationSpinner
-                title="Reconnecting WhatsApp"
-                description="Restoring your saved session. This usually takes a few seconds."
-              />
+              <div className="h-full flex flex-col items-center justify-center gap-4">
+                <IntegrationSpinner
+                  title="Reconnecting WhatsApp"
+                  description="Restoring your saved session. This usually takes a few seconds."
+                />
+                {canShowQrCode ? (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectToQr}
+                    disabled={loading}
+                    className="px-3 py-2 text-sm rounded-md border border-slate-200 text-slate-700 hover:bg-white disabled:opacity-60"
+                  >
+                    {loading ? "Disconnecting..." : "Disconnect"}
+                  </button>
+                ) : null}
+              </div>
             ) : isBranchSetupInProgress ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
                 <IntegrationSpinner
@@ -648,7 +723,17 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                       : "Starting WhatsApp and preparing your scan code."
                   }
                 />
-                {canRegenerateQr ? (
+                {canShowQrCode && isReconnecting ? (
+                  <button
+                    type="button"
+                    onClick={handleDisconnectToQr}
+                    disabled={loading}
+                    className="px-3 py-2 text-sm rounded-md border border-slate-200 text-slate-700 hover:bg-white disabled:opacity-60"
+                  >
+                    {loading ? "Disconnecting..." : "Disconnect"}
+                  </button>
+                ) : null}
+                {canRegenerateQr && !isReconnecting ? (
                   <button
                     type="button"
                     onClick={handleRegenerateQr}
