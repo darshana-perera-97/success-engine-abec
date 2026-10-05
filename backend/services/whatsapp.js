@@ -988,9 +988,27 @@ function readProcessCommandLine(pid) {
   }
 }
 
+function profileDirLookupKeys(profileDir) {
+  const keys = new Set();
+  const add = (value) => {
+    const text = String(value || "").trim();
+    if (text) keys.add(text);
+  };
+  add(profileDir);
+  const resolved = path.resolve(String(profileDir || ""));
+  add(resolved);
+  try {
+    add(fsSync.realpathSync(resolved));
+  } catch {
+    // Profile directory may not exist yet.
+  }
+  return [...keys];
+}
+
 function commandUsesBrowserProfile(command, profileDir) {
-  if (!command || !profileDir || !command.includes(profileDir)) return false;
-  return /(chrom(e|ium)|headless)/i.test(command);
+  if (!command || !profileDir) return false;
+  if (!/(chrom(e|ium)|headless)/i.test(command)) return false;
+  return profileDirLookupKeys(profileDir).some((dir) => command.includes(dir));
 }
 
 function processCommLooksLikeBrowser(pid) {
@@ -1066,7 +1084,14 @@ function listBrowserProcessIdsForProfile(profileDir) {
   const lockPid = readSingletonLockPid(profileDir);
   if (lockPid && !pids.has(lockPid)) {
     const command = readProcessCommandLine(lockPid);
-    if (commandUsesBrowserProfile(command, profileDir) || (!command && processCommLooksLikeBrowser(lockPid))) {
+    // SingletonLock lives inside this profile, so its pid owns the session
+    // even when the Chrome command line does not contain the full path.
+    if (
+      commandUsesBrowserProfile(command, profileDir) ||
+      processCommLooksLikeBrowser(lockPid) ||
+      /chrom(e|ium)|headless/i.test(command) ||
+      !command
+    ) {
       pids.add(lockPid);
     }
   }
@@ -1104,8 +1129,23 @@ async function terminateBrowserProcessesUsingProfile(profileDir) {
       // Process may already be gone.
     }
   }
+  await delay(300);
   await removeStaleBrowserLockFiles(profileDir);
   return true;
+}
+
+function killWhatsappClientBrowser(client) {
+  if (!client) return;
+  client.__seIgnoreNextDestroy = false;
+  const browser = client.pupBrowser;
+  const pid = typeof browser?.process === "function" ? browser.process()?.pid : 0;
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Browser process may already have exited.
+    }
+  }
 }
 
 async function removeStaleBrowserLockFiles(profileDir) {
@@ -1517,12 +1557,14 @@ async function startWhatsappSession(
   state.lastQr = "";
   const hadClient = Boolean(state.client);
   if (state.client) {
+    const previousClient = state.client;
+    state.client = null;
+    killWhatsappClientBrowser(previousClient);
     try {
-      await state.client.destroy();
+      await previousClient.destroy();
     } catch {
       // Ignore cleanup failure and allow creating a fresh session.
     }
-    state.client = null;
   }
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   const killedOrphaned = await terminateBrowserProcessesUsingProfile(sessionDataDir);
@@ -1809,12 +1851,14 @@ async function startWhatsappSession(
         console.warn(
           `WhatsApp init retry ${initAttempt}/${WHATSAPP_INIT_MAX_ATTEMPTS - 1} for ${cleanUserId}: ${String(error?.message || error)}`
         );
+        killWhatsappClientBrowser(client);
         try {
           await client.destroy();
         } catch {
           // Client may already be partially torn down.
         }
         state.client = null;
+        await terminateBrowserProcessesUsingProfile(resolveWhatsappSessionDataDir(cleanUserId));
         await delay(1500 * initAttempt);
         return startWhatsappSession(cleanUserId, {
           awaitInitialize,
