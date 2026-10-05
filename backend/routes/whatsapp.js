@@ -131,7 +131,10 @@ async function handle(req, res, url) {
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
       const sessionUserId = String(context.statusUserId || userId).trim() || userId;
-      const data = sanitizeWhatsappStatusForViewer(await startWhatsappSession(sessionUserId), context);
+      const data = sanitizeWhatsappStatusForViewer(
+        await startWhatsappSession(sessionUserId, { force: true, silentReconnect: false }),
+        context
+      );
       sendJson(res, 200, { ok: true, data, context });
     } catch (error) {
       console.error("Failed to start WhatsApp connection:", error);

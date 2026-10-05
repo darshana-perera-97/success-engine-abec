@@ -658,12 +658,25 @@ function isWhatsappReconnectJobPending(userId) {
   return whatsappReconnectActiveUserId === id || whatsappReconnectQueuedIds.has(id);
 }
 
+function dropQueuedWhatsappReconnects(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return;
+  for (let index = whatsappReconnectQueue.length - 1; index >= 0; index -= 1) {
+    if (String(whatsappReconnectQueue[index]?.userId || "") === id) {
+      whatsappReconnectQueue.splice(index, 1);
+    }
+  }
+  whatsappReconnectQueuedIds.delete(id);
+}
+
 function enqueueWhatsappReconnect(
   userId,
   { reason = "", silentReconnect = true, force = false } = {}
 ) {
   const id = String(userId || "").trim();
   if (!id || isWhatsappShuttingDown) return;
+  const live = ensureWhatsappState(id);
+  if (live.userRequestedQr && silentReconnect !== false) return;
   if (whatsappReconnectActiveUserId === id) return;
   if (whatsappReconnectQueuedIds.has(id)) return;
   whatsappReconnectQueuedIds.add(id);
@@ -711,6 +724,10 @@ async function runQueuedWhatsappReconnect(job) {
   if (state.manualStop) {
     console.log(`WhatsApp: reconnect queue skip ${userId} (disconnected by user)`);
     return String(state.status || "disconnected");
+  }
+  if (state.userRequestedQr && job.silentReconnect !== false) {
+    console.log(`WhatsApp: reconnect queue skip ${userId} (waiting for QR scan)`);
+    return String(state.status || "connecting");
   }
   if (!job.force && state.status === "connected" && state.client && !state.initializing) {
     console.log(`WhatsApp: reconnect queue skip ${userId} (already connected)`);
@@ -1134,6 +1151,7 @@ function ensureWhatsappState(userId) {
     silentRestoreStartedAt: 0,
     silentRestoreDeadlineTimer: null,
     requireVisibleQr: false,
+    userRequestedQr: false,
     healthFailStreak: 0,
     lastHealth: null,
   };
@@ -1318,7 +1336,7 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
   const cleanUserId = String(userId || "").trim();
   if (!cleanUserId || isWhatsappShuttingDown) return;
   const state = ensureWhatsappState(cleanUserId);
-  if (state.manualStop) return;
+  if (state.manualStop || state.userRequestedQr) return;
   if (state.status === "awaiting_qr_scan") return;
   if (!force && state.initializing) return;
   if (!force && (state.status === "connected" || state.status === "authenticated")) {
@@ -1481,9 +1499,15 @@ async function startWhatsappSession(
   }
   // client.initialize() launches Chrome after this function returns when
   // awaitInitialize is false. A second launch for the same profile hits
-  // "The browser is already running".
-  if (initAttempt === 1 && state.initializing && state.client) {
+  // "The browser is already running". A forced start replaces that browser
+  // so a stuck restore cannot block a QR code.
+  if (!force && initAttempt === 1 && state.initializing && state.client) {
     return snapshotWhatsappState(cleanUserId);
+  }
+  if (force && silentReconnect !== true) {
+    state.userRequestedQr = true;
+    dropQueuedWhatsappReconnects(cleanUserId);
+    clearWhatsappReconnectTimer(state);
   }
   state.manualStop = false;
   state.recovering = true;
@@ -1517,7 +1541,7 @@ async function startWhatsappSession(
     state.recovering = false;
     throw error;
   }
-  const requestedSilent = silentReconnect === true;
+  const requestedSilent = silentReconnect === true && !state.userRequestedQr;
   let restoreSilently = requestedSilent && !state.requireVisibleQr;
   if (requestedSilent) {
     if (!state.silentRestoreStartedAt) state.silentRestoreStartedAt = Date.now();
@@ -1561,7 +1585,10 @@ async function startWhatsappSession(
     state.lastQr = String(qr || "");
     // A WhatsApp Web reload after send can briefly look unpaired and emit a QR
     // even though the saved session is still valid. Keep the connected UI.
-    if (state.status === "connected" || (state.silentReconnect && !state.requireVisibleQr)) {
+    if (
+      state.status === "connected" ||
+      (state.silentReconnect && !state.requireVisibleQr && !state.userRequestedQr)
+    ) {
       logEvent(
         "whatsapp",
         state.status === "connected"
@@ -1628,6 +1655,7 @@ async function startWhatsappSession(
     state.whatsappProfilePicUrl = profilePicUrl;
     state.authTimedOut = false;
     state.silentReconnect = false;
+    state.userRequestedQr = false;
     state.reconnectAttempts = 0;
     state.sawQrDuringSilentRestore = false;
     state.lastQr = "";
@@ -1817,7 +1845,9 @@ async function stopWhatsappSession(userId) {
   const state = ensureWhatsappState(cleanUserId);
   state.manualStop = true;
   state.silentReconnect = false;
+  state.userRequestedQr = false;
   state.reconnectAttempts = 0;
+  dropQueuedWhatsappReconnects(cleanUserId);
   state.initializing = false;
   clearWhatsappReconnectTimer(state);
   clearSilentQrFallbackTimer(state);
@@ -1894,9 +1924,11 @@ async function regenerateWhatsappQrCode(userId) {
   state.initializing = false;
   state.lastQr = "";
   state.lastUpdatedAt = new Date().toISOString();
+  state.userRequestedQr = true;
+  dropQueuedWhatsappReconnects(cleanUserId);
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   await terminateBrowserProcessesUsingProfile(sessionDataDir);
-  return startWhatsappSession(cleanUserId);
+  return startWhatsappSession(cleanUserId, { force: true, silentReconnect: false });
 }
 
 async function userHasSavedWhatsappSession(userId) {
