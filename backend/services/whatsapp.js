@@ -85,6 +85,7 @@ const AUTHENTICATED_STUCK_TIMEOUT_MS = 45 * 1000;
 const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_PROFILE_PIC_TIMEOUT_MS = 8 * 1000;
 const WHATSAPP_READY_PROMOTION_INTERVAL_MS = 2 * 1000;
+const WHATSAPP_QR_DEADLINE_MS = 40 * 1000;
 const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 3;
@@ -200,7 +201,7 @@ function buildWhatsappClientOptions(cleanUserId, webVersion) {
       dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
     }),
     webVersion,
-    authTimeoutMs: 180000,
+    authTimeoutMs: 45000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 15000,
     bypassCSP: true,
@@ -1178,6 +1179,8 @@ function ensureWhatsappState(userId) {
     client: null,
     authenticatedTimeout: null,
     readyPromotionTimer: null,
+    qrDeadlineTimer: null,
+    qrRecoveryInFlight: false,
     authTimedOut: false,
     manualStop: false,
     recovering: false,
@@ -1195,6 +1198,7 @@ function ensureWhatsappState(userId) {
     silentRestoreDeadlineTimer: null,
     requireVisibleQr: false,
     userRequestedQr: false,
+    lastPageRestoreAt: 0,
     healthFailStreak: 0,
     lastHealth: null,
   };
@@ -1240,9 +1244,74 @@ function clearSilentRestoreBudget(state) {
   state.requireVisibleQr = false;
 }
 
+function clearWhatsappQrDeadline(state) {
+  if (!state?.qrDeadlineTimer) return;
+  clearTimeout(state.qrDeadlineTimer);
+  state.qrDeadlineTimer = null;
+}
+
+function scheduleWhatsappQrDeadline(state, client, userId, initAttempt) {
+  clearWhatsappQrDeadline(state);
+  if (!state || state.silentReconnect) return;
+  const generation = Number(state.sessionGeneration || 0);
+  state.qrDeadlineTimer = setTimeout(() => {
+    state.qrDeadlineTimer = null;
+    if (Number(state.sessionGeneration || 0) !== generation) return;
+    void recoverStuckWhatsappQr(state, client, userId, initAttempt);
+  }, WHATSAPP_QR_DEADLINE_MS);
+  if (typeof state.qrDeadlineTimer.unref === "function") {
+    state.qrDeadlineTimer.unref();
+  }
+}
+
+async function recoverStuckWhatsappQr(state, client, userId, initAttempt) {
+  const cleanUserId = String(userId || "").trim();
+  if (state?.qrRecoveryInFlight) return;
+  if (!isCurrentWhatsappClient(state, client)) return;
+  if (state.manualStop || isWhatsappShuttingDown) return;
+  if (state.qrCodeDataUrl || state.lastQr) return;
+  if (state.status !== "connecting") return;
+  state.qrRecoveryInFlight = true;
+  clearWhatsappQrDeadline(state);
+  const attempt = Number(initAttempt) || 1;
+  logEvent("whatsapp", "qr code did not appear; restarting browser", {
+    userId: cleanUserId,
+    attempt,
+  });
+  if (attempt >= WHATSAPP_INIT_MAX_ATTEMPTS) {
+    killWhatsappClientBrowser(client);
+    state.client = null;
+    state.initializing = false;
+    state.qrRecoveryInFlight = false;
+    state.status = "error";
+    state.error = "WhatsApp took too long to prepare a QR code. Please try again.";
+    state.lastUpdatedAt = new Date().toISOString();
+    try {
+      await client.destroy();
+    } catch {
+      // Browser may already be gone.
+    }
+    return;
+  }
+  try {
+    await startWhatsappSession(cleanUserId, {
+      initAttempt: attempt + 1,
+      silentReconnect: false,
+      force: true,
+    });
+  } catch (error) {
+    if (!state.client || state.client === client) {
+      markWhatsappInitializeFailed(state, cleanUserId, error);
+    }
+  } finally {
+    state.qrRecoveryInFlight = false;
+  }
+}
+
 async function applyWhatsappQrCode(state, qr) {
   const payload = String(qr || state?.lastQr || "").trim();
   if (!state || !payload) return false;
+  clearWhatsappQrDeadline(state);
   clearSilentQrFallbackTimer(state);
   clearSilentRestoreBudget(state);
   state.silentReconnect = false;
@@ -1664,6 +1733,7 @@ async function startWhatsappSession(
     silentReconnect = false,
     alreadyLocked = false,
     force = false,
+    freshAuth = false,
   } = {}
 ) {
   const cleanUserId = String(userId || "").trim();
@@ -1676,6 +1746,7 @@ async function startWhatsappSession(
         silentReconnect,
         alreadyLocked: true,
         force,
+        freshAuth,
       })
     );
   }
@@ -1714,6 +1785,15 @@ async function startWhatsappSession(
   }
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   const killedOrphaned = await terminateBrowserProcessesUsingProfile(sessionDataDir);
+  if (freshAuth) {
+    await removeSavedWhatsappAuth(cleanUserId);
+    state.whatsappName = "";
+    state.whatsappNumber = "";
+    state.whatsappProfilePicUrl = "";
+    state.connectedAt = "";
+    state.userRequestedQr = true;
+    state.requireVisibleQr = true;
+  }
   if (hadClient || initAttempt > 1) {
     await delay(WHATSAPP_BROWSER_RESTART_PAUSE_MS);
   } else if (killedOrphaned) {
@@ -1761,11 +1841,15 @@ async function startWhatsappSession(
     state.reconnectAttempts = 0;
   }
   state.authTimedOut = false;
+  state.qrRecoveryInFlight = false;
   clearWhatsappAuthenticatedTimeout(state);
+  clearWhatsappQrDeadline(state);
   clearSilentRestoreDeadline(state);
   state.lastUpdatedAt = new Date().toISOString();
   if (restoreSilently) {
     scheduleSilentRestoreDeadline(state, client, cleanUserId);
+  } else {
+    scheduleWhatsappQrDeadline(state, client, cleanUserId, initAttempt);
   }
 
   client.on("qr", async (qr) => {
@@ -1939,8 +2023,13 @@ async function startWhatsappSession(
     .then(async () => {
       if (!isCurrentWhatsappClient(state, client) && !state.sawQrDuringSilentRestore) return;
       if (state.status === "connected" || state.status === "authenticated") return;
+      if (state.qrCodeDataUrl || state.status === "awaiting_qr_scan") return;
       if (state.sawQrDuringSilentRestore) {
         scheduleSilentQrFallback(state, client, cleanUserId);
+        return;
+      }
+      if (state.status === "connecting" && !state.silentReconnect && !state.lastQr) {
+        await recoverStuckWhatsappQr(state, client, cleanUserId, initAttempt);
       }
     })
     .catch(async (error) => {
@@ -1966,6 +2055,7 @@ async function startWhatsappSession(
           silentReconnect: restoreSilently,
           alreadyLocked: true,
           force: true,
+          freshAuth,
         });
       }
       markWhatsappInitializeFailed(state, cleanUserId, error);
@@ -2004,6 +2094,7 @@ async function stopWhatsappSession(userId) {
     }
   }
   clearWhatsappAuthenticatedTimeout(state);
+  clearWhatsappQrDeadline(state);
   state.client = null;
   state.status = "disconnected";
   state.qrCodeDataUrl = "";
@@ -2072,7 +2163,70 @@ async function regenerateWhatsappQrCode(userId) {
   dropQueuedWhatsappReconnects(cleanUserId);
   const sessionDataDir = resolveWhatsappSessionDataDir(cleanUserId);
   await terminateBrowserProcessesUsingProfile(sessionDataDir);
-  return startWhatsappSession(cleanUserId, { force: true, silentReconnect: false });
+  return startWhatsappSession(cleanUserId, { force: true, silentReconnect: false, freshAuth: true });
+}
+
+async function removeSavedWhatsappAuth(userId) {
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) return;
+  const userConnectionDir = path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId));
+  await fs.rm(userConnectionDir, { recursive: true, force: true });
+  await forgetRestorableWhatsappSession(cleanUserId);
+}
+
+const WHATSAPP_PAGE_RESTORE_COOLDOWN_MS = 45 * 1000;
+
+async function describeSavedWhatsappSession(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return { available: false };
+  const hasFiles = await userHasSavedWhatsappSession(id);
+  if (!hasFiles) return { available: false };
+  const registry = (await readRestorableWhatsappSessions())[id] || {};
+  const state = ensureWhatsappState(id);
+  return {
+    available: true,
+    whatsappName: String(registry.whatsappName || state.whatsappName || "").trim(),
+    whatsappNumber: String(registry.whatsappNumber || state.whatsappNumber || "").trim(),
+    connectedAt: String(registry.connectedAt || state.connectedAt || "").trim(),
+  };
+}
+
+function maybeResumeSavedWhatsappSession(userId, savedSession) {
+  if (!savedSession?.available) return;
+  const id = String(userId || "").trim();
+  if (!id || isWhatsappShuttingDown) return;
+  const state = ensureWhatsappState(id);
+  if (state.manualStop || state.userRequestedQr) return;
+  const status = String(state.status || "disconnected");
+  if (
+    status === "connected" ||
+    status === "authenticated" ||
+    status === "connecting" ||
+    status === "reconnecting" ||
+    status === "awaiting_qr_scan"
+  ) {
+    return;
+  }
+  if (state.initializing || isWhatsappReconnectJobPending(id)) return;
+  const last = Number(state.lastPageRestoreAt || 0);
+  if (last && Date.now() - last < WHATSAPP_PAGE_RESTORE_COOLDOWN_MS) return;
+  state.lastPageRestoreAt = Date.now();
+  enqueueWhatsappReconnect(id, {
+    reason: "integration-page",
+    silentReconnect: true,
+    force: true,
+  });
+}
+
+async function readWhatsappIntegrationStatus(userId) {
+  const id = String(userId || "").trim();
+  await readRestorableWhatsappSessions();
+  hydrateWhatsappStateFromRegistrySync(id);
+  const savedSession = await describeSavedWhatsappSession(id);
+  maybeResumeSavedWhatsappSession(id, savedSession);
+  const data = snapshotWhatsappState(id);
+  data.savedSession = savedSession;
+  return data;
 }
 
 async function userHasSavedWhatsappSession(userId) {
@@ -2266,6 +2420,7 @@ async function shutdownWhatsappSessions() {
   for (const [, state] of whatsappSessions.entries()) {
     state.manualStop = true;
     clearWhatsappAuthenticatedTimeout(state);
+    clearWhatsappQrDeadline(state);
     clearWhatsappReconnectTimer(state);
     clearSilentRestoreDeadline(state);
     if (!state.client) continue;
@@ -4658,6 +4813,7 @@ module.exports = {
   sanitizeUserIdForPath,
   ensureWhatsappState,
   snapshotWhatsappState,
+  readWhatsappIntegrationStatus,
   summarizeWhatsappHealth,
   refreshWhatsappSessionHealth,
   startWhatsappSession,

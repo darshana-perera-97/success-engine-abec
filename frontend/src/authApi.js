@@ -1569,12 +1569,12 @@ export async function syncWhatsappHistory(userId, studentId = "") {
   }
 }
 
-export async function connectWhatsapp(userId) {
+export async function connectWhatsapp(userId, { fresh = false } = {}) {
   try {
     const res = await fetch(`${API_BASE}/api/whatsapp/connect`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId })
+      body: JSON.stringify({ userId, fresh: fresh === true })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.data) {

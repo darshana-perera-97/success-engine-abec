@@ -7,24 +7,27 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 let cachedLatestVersion = "";
 let cachedAt = 0;
+let whatsappWebVersionRefresh = null;
 
-function fetchJson(url) {
+function fetchJson(url, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
-    https
-      .get(url, { headers: { "User-Agent": "success-engine-whatsapp" } }, (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (error) {
-            reject(error);
-          }
-        });
-      })
-      .on("error", reject);
+    const req = https.get(url, { headers: { "User-Agent": "success-engine-whatsapp" } }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("WhatsApp web version request timed out."));
+    });
+    req.on("error", reject);
   });
 }
 
@@ -59,6 +62,24 @@ function invalidateWhatsappWebVersionCache() {
   cachedAt = 0;
 }
 
+function refreshWhatsappWebVersionInBackground() {
+  if (whatsappWebVersionRefresh) return whatsappWebVersionRefresh;
+  whatsappWebVersionRefresh = fetchLatestWhatsappWebVersion()
+    .then((latest) => {
+      cachedLatestVersion = latest;
+      cachedAt = Date.now();
+      return latest;
+    })
+    .catch((error) => {
+      console.warn("Failed to resolve latest WhatsApp web version; using configured fallback.", error);
+      return cachedLatestVersion || WHATSAPP_WEB_VERSION;
+    })
+    .finally(() => {
+      whatsappWebVersionRefresh = null;
+    });
+  return whatsappWebVersionRefresh;
+}
+
 async function resolveWhatsappWebVersion() {
   if (process.env.WHATSAPP_WEB_VERSION) {
     return String(process.env.WHATSAPP_WEB_VERSION).trim();
@@ -66,15 +87,11 @@ async function resolveWhatsappWebVersion() {
   if (cachedLatestVersion && Date.now() - cachedAt < CACHE_TTL_MS) {
     return cachedLatestVersion;
   }
-  try {
-    const latest = await fetchLatestWhatsappWebVersion();
-    cachedLatestVersion = latest;
-    cachedAt = Date.now();
-    return latest;
-  } catch (error) {
-    console.warn("Failed to resolve latest WhatsApp web version; using configured fallback.", error);
-    return WHATSAPP_WEB_VERSION;
-  }
+  // Do not block QR startup on the version lookup. Use the last known
+  // version now and refresh it in the background.
+  const fallback = cachedLatestVersion || WHATSAPP_WEB_VERSION;
+  void refreshWhatsappWebVersionInBackground();
+  return fallback;
 }
 
 module.exports = {

@@ -21,6 +21,42 @@ function IntegrationSpinner({ title, description }) {
   );
 }
 
+function PreviousWhatsappConnection({ savedSession, restoring, loading, onDestroy, onNewConnection }) {
+  if (!savedSession?.available) return null;
+  const name = String(savedSession.whatsappName || "").trim() || "WhatsApp User";
+  const number = String(savedSession.whatsappNumber || "").trim() || "Saved WhatsApp account";
+  return (
+    <div className="mb-4 w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-left">
+      <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Previous connection</p>
+      <p className="mt-1 text-sm font-semibold text-slate-900">{name}</p>
+      <p className="text-sm text-slate-500">{number}</p>
+      <p className="mt-1 text-xs text-slate-500">
+        {restoring
+          ? "This saved connection is being restored automatically."
+          : "A previously connected WhatsApp account is saved for this login."}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onDestroy}
+          disabled={loading}
+          className="px-3 py-2 text-sm rounded-md border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+        >
+          {loading ? "Removing..." : "Destroy previous connection"}
+        </button>
+        <button
+          type="button"
+          onClick={onNewConnection}
+          disabled={loading}
+          className="px-3 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+        >
+          {loading ? "Starting..." : "New connection"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const STATUS_COPY = {
   disconnected: "Disconnected",
   connecting: "Connecting",
@@ -124,10 +160,12 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const [branchAccountsLoading, setBranchAccountsLoading] = useState(false);
   const [reconnectWaitMs, setReconnectWaitMs] = useState(0);
   const [linkingWaitMs, setLinkingWaitMs] = useState(0);
+  const [connectingWaitMs, setConnectingWaitMs] = useState(0);
   const statusFailureCountRef = useRef(0);
   const autoReconnectInFlightRef = useRef(false);
   const reconnectStartedAtRef = useRef(0);
   const linkingStartedAtRef = useRef(0);
+  const connectingStartedAtRef = useRef(0);
   const forcedQrRef = useRef(false);
   const handleRegenerateQrRef = useRef(async () => {});
   const preferQrUntilRef = useRef(0);
@@ -156,6 +194,11 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const isLinkingWhatsapp = statusKey === "authenticated";
   const linkingTakingLong = isLinkingWhatsapp && linkingWaitMs >= 20000;
   const hasQrCode = canShowQrCode && Boolean(state?.qrCodeDataUrl);
+  const isConnectingForQr = statusKey === "connecting" && !hasQrCode;
+  const connectingTakingLong = isConnectingForQr && connectingWaitMs >= 20000;
+  const savedSession = state?.savedSession?.available ? state.savedSession : null;
+  const showPreviousConnection =
+    Boolean(savedSession) && canShowQrCode && !isSessionReady && !isLinkingWhatsapp && !hasQrCode;
   const isBranchSetupInProgress =
     branchMode &&
     !canManage &&
@@ -183,8 +226,8 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
     if (Number.isNaN(date.getTime())) return "-";
     return date.toLocaleString();
   };
-  const whatsappName = String(state?.whatsappName || "").trim() || "WhatsApp User";
-  const whatsappNumber = String(state?.whatsappNumber || "").trim() || "-";
+  const whatsappName = String(state?.whatsappName || savedSession?.whatsappName || "").trim() || "WhatsApp User";
+  const whatsappNumber = String(state?.whatsappNumber || savedSession?.whatsappNumber || "").trim() || "-";
   const whatsappProfilePicUrl = String(state?.whatsappProfilePicUrl || "").trim();
   const branchLabel = String(context.branchLabel || currentUser?.branch || "").trim();
   const messengerName = String(context.messengerName || "").trim();
@@ -268,6 +311,21 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   }, [statusKey]);
 
   useEffect(() => {
+    if (statusKey !== "connecting") {
+      connectingStartedAtRef.current = 0;
+      setConnectingWaitMs(0);
+      return undefined;
+    }
+    if (!connectingStartedAtRef.current) {
+      connectingStartedAtRef.current = Date.now();
+    }
+    const tick = () => setConnectingWaitMs(Date.now() - connectingStartedAtRef.current);
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [statusKey]);
+
+  useEffect(() => {
     if (!showAdminBranchOverview) {
       setBranchAccounts([]);
       return undefined;
@@ -300,13 +358,23 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
     if (!userId || !canManage) return false;
     setLoading(true);
     setActionError("");
-    const response = await connectWhatsapp(userId);
+    preferQrUntilRef.current = Date.now() + 90 * 1000;
+    setState((prev) =>
+      prev
+        ? { ...prev, status: "connecting", qrCodeDataUrl: "", error: "", savedSession: { available: false } }
+        : { status: "connecting", qrCodeDataUrl: "", savedSession: { available: false } }
+    );
+    const response = await connectWhatsapp(userId, { fresh: true });
     setLoading(false);
     if (!response.ok) {
+      preferQrUntilRef.current = 0;
       setActionError(response.error || "Failed to start WhatsApp connection.");
+      setState((prev) => (prev ? { ...prev, status: "disconnected" } : prev));
       return false;
     }
-    setState(response.data);
+    const next = response.data || {};
+    if (next.qrCodeDataUrl) preferQrUntilRef.current = 0;
+    setState(next);
     if (response.context) {
       setContext({ ...defaultContext, ...response.context });
     }
@@ -617,8 +685,8 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
         {state?.error ? <p className="text-sm text-rose-600 mt-3">{state.error}</p> : null}
         {actionError ? <p className="text-sm text-rose-600 mt-2">{actionError}</p> : null}
         {canManage ? (
-          <div className="mt-5 flex gap-2">
-            {!isConnected ? (
+          <div className="mt-5 flex flex-wrap gap-2">
+            {!isConnected && !showPreviousConnection ? (
               <button
                 type="button"
                 onClick={reconnectTakingLong ? handleRegenerateQr : handleConnect}
@@ -646,7 +714,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                 Disconnect
               </button>
             ) : null}
-            {canShowQrCode && isReconnecting ? (
+            {canShowQrCode && isReconnecting && !showPreviousConnection ? (
               <button
                 type="button"
                 onClick={handleDisconnectToQr}
@@ -674,6 +742,15 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                   : "Branch account"}
           </p>
           <div className="mt-4 min-h-[260px] rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+            {showPreviousConnection ? (
+              <PreviousWhatsappConnection
+                savedSession={savedSession}
+                restoring={isReconnecting || isConnectingForQr}
+                loading={loading}
+                onDestroy={handleDisconnect}
+                onNewConnection={handleConnect}
+              />
+            ) : null}
             {isSessionReady ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <img
@@ -730,7 +807,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                   title="Reconnecting WhatsApp"
                   description="Restoring your saved session. This usually takes a few seconds."
                 />
-                {canShowQrCode ? (
+                {canShowQrCode && !showPreviousConnection ? (
                   <button
                     type="button"
                     onClick={handleDisconnectToQr}
@@ -755,10 +832,12 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                   description={
                     isReconnecting
                       ? "This is taking longer than usual. Preparing a QR code you can scan."
-                      : "Starting WhatsApp and preparing your scan code."
+                      : connectingTakingLong
+                        ? "This is taking longer than usual. WhatsApp is still starting. You can wait, or try again."
+                        : "Starting WhatsApp and preparing your scan code."
                   }
                 />
-                {canShowQrCode && isReconnecting ? (
+                {canShowQrCode && isReconnecting && !showPreviousConnection ? (
                   <button
                     type="button"
                     onClick={handleDisconnectToQr}
@@ -779,7 +858,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                   </button>
                 ) : null}
               </div>
-            ) : (
+            ) : showPreviousConnection ? null : (
               <div className="h-full flex flex-col items-center justify-center">
                 <p className="text-sm text-slate-500 px-4 text-center">
                   {canShowQrCode
@@ -820,15 +899,15 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
             ) : null}
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">WhatsApp Name</span>
-              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting ? whatsappName : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting || savedSession ? whatsappName : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Contact Number</span>
-              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting ? whatsappNumber : "-"}</span>
+              <span className="text-sm font-semibold text-slate-900">{isSessionReady || isReconnecting || savedSession ? whatsappNumber : "-"}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Connected At</span>
-              <span className="text-sm font-semibold text-slate-900">{formatDateTime(state?.connectedAt)}</span>
+              <span className="text-sm font-semibold text-slate-900">{formatDateTime(state?.connectedAt || savedSession?.connectedAt)}</span>
             </div>
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-slate-500">Last Updated</span>

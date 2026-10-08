@@ -1,7 +1,7 @@
 const { parseBody, sendJson } = require("../lib/httpUtils");
 const { readWhatsappIncoming, uniqueWhatsappIncomingRows } = require("../models/whatsappIncoming");
 const {
-  snapshotWhatsappState,
+  readWhatsappIntegrationStatus,
   startWhatsappSession,
   stopWhatsappSession,
   regenerateWhatsappQrCode,
@@ -71,7 +71,7 @@ async function handle(req, res, url) {
       }
       sendJson(res, 200, {
         ok: true,
-        data: sanitizeWhatsappStatusForViewer(snapshotWhatsappState(statusUserId), context),
+        data: sanitizeWhatsappStatusForViewer(await readWhatsappIntegrationStatus(statusUserId), context),
         context,
       });
     } catch {
@@ -131,8 +131,13 @@ async function handle(req, res, url) {
       }
       const context = await resolveWhatsappIntegrationContextForUser(userId);
       const sessionUserId = String(context.statusUserId || userId).trim() || userId;
+      const fresh = body.fresh === true;
       const data = sanitizeWhatsappStatusForViewer(
-        await startWhatsappSession(sessionUserId, { force: true, silentReconnect: false }),
+        await startWhatsappSession(sessionUserId, {
+          force: true,
+          silentReconnect: false,
+          freshAuth: fresh,
+        }),
         context
       );
       sendJson(res, 200, { ok: true, data, context });
