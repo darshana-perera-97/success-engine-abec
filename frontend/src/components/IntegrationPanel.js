@@ -21,10 +21,14 @@ function IntegrationSpinner({ title, description }) {
   );
 }
 
+function hasRememberedWhatsappLogin(savedSession) {
+  return String(savedSession?.whatsappNumber || "").replace(/\D/g, "").length >= 6;
+}
+
 function PreviousWhatsappConnection({ savedSession, restoring, loading, onDestroy, onNewConnection }) {
-  if (!savedSession?.available) return null;
+  if (!hasRememberedWhatsappLogin(savedSession)) return null;
   const name = String(savedSession.whatsappName || "").trim() || "WhatsApp User";
-  const number = String(savedSession.whatsappNumber || "").trim() || "Saved WhatsApp account";
+  const number = String(savedSession.whatsappNumber || "").trim();
   return (
     <div className="mb-4 w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-left">
       <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Previous connection</p>
@@ -196,7 +200,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const hasQrCode = canShowQrCode && Boolean(state?.qrCodeDataUrl);
   const isConnectingForQr = statusKey === "connecting" && !hasQrCode;
   const connectingTakingLong = isConnectingForQr && connectingWaitMs >= 20000;
-  const savedSession = state?.savedSession?.available ? state.savedSession : null;
+  const savedSession = hasRememberedWhatsappLogin(state?.savedSession) ? state.savedSession : null;
   const showPreviousConnection =
     Boolean(savedSession) && canShowQrCode && !isSessionReady && !isLinkingWhatsapp && !hasQrCode;
   const isBranchSetupInProgress =

@@ -2176,19 +2176,39 @@ async function removeSavedWhatsappAuth(userId) {
 
 const WHATSAPP_PAGE_RESTORE_COOLDOWN_MS = 45 * 1000;
 
+function isRememberedWhatsappLogin(record) {
+  const number = String(record?.whatsappNumber || "").replace(/\D/g, "");
+  return number.length >= 6;
+}
+
 async function describeSavedWhatsappSession(userId) {
   const id = String(userId || "").trim();
   if (!id) return { available: false };
+  const registry = (await readRestorableWhatsappSessions())[id] || {};
+  if (!isRememberedWhatsappLogin(registry)) return { available: false };
   const hasFiles = await userHasSavedWhatsappSession(id);
   if (!hasFiles) return { available: false };
-  const registry = (await readRestorableWhatsappSessions())[id] || {};
-  const state = ensureWhatsappState(id);
   return {
     available: true,
-    whatsappName: String(registry.whatsappName || state.whatsappName || "").trim(),
-    whatsappNumber: String(registry.whatsappNumber || state.whatsappNumber || "").trim(),
-    connectedAt: String(registry.connectedAt || state.connectedAt || "").trim(),
+    whatsappName: String(registry.whatsappName || "").trim(),
+    whatsappNumber: String(registry.whatsappNumber || "").trim(),
+    connectedAt: String(registry.connectedAt || "").trim(),
   };
+}
+
+function stopPlaceholderWhatsappRestore(userId) {
+  const state = ensureWhatsappState(userId);
+  if (state.manualStop || state.userRequestedQr || state.client || state.initializing) return;
+  const status = String(state.status || "");
+  if (status !== "reconnecting" && status !== "connecting") return;
+  dropQueuedWhatsappReconnects(userId);
+  clearWhatsappReconnectTimer(state);
+  clearWhatsappQrDeadline(state);
+  state.silentReconnect = false;
+  state.status = "disconnected";
+  state.error = "";
+  state.qrCodeDataUrl = "";
+  state.lastUpdatedAt = new Date().toISOString();
 }
 
 function maybeResumeSavedWhatsappSession(userId, savedSession) {
@@ -2223,6 +2243,7 @@ async function readWhatsappIntegrationStatus(userId) {
   await readRestorableWhatsappSessions();
   hydrateWhatsappStateFromRegistrySync(id);
   const savedSession = await describeSavedWhatsappSession(id);
+  if (!savedSession.available) stopPlaceholderWhatsappRestore(id);
   maybeResumeSavedWhatsappSession(id, savedSession);
   const data = snapshotWhatsappState(id);
   data.savedSession = savedSession;
