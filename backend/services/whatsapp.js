@@ -81,8 +81,10 @@ const { appendWhatsappIncoming, readWhatsappIncoming, uniqueWhatsappIncomingRows
 const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion, invalidateWhatsappWebVersionCache } = require("./whatsappWebVersion");
 
-const AUTHENTICATED_STUCK_TIMEOUT_MS = 180 * 1000;
-const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const AUTHENTICATED_STUCK_TIMEOUT_MS = 45 * 1000;
+const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 90 * 1000;
+const WHATSAPP_PROFILE_PIC_TIMEOUT_MS = 8 * 1000;
+const WHATSAPP_READY_PROMOTION_INTERVAL_MS = 2 * 1000;
 const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 3;
@@ -117,7 +119,7 @@ const WHATSAPP_ACK_WAIT_MS = 8 * 1000;
 const WHATSAPP_ACK_SERVER = 1;
 const WHATSAPP_ACK_ERROR = -1;
 const WHATSAPP_STARTUP_READY_TIMEOUT_MS = 90 * 1000;
-const WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS = 150 * 1000;
+const WHATSAPP_STARTUP_AUTHENTICATED_WAIT_MS = 50 * 1000;
 const WHATSAPP_LOGOUT_REASON_RE = /logout|logged.?out/i;
 const ADMIN_WHATSAPP_USER_ID = "ADM001";
 const RESTORABLE_SESSIONS_FILE = path.join(WHATSAPP_CONNECTIONS_DIR, "restorable-sessions.json");
@@ -1175,6 +1177,7 @@ function ensureWhatsappState(userId) {
     lastUpdatedAt: new Date().toISOString(),
     client: null,
     authenticatedTimeout: null,
+    readyPromotionTimer: null,
     authTimedOut: false,
     manualStop: false,
     recovering: false,
@@ -1199,7 +1202,14 @@ function ensureWhatsappState(userId) {
   return created;
 }
 
+function clearWhatsappReadyPromotion(state) {
+  if (!state || !state.readyPromotionTimer) return;
+  clearInterval(state.readyPromotionTimer);
+  state.readyPromotionTimer = null;
+}
+
 function clearWhatsappAuthenticatedTimeout(state) {
+  clearWhatsappReadyPromotion(state);
   if (!state || !state.authenticatedTimeout) return;
   clearTimeout(state.authenticatedTimeout);
   state.authenticatedTimeout = null;
@@ -1468,7 +1478,9 @@ function markWhatsappAuthenticatedTimeout(state, userId = "") {
 }
 
 function scheduleWhatsappAuthenticatedTimeout(state, userId = "") {
-  clearWhatsappAuthenticatedTimeout(state);
+  // Keep the original deadline. WhatsApp Web can emit authenticated again
+  // while the page reloads, and resetting the timer leaves the spinner up.
+  if (!state || state.authenticatedTimeout) return;
   const timeoutMs = whatsappBootRestoreActive
     ? WHATSAPP_BOOT_AUTH_TIMEOUT_MS
     : AUTHENTICATED_STUCK_TIMEOUT_MS;
@@ -1477,6 +1489,140 @@ function scheduleWhatsappAuthenticatedTimeout(state, userId = "") {
   }, timeoutMs);
   if (typeof state.authenticatedTimeout.unref === "function") {
     state.authenticatedTimeout.unref();
+  }
+}
+
+function readWhatsappClientIdentity(client) {
+  const info = client?.info || {};
+  const wid = info.wid || {};
+  const widSerialized = String(wid._serialized || wid.user || "");
+  const numberFromWid = String(wid.user || widSerialized.split("@")[0] || "");
+  return {
+    widSerialized,
+    whatsappName: String(info.pushname || info.platform || "WhatsApp User"),
+    whatsappNumber: numberFromWid,
+  };
+}
+
+function finishWhatsappSessionReady(state, client, userId) {
+  if (!isCurrentWhatsappClient(state, client)) return false;
+  if (state.status === "connected") return true;
+  clearSilentQrFallbackTimer(state);
+  clearWhatsappAuthenticatedTimeout(state);
+  const identity = readWhatsappClientIdentity(client);
+  state.status = "connected";
+  state.initializing = false;
+  state.qrCodeDataUrl = "";
+  state.error = "";
+  clearSilentRestoreBudget(state);
+  state.readyAt = Date.now();
+  state.connectedAt = new Date().toISOString();
+  state.whatsappName = identity.whatsappName;
+  state.whatsappNumber = identity.whatsappNumber;
+  state.authTimedOut = false;
+  state.silentReconnect = false;
+  state.userRequestedQr = false;
+  state.reconnectAttempts = 0;
+  state.sawQrDuringSilentRestore = false;
+  state.lastQr = "";
+  state.healthFailStreak = 0;
+  state.lastUpdatedAt = new Date().toISOString();
+  rememberWhatsappHealth(state, { verdict: "healthy", waState: "CONNECTED" });
+  const cleanUserId = String(userId || "").trim();
+  installWhatsappWebCompatPatch(client).catch(() => {
+    // Compat patch is best-effort; send path still resolves chat IDs.
+  });
+  onWhatsappSessionReady(cleanUserId).catch(() => {
+    // Branch linkage is best-effort; session remains connected.
+  });
+  rememberRestorableWhatsappSession(cleanUserId, {
+    connectedAt: state.connectedAt,
+    whatsappNumber: state.whatsappNumber,
+    whatsappName: state.whatsappName,
+  }).catch((error) => {
+    console.warn(`Failed to persist restorable WhatsApp session for ${cleanUserId}:`, error);
+  });
+  if (identity.widSerialized) {
+    void loadWhatsappProfilePic(state, client, identity.widSerialized);
+  }
+  return true;
+}
+
+async function loadWhatsappProfilePic(state, client, widSerialized) {
+  try {
+    const profilePicUrl = String(
+      (await withTimeout(client.getProfilePicUrl(widSerialized), WHATSAPP_PROFILE_PIC_TIMEOUT_MS)) || ""
+    );
+    if (!profilePicUrl || !isCurrentWhatsappClient(state, client)) return;
+    state.whatsappProfilePicUrl = profilePicUrl;
+    state.lastUpdatedAt = new Date().toISOString();
+  } catch {
+    // The account is already connected. A missing photo should not keep the spinner up.
+  }
+}
+
+async function readWhatsappPageIdentity(client) {
+  if (!(await probeWhatsappWebJsReady(client))) return null;
+  const waState = String((await client.getState()) || "").toUpperCase();
+  if (waState !== "CONNECTED") return null;
+  const identity = await client.pupPage.evaluate(() => {
+    try {
+      const conn = window.require("WAWebConnModel").Conn;
+      const me =
+        window.require("WAWebUserPrefsMeUser").getMaybeMePnUser() ||
+        window.require("WAWebUserPrefsMeUser").getMaybeMeLidUser();
+      return {
+        pushname: String(conn?.pushname || ""),
+        platform: String(conn?.platform || ""),
+        wid: me
+          ? { _serialized: String(me._serialized || ""), user: String(me.user || "") }
+          : null,
+      };
+    } catch {
+      return null;
+    }
+  });
+  if (!identity) return null;
+  const wid = identity.wid || {};
+  if (!identity.pushname && !wid.user && !wid._serialized) return null;
+  return identity;
+}
+
+async function tryPromoteAuthenticatedWhatsappSession(state, client, userId) {
+  if (!isCurrentWhatsappClient(state, client) || state.status !== "authenticated") return;
+  const cleanUserId = String(userId || "").trim();
+  if (client.info?.wid || client.info?.pushname) {
+    logEvent("whatsapp", "session usable before ready event", { userId: cleanUserId });
+    finishWhatsappSessionReady(state, client, cleanUserId);
+    return;
+  }
+  let identity = null;
+  try {
+    identity = await withTimeout(readWhatsappPageIdentity(client), 4000);
+  } catch {
+    return;
+  }
+  if (!identity || !isCurrentWhatsappClient(state, client) || state.status !== "authenticated") return;
+  client.info = {
+    pushname: identity.pushname,
+    platform: identity.platform,
+    wid: identity.wid,
+  };
+  logEvent("whatsapp", "promoted linked session without ready event", { userId: cleanUserId });
+  finishWhatsappSessionReady(state, client, cleanUserId);
+}
+
+function scheduleWhatsappReadyPromotion(state, client, userId) {
+  if (!state || state.readyPromotionTimer) return;
+  state.readyPromotionTimer = setInterval(() => {
+    if (!isCurrentWhatsappClient(state, client) || state.status !== "authenticated") {
+      clearWhatsappReadyPromotion(state);
+      return;
+    }
+    void tryPromoteAuthenticatedWhatsappSession(state, client, userId);
+  }, WHATSAPP_READY_PROMOTION_INTERVAL_MS);
+  if (typeof state.readyPromotionTimer.unref === "function") {
+    state.readyPromotionTimer.unref();
   }
 }
 
@@ -1664,59 +1810,13 @@ async function startWhatsappSession(
     if (state.status !== "connected") {
       state.status = "authenticated";
       scheduleWhatsappAuthenticatedTimeout(state, cleanUserId);
+      scheduleWhatsappReadyPromotion(state, client, cleanUserId);
     }
     state.lastUpdatedAt = new Date().toISOString();
   });
 
-  client.on("ready", async () => {
-    if (!isCurrentWhatsappClient(state, client)) return;
-    clearSilentQrFallbackTimer(state);
-    clearWhatsappAuthenticatedTimeout(state);
-    const info = client.info || {};
-    const widSerialized =
-      (info.wid && (info.wid._serialized || info.wid.user)) || "";
-    const numberFromWid =
-      (info.wid && info.wid.user) || String(widSerialized).split("@")[0] || "";
-    let profilePicUrl = "";
-    if (widSerialized) {
-      try {
-        profilePicUrl = String((await client.getProfilePicUrl(widSerialized)) || "");
-      } catch {
-        profilePicUrl = "";
-      }
-    }
-    state.status = "connected";
-    state.initializing = false;
-    state.qrCodeDataUrl = "";
-    state.error = "";
-    clearSilentRestoreBudget(state);
-    state.readyAt = Date.now();
-    state.connectedAt = new Date().toISOString();
-    state.whatsappName = String(info.pushname || info.platform || "WhatsApp User");
-    state.whatsappNumber = String(numberFromWid || "");
-    state.whatsappProfilePicUrl = profilePicUrl;
-    state.authTimedOut = false;
-    state.silentReconnect = false;
-    state.userRequestedQr = false;
-    state.reconnectAttempts = 0;
-    state.sawQrDuringSilentRestore = false;
-    state.lastQr = "";
-    state.healthFailStreak = 0;
-    state.lastUpdatedAt = new Date().toISOString();
-    rememberWhatsappHealth(state, { verdict: "healthy", waState: "CONNECTED" });
-    installWhatsappWebCompatPatch(client).catch(() => {
-      // Compat patch is best-effort; send path still resolves chat IDs.
-    });
-    onWhatsappSessionReady(cleanUserId).catch(() => {
-      // Branch linkage is best-effort; session remains connected.
-    });
-    rememberRestorableWhatsappSession(cleanUserId, {
-      connectedAt: state.connectedAt,
-      whatsappNumber: state.whatsappNumber,
-      whatsappName: state.whatsappName,
-    }).catch((error) => {
-      console.warn(`Failed to persist restorable WhatsApp session for ${cleanUserId}:`, error);
-    });
+  client.on("ready", () => {
+    finishWhatsappSessionReady(state, client, cleanUserId);
   });
 
   client.on("auth_failure", (message) => {
@@ -1943,7 +2043,7 @@ async function regenerateWhatsappQrCode(userId) {
   if (!cleanUserId) throw new Error("Counselor user id is required.");
   const state = ensureWhatsappState(cleanUserId);
   const status = String(state.status || "");
-  if (status === "connected" || status === "authenticated") {
+  if (status === "connected") {
     throw new Error("Cannot regenerate QR while WhatsApp is connected.");
   }
   if (state.client) {

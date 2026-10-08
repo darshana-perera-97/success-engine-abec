@@ -123,9 +123,11 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const [branchAccounts, setBranchAccounts] = useState([]);
   const [branchAccountsLoading, setBranchAccountsLoading] = useState(false);
   const [reconnectWaitMs, setReconnectWaitMs] = useState(0);
+  const [linkingWaitMs, setLinkingWaitMs] = useState(0);
   const statusFailureCountRef = useRef(0);
   const autoReconnectInFlightRef = useRef(false);
   const reconnectStartedAtRef = useRef(0);
+  const linkingStartedAtRef = useRef(0);
   const forcedQrRef = useRef(false);
   const handleRegenerateQrRef = useRef(async () => {});
   const preferQrUntilRef = useRef(0);
@@ -152,6 +154,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const statusKey = String(state?.status || "disconnected");
   const isSessionReady = statusKey === "connected";
   const isLinkingWhatsapp = statusKey === "authenticated";
+  const linkingTakingLong = isLinkingWhatsapp && linkingWaitMs >= 20000;
   const hasQrCode = canShowQrCode && Boolean(state?.qrCodeDataUrl);
   const isBranchSetupInProgress =
     branchMode &&
@@ -244,6 +247,21 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
       reconnectStartedAtRef.current = Date.now();
     }
     const tick = () => setReconnectWaitMs(Date.now() - reconnectStartedAtRef.current);
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [statusKey]);
+
+  useEffect(() => {
+    if (statusKey !== "authenticated") {
+      linkingStartedAtRef.current = 0;
+      setLinkingWaitMs(0);
+      return undefined;
+    }
+    if (!linkingStartedAtRef.current) {
+      linkingStartedAtRef.current = Date.now();
+    }
+    const tick = () => setLinkingWaitMs(Date.now() - linkingStartedAtRef.current);
     tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
@@ -395,7 +413,8 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   };
 
   const handleRegenerateQr = async () => {
-    if (!userId || !canShowQrCode || isSessionReady || isLinkingWhatsapp) return;
+    if (!userId || !canShowQrCode || isSessionReady) return;
+    if (isLinkingWhatsapp && !linkingTakingLong) return;
     setLoading(true);
     setActionError("");
     setState((prev) => (prev ? { ...prev, qrCodeDataUrl: "", status: "connecting" } : prev));
@@ -671,10 +690,26 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
                 <p className="text-sm text-slate-500">{whatsappNumber}</p>
               </div>
             ) : isLinkingWhatsapp ? (
-              <IntegrationSpinner
-                title="Linking WhatsApp to your account"
-                description="Finishing sign-in and loading your profile. This usually takes a few seconds."
-              />
+              <div className="h-full flex flex-col items-center justify-center gap-4">
+                <IntegrationSpinner
+                  title="Linking WhatsApp to your account"
+                  description={
+                    linkingTakingLong
+                      ? "Sign-in is taking longer than usual. You can keep waiting, or scan a fresh QR code."
+                      : "Finishing sign-in and loading your profile. This usually takes a few seconds."
+                  }
+                />
+                {linkingTakingLong && canShowQrCode ? (
+                  <button
+                    type="button"
+                    onClick={handleRegenerateQr}
+                    disabled={loading}
+                    className="px-3 py-2 text-sm rounded-md border border-slate-200 text-slate-700 hover:bg-white disabled:opacity-60"
+                  >
+                    {loading ? "Preparing QR..." : "Scan QR instead"}
+                  </button>
+                ) : null}
+              </div>
             ) : hasQrCode ? (
               <div className="h-full flex flex-col items-center justify-center gap-4">
                 <img src={state.qrCodeDataUrl} alt="WhatsApp connection QR code" className="w-56 h-56 object-contain" />
