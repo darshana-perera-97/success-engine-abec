@@ -98,8 +98,9 @@ const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
 const parsedWhatsappInitConcurrency = parseInt(process.env.WHATSAPP_INIT_CONCURRENCY || "", 10);
 const WHATSAPP_INIT_CONCURRENCY =
   Number.isFinite(parsedWhatsappInitConcurrency) && parsedWhatsappInitConcurrency > 0
-    ? Math.min(parsedWhatsappInitConcurrency, 4)
-    : 3;
+    ? Math.min(parsedWhatsappInitConcurrency, 8)
+    : 6;
+const WHATSAPP_QR_RESERVED_SLOTS = Math.min(2, Math.max(1, Math.floor(WHATSAPP_INIT_CONCURRENCY / 3)));
 const WHATSAPP_HEALTH_PROBE_ATTEMPTS = 3;
 const WHATSAPP_HEALTH_CACHE_MS = 20_000;
 const WHATSAPP_HEALTH_FAIL_STREAK_LIMIT = 2;
@@ -127,7 +128,8 @@ const RESTORABLE_SESSIONS_FILE = path.join(WHATSAPP_CONNECTIONS_DIR, "restorable
 let isWhatsappShuttingDown = false;
 let whatsappBootRestoreActive = false;
 let whatsappInitActive = 0;
-const whatsappInitWaiters = [];
+const whatsappQrInitWaiters = [];
+const whatsappRestoreInitWaiters = [];
 let restorableSessionsCache = null;
 const whatsappReconnectQueue = [];
 const whatsappReconnectQueuedIds = new Set();
@@ -585,7 +587,29 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
-function enqueueWhatsappInit(task) {
+function whatsappRestoreInitLimit() {
+  return Math.max(1, WHATSAPP_INIT_CONCURRENCY - WHATSAPP_QR_RESERVED_SLOTS);
+}
+
+function pumpWhatsappInitQueue() {
+  while (true) {
+    let run = null;
+    if (whatsappQrInitWaiters.length && whatsappInitActive < WHATSAPP_INIT_CONCURRENCY) {
+      run = whatsappQrInitWaiters.shift();
+    } else if (
+      whatsappRestoreInitWaiters.length &&
+      whatsappQrInitWaiters.length === 0 &&
+      whatsappInitActive < whatsappRestoreInitLimit()
+    ) {
+      run = whatsappRestoreInitWaiters.shift();
+    }
+    if (!run) return;
+    whatsappInitActive += 1;
+    void run();
+  }
+}
+
+function enqueueWhatsappInit(task, { priority = false } = {}) {
   return new Promise((resolve, reject) => {
     const run = async () => {
       try {
@@ -594,19 +618,25 @@ function enqueueWhatsappInit(task) {
         reject(error);
       } finally {
         whatsappInitActive -= 1;
-        const next = whatsappInitWaiters.shift();
-        if (next) {
-          whatsappInitActive += 1;
-          next();
-        }
+        pumpWhatsappInitQueue();
       }
     };
-    if (whatsappInitActive < WHATSAPP_INIT_CONCURRENCY) {
+    const canStartNow = priority
+      ? whatsappInitActive < WHATSAPP_INIT_CONCURRENCY
+      : whatsappQrInitWaiters.length === 0 && whatsappInitActive < whatsappRestoreInitLimit();
+    if (canStartNow) {
       whatsappInitActive += 1;
       void run();
       return;
     }
-    whatsappInitWaiters.push(run);
+    if (priority) whatsappQrInitWaiters.push(run);
+    else whatsappRestoreInitWaiters.push(run);
+    if (priority) {
+      logEvent("whatsapp", "qr waiting for a free browser slot", {
+        waiting: whatsappQrInitWaiters.length,
+        active: whatsappInitActive,
+      });
+    }
   });
 }
 
@@ -2017,9 +2047,13 @@ async function startWhatsappSession(
   // "message" is enough for inbound messages; keeping both causes duplicate logs.
   client.on("message", handleIncomingMessage);
 
-  const initPromise = enqueueWhatsappInit(async () => {
-    await client.initialize();
-  })
+  const priorityQr = freshAuth === true || silentReconnect !== true;
+  const initPromise = enqueueWhatsappInit(
+    async () => {
+      await client.initialize();
+    },
+    { priority: priorityQr }
+  )
     .then(async () => {
       if (!isCurrentWhatsappClient(state, client) && !state.sawQrDuringSilentRestore) return;
       if (state.status === "connected" || state.status === "authenticated") return;
