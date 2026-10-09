@@ -274,7 +274,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
       await refreshStatus();
     };
     run();
-    const timer = setInterval(run, 4000);
+    const timer = setInterval(run, 2000);
     return () => {
       stop = true;
       clearInterval(timer);

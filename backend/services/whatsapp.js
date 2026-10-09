@@ -86,7 +86,7 @@ const AUTHENTICATED_STUCK_TIMEOUT_MS = 45 * 1000;
 const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_PROFILE_PIC_TIMEOUT_MS = 8 * 1000;
 const WHATSAPP_READY_PROMOTION_INTERVAL_MS = 2 * 1000;
-const WHATSAPP_QR_DEADLINE_MS = 40 * 1000;
+const WHATSAPP_QR_DEADLINE_MS = 90 * 1000;
 const WHATSAPP_AUTH_TIMEOUT_RECOVERY_MS = 15 * 1000;
 const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 3;
@@ -310,29 +310,67 @@ function armChromiumLaunchError() {
   );
 }
 
+function isPlaceholderBrowserPath(filePath) {
+  const value = String(filePath || "");
+  return /[<>]/.test(value);
+}
+
+let cachedPuppeteerExecutablePath = "";
+let loggedPuppeteerExecutablePath = false;
+let warnedBadBrowserPath = false;
+
+function rememberPuppeteerExecutablePath(found) {
+  const resolved = String(found || "").trim();
+  if (!resolved) return "";
+  cachedPuppeteerExecutablePath = resolved;
+  if (!loggedPuppeteerExecutablePath) {
+    loggedPuppeteerExecutablePath = true;
+    console.log(`WhatsApp: using browser ${resolved}`);
+  }
+  return resolved;
+}
+
+function clearBadBrowserEnv() {
+  for (const name of ["PUPPETEER_EXECUTABLE_PATH", "CHROME_PATH", "CHROMIUM_PATH"]) {
+    const value = String(process.env[name] || "").trim();
+    if (!value) continue;
+    if (isPlaceholderBrowserPath(value) || !fsSync.existsSync(value)) {
+      delete process.env[name];
+    }
+  }
+}
+
 // Puppeteer's bundled Chrome for linux_arm is often an invalid binary (shell reports
 // `Syntax error: ")" unexpected`). Prefer an explicit path or a non-snap system browser.
 function resolvePuppeteerExecutablePath() {
+  if (cachedPuppeteerExecutablePath && fsSync.existsSync(cachedPuppeteerExecutablePath)) {
+    return cachedPuppeteerExecutablePath;
+  }
   const fromEnv = String(
     process.env.PUPPETEER_EXECUTABLE_PATH ||
       process.env.CHROME_PATH ||
       process.env.CHROMIUM_PATH ||
       ""
   ).trim();
-  if (fromEnv && fsSync.existsSync(fromEnv)) {
+  const envIsPlaceholder = isPlaceholderBrowserPath(fromEnv);
+  if (fromEnv && !envIsPlaceholder && fsSync.existsSync(fromEnv)) {
     if (isSnapChromium(fromEnv)) throw snapChromiumLaunchError();
     if (!isElfForCurrentArch(fromEnv)) {
       throw new Error(
         `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that binary is not a ${process.arch} executable.`
       );
     }
-    return fromEnv;
+    return rememberPuppeteerExecutablePath(fromEnv);
   }
-  if (fromEnv) {
+  if (fromEnv && !warnedBadBrowserPath) {
+    warnedBadBrowserPath = true;
     console.warn(
-      `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist. Searching for an installed browser instead.`
+      envIsPlaceholder
+        ? `PUPPETEER_EXECUTABLE_PATH is the example placeholder "${fromEnv}". Remove that line from backend/.env. Searching for the installed Chromium instead.`
+        : `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist. Searching for an installed browser instead.`
     );
   }
+  if (fromEnv) clearBadBrowserEnv();
 
   const candidates = [
     "/usr/bin/google-chrome-stable",
@@ -342,26 +380,26 @@ function resolvePuppeteerExecutablePath() {
   ];
   for (const candidate of candidates) {
     const accepted = acceptBrowserPath(candidate);
-    if (accepted) return accepted;
+    if (accepted) return rememberPuppeteerExecutablePath(accepted);
   }
 
   for (const name of ["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"]) {
     try {
       const found = String(execFileSync("which", [name], { encoding: "utf8" })).trim();
       const accepted = acceptBrowserPath(found);
-      if (accepted) return accepted;
+      if (accepted) return rememberPuppeteerExecutablePath(accepted);
     } catch {
       // Binary not on PATH.
     }
   }
 
   const playwrightChrome = findPlaywrightChromium();
-  if (playwrightChrome) return playwrightChrome;
+  if (playwrightChrome) return rememberPuppeteerExecutablePath(playwrightChrome);
 
   const arch = String(process.arch || "");
   if (process.platform === "linux" && (arch === "arm" || arch === "arm64") && tryInstallPlaywrightChromium()) {
     const installed = findPlaywrightChromium();
-    if (installed) return installed;
+    if (installed) return rememberPuppeteerExecutablePath(installed);
   }
 
   let sawSnap = false;
@@ -1485,6 +1523,16 @@ async function recoverStuckWhatsappQr(state, client, userId, initAttempt) {
   if (state.manualStop || isWhatsappShuttingDown) return;
   if (state.qrCodeDataUrl || state.lastQr) return;
   if (state.status !== "connecting") return;
+  if (state.initializing && Number(state.qrDeadlineExtensions || 0) < 2) {
+    state.qrDeadlineExtensions = Number(state.qrDeadlineExtensions || 0) + 1;
+    logEvent("whatsapp", "browser still starting; waiting longer for QR", {
+      userId: cleanUserId,
+      attempt: Number(initAttempt) || 1,
+      extension: state.qrDeadlineExtensions,
+    });
+    scheduleWhatsappQrDeadline(state, client, userId, initAttempt);
+    return;
+  }
   state.qrRecoveryInFlight = true;
   clearWhatsappQrDeadline(state);
   const attempt = Number(initAttempt) || 1;
@@ -2059,11 +2107,10 @@ async function startWhatsappSession(
   clearWhatsappAuthenticatedTimeout(state);
   clearWhatsappQrDeadline(state);
   clearSilentRestoreDeadline(state);
+  state.qrDeadlineExtensions = 0;
   state.lastUpdatedAt = new Date().toISOString();
   if (restoreSilently) {
     scheduleSilentRestoreDeadline(state, client, cleanUserId);
-  } else {
-    scheduleWhatsappQrDeadline(state, client, cleanUserId, initAttempt);
   }
 
   client.on("qr", async (qr) => {
@@ -2071,24 +2118,11 @@ async function startWhatsappSession(
     state.lastQr = String(qr || "");
     // A WhatsApp Web reload after send can briefly look unpaired and emit a QR
     // even though the saved session is still valid. Keep the connected UI.
-    if (
-      state.status === "connected" ||
-      (state.silentReconnect && !state.requireVisibleQr && !state.userRequestedQr)
-    ) {
-      logEvent(
-        "whatsapp",
-        state.status === "connected"
-          ? "qr during connected session; waiting for saved session"
-          : "qr during silent restore; waiting for saved session",
-        { userId: cleanUserId }
-      );
+    if (state.status === "connected") {
+      logEvent("whatsapp", "qr during connected session; waiting for saved session", {
+        userId: cleanUserId,
+      });
       clearWhatsappAuthenticatedTimeout(state);
-      if (state.status !== "connected") {
-        state.status = "reconnecting";
-        state.qrCodeDataUrl = "";
-        state.error = "";
-        state.lastUpdatedAt = new Date().toISOString();
-      }
       state.sawQrDuringSilentRestore = true;
       scheduleSilentQrFallback(state, client, cleanUserId);
       return;
@@ -2234,6 +2268,10 @@ async function startWhatsappSession(
   const priorityQr = freshAuth === true || silentReconnect !== true;
   const initPromise = enqueueWhatsappInit(
     async () => {
+      if (!isCurrentWhatsappClient(state, client)) return;
+      if (!state.silentReconnect) {
+        scheduleWhatsappQrDeadline(state, client, cleanUserId, initAttempt);
+      }
       await client.initialize();
     },
     { priority: priorityQr }
