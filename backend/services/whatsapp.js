@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const fsSync = require("fs");
+const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const { execFileSync } = require("child_process");
@@ -202,18 +203,53 @@ function acceptBrowserPath(candidate) {
   return found;
 }
 
-// Chrome for Testing has no Linux ARM64 build. Playwright ships its own arm64 Chromium.
-function findPlaywrightChromium() {
-  const home = String(process.env.HOME || "").trim();
-  const fromEnv = String(process.env.PLAYWRIGHT_BROWSERS_PATH || "").trim();
+// Current Playwright unpacks ARM64 Chromium into chrome-linux-arm64/. Older builds use
+// chrome-linux/, and x64 Chrome-for-Testing builds use chrome-linux64/.
+const PLAYWRIGHT_CHROME_RELATIVE_PATHS = [
+  ["chrome-linux-arm64", "chrome"],
+  ["chrome-linux", "chrome"],
+  ["chrome-linux64", "chrome"],
+  ["chrome-linux-arm", "chrome"],
+];
+
+function playwrightCacheRoots() {
   const roots = [];
+  const fromEnv = String(process.env.PLAYWRIGHT_BROWSERS_PATH || "").trim();
   if (fromEnv && fromEnv !== "0") roots.push(fromEnv);
+  const xdg = String(process.env.XDG_CACHE_HOME || "").trim();
+  if (xdg) roots.push(path.join(xdg, "ms-playwright"));
+  const home = String(process.env.HOME || "").trim() || os.homedir();
   if (home) roots.push(path.join(home, ".cache", "ms-playwright"));
   roots.push("/opt/ms-playwright");
+  return [...new Set(roots.filter(Boolean))];
+}
 
+function chromeInsideChromiumBuild(buildDir) {
+  const found = [];
+  for (const parts of PLAYWRIGHT_CHROME_RELATIVE_PATHS) {
+    const accepted = acceptBrowserPath(path.join(buildDir, ...parts));
+    if (accepted) found.push(accepted);
+  }
+  if (found.length) return found;
+  let entries = [];
+  try {
+    entries = fsSync.readdirSync(buildDir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("chrome-linux")) continue;
+    const accepted = acceptBrowserPath(path.join(buildDir, entry.name, "chrome"));
+    if (accepted) found.push(accepted);
+  }
+  return found;
+}
+
+// Chrome for Testing has no Linux ARM64 build. Playwright ships its own arm64 Chromium.
+function findPlaywrightChromium() {
   const matches = [];
-  for (const root of roots) {
-    if (!root || !fsSync.existsSync(root)) continue;
+  for (const root of playwrightCacheRoots()) {
+    if (!fsSync.existsSync(root)) continue;
     let entries = [];
     try {
       entries = fsSync.readdirSync(root, { withFileTypes: true });
@@ -222,8 +258,7 @@ function findPlaywrightChromium() {
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^chromium-\d+$/.test(entry.name)) continue;
-      const accepted = acceptBrowserPath(path.join(root, entry.name, "chrome-linux", "chrome"));
-      if (accepted) matches.push(accepted);
+      matches.push(...chromeInsideChromiumBuild(path.join(root, entry.name)));
     }
   }
   matches.sort((a, b) => {
@@ -233,6 +268,36 @@ function findPlaywrightChromium() {
   return matches[0] || "";
 }
 
+let playwrightChromiumInstallAttempted = false;
+
+function tryInstallPlaywrightChromium() {
+  if (playwrightChromiumInstallAttempted) return false;
+  playwrightChromiumInstallAttempted = true;
+  const nodeDir = path.dirname(process.execPath);
+  const binaries = [...new Set([path.join(nodeDir, "npx"), "npx"])];
+  for (const bin of binaries) {
+    try {
+      console.warn(
+        `WhatsApp: no ARM64 Chromium found. Installing Playwright Chromium with "${bin}" (one-time; can take a few minutes)...`
+      );
+      execFileSync(bin, ["--yes", "playwright", "install", "chromium"], {
+        stdio: "inherit",
+        timeout: 8 * 60 * 1000,
+        env: process.env,
+      });
+      return true;
+    } catch (error) {
+      const code = error && error.code;
+      if (code === "ENOENT") continue;
+      console.warn(
+        `WhatsApp: Playwright Chromium install via "${bin}" failed:`,
+        String(error?.message || error)
+      );
+    }
+  }
+  return false;
+}
+
 function armChromiumLaunchError() {
   return new Error(
     "No ARM64 Chromium/Chrome found. Ubuntu's chromium package is a Snap and cannot start under PM2, " +
@@ -240,7 +305,8 @@ function armChromiumLaunchError() {
       "As the same Linux user that runs PM2, install Playwright's ARM64 Chromium: " +
       "`npx --yes playwright install chromium`. " +
       "Then restart PM2. The app uses ~/.cache/ms-playwright automatically, " +
-      "or set PUPPETEER_EXECUTABLE_PATH to the chrome binary inside chromium-*/chrome-linux/."
+      "or set PUPPETEER_EXECUTABLE_PATH to the chrome binary inside " +
+      "chromium-*/chrome-linux-arm64/ (current Playwright) or chromium-*/chrome-linux/ (older builds)."
   );
 }
 
@@ -292,6 +358,12 @@ function resolvePuppeteerExecutablePath() {
   const playwrightChrome = findPlaywrightChromium();
   if (playwrightChrome) return playwrightChrome;
 
+  const arch = String(process.arch || "");
+  if (process.platform === "linux" && (arch === "arm" || arch === "arm64") && tryInstallPlaywrightChromium()) {
+    const installed = findPlaywrightChromium();
+    if (installed) return installed;
+  }
+
   let sawSnap = false;
   for (const snapCandidate of ["/snap/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/chromium"]) {
     if (fsSync.existsSync(snapCandidate) && isSnapChromium(snapCandidate)) sawSnap = true;
@@ -299,7 +371,6 @@ function resolvePuppeteerExecutablePath() {
 
   // Chrome for Testing publishes no Linux ARM64 binary (the download is x86_64 and dies with
   // `Syntax error: ")" unexpected`). Require a native ARM browser instead of launching it.
-  const arch = String(process.arch || "");
   if (process.platform === "linux" && (arch === "arm" || arch === "arm64")) {
     throw armChromiumLaunchError();
   }

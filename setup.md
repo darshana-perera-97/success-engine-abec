@@ -47,7 +47,7 @@ Then `pm2 restart` the app. On ARM (Graviton) that `.deb` does not exist, and `n
 npx --yes playwright install chromium
 ```
 
-Restart PM2 and leave `PUPPETEER_EXECUTABLE_PATH` unset. The app uses the `chrome` file under `~/.cache/ms-playwright/chromium-<number>/chrome-linux/`. The `<number>` is assigned by Playwright; do not type that placeholder into `.env`.
+Restart PM2 and leave `PUPPETEER_EXECUTABLE_PATH` unset. The app uses the `chrome` file under `~/.cache/ms-playwright/chromium-<number>/chrome-linux-arm64/` (current Playwright) or `chrome-linux/` (older builds). The `<number>` is assigned by Playwright; do not type that placeholder into `.env`. If that binary is missing, the app runs `npx --yes playwright install chromium` once as the PM2 user and then looks again.
 
 Install Node.js 20 LTS and PM2:
 
