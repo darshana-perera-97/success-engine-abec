@@ -144,8 +144,46 @@ function notifyWhatsappSessionDisconnected(userId) {
   });
 }
 
+// Ubuntu's `chromium` / `chromium-browser` packages are Snap wrappers. Snapd refuses
+// to start them from PM2 (`/system.slice/pm2-*.service is not a snap cgroup`).
+function isSnapChromium(executablePath) {
+  const raw = String(executablePath || "").trim();
+  if (!raw) return false;
+  let resolved = raw;
+  try {
+    resolved = fsSync.realpathSync(raw);
+  } catch {
+    resolved = raw;
+  }
+  if (resolved.includes("/snap/") || raw.includes("/snap/")) return true;
+  try {
+    const stat = fsSync.statSync(raw);
+    if (!stat.isFile() || stat.size > 8192) return false;
+    const text = fsSync.readFileSync(raw, "utf8");
+    if (text.includes("\0")) return false;
+    return /\/snap\/|snap\.chromium/.test(text);
+  } catch {
+    return false;
+  }
+}
+
+function snapChromiumLaunchError() {
+  return new Error(
+    "Snap Chromium cannot start under PM2 (systemd: not a snap cgroup). " +
+      "Install the Google Chrome .deb, then set PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable in backend/.env and restart PM2. " +
+      "Do not use `apt install chromium` — on Ubuntu that package is the Snap."
+  );
+}
+
+function acceptBrowserPath(candidate) {
+  const found = String(candidate || "").trim();
+  if (!found || !fsSync.existsSync(found)) return "";
+  if (isSnapChromium(found)) return "";
+  return found;
+}
+
 // Puppeteer's bundled Chrome for linux_arm is often an invalid binary (shell reports
-// `Syntax error: ")" unexpected`). Prefer an explicit path or system Chromium/Chrome.
+// `Syntax error: ")" unexpected`). Prefer an explicit path or a non-snap system browser.
 function resolvePuppeteerExecutablePath() {
   const fromEnv = String(
     process.env.PUPPETEER_EXECUTABLE_PATH ||
@@ -159,39 +197,47 @@ function resolvePuppeteerExecutablePath() {
         `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist.`
       );
     }
+    if (isSnapChromium(fromEnv)) throw snapChromiumLaunchError();
     return fromEnv;
   }
 
   const candidates = [
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
     "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome",
-    "/snap/bin/chromium",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
   ];
   for (const candidate of candidates) {
-    if (fsSync.existsSync(candidate)) return candidate;
+    const accepted = acceptBrowserPath(candidate);
+    if (accepted) return accepted;
   }
 
-  for (const name of ["chromium-browser", "chromium", "google-chrome-stable", "google-chrome"]) {
+  for (const name of ["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"]) {
     try {
       const found = String(execFileSync("which", [name], { encoding: "utf8" })).trim();
-      if (found && fsSync.existsSync(found)) return found;
+      const accepted = acceptBrowserPath(found);
+      if (accepted) return accepted;
     } catch {
       // Binary not on PATH.
     }
+  }
+
+  let sawSnap = false;
+  for (const snapCandidate of ["/snap/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/chromium"]) {
+    if (fsSync.existsSync(snapCandidate) && isSnapChromium(snapCandidate)) sawSnap = true;
   }
 
   // On ARM Linux, Puppeteer's cached Chrome is commonly broken — fail with a clear fix.
   const arch = String(process.arch || "");
   if (process.platform === "linux" && (arch === "arm" || arch === "arm64")) {
     throw new Error(
-      "No system Chromium/Chrome found. Puppeteer's bundled browser does not work on ARM Linux. " +
-        "Install Chromium (e.g. `sudo apt-get install -y chromium-browser` or `chromium`) " +
-        "and set PUPPETEER_EXECUTABLE_PATH to its path in backend/.env."
+      "No non-snap Chromium/Chrome found. Puppeteer's bundled browser does not work on ARM Linux. " +
+        "Install Google Chrome for Testing with `npx puppeteer browsers install chrome` in backend/, " +
+        "then set PUPPETEER_EXECUTABLE_PATH to the printed path in backend/.env."
     );
   }
 
+  if (sawSnap) throw snapChromiumLaunchError();
   return "";
 }
 

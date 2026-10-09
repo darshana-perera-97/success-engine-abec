@@ -27,6 +27,22 @@ sudo apt-get install -y \
   libxss1 libxtst6 lsb-release wget xdg-utils
 ```
 
+Ubuntu’s `chromium` / `chromium-browser` packages are Snaps. Snapd refuses to start them from PM2 (`not a snap cgroup`). Install the Google Chrome `.deb` instead:
+
+```bash
+wget -O /tmp/google-chrome-stable_current_amd64.deb \
+  https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt-get install -y /tmp/google-chrome-stable_current_amd64.deb
+```
+
+In `backend/.env`:
+
+```bash
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+```
+
+Then `pm2 restart` the app. On ARM (Graviton), that `.deb` is not available — from `backend/` run `npx puppeteer browsers install chrome` and set `PUPPETEER_EXECUTABLE_PATH` to the path it prints.
+
 Install Node.js 20 LTS and PM2:
 
 ```bash
