@@ -175,11 +175,73 @@ function snapChromiumLaunchError() {
   );
 }
 
+function isElfForCurrentArch(filePath) {
+  let fd;
+  try {
+    fd = fsSync.openSync(filePath, "r");
+    const buf = Buffer.alloc(20);
+    if (fsSync.readSync(fd, buf, 0, 20, 0) < 20) return true;
+    if (buf[0] !== 0x7f || buf.toString("ascii", 1, 4) !== "ELF") return true;
+    const machine = buf.readUInt16LE(18);
+    if (process.arch === "arm64") return machine === 183;
+    if (process.arch === "arm") return machine === 40;
+    if (process.arch === "x64") return machine === 62;
+    return true;
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) fsSync.closeSync(fd);
+  }
+}
+
 function acceptBrowserPath(candidate) {
   const found = String(candidate || "").trim();
   if (!found || !fsSync.existsSync(found)) return "";
   if (isSnapChromium(found)) return "";
+  if (!isElfForCurrentArch(found)) return "";
   return found;
+}
+
+// Chrome for Testing has no Linux ARM64 build. Playwright ships its own arm64 Chromium.
+function findPlaywrightChromium() {
+  const home = String(process.env.HOME || "").trim();
+  const fromEnv = String(process.env.PLAYWRIGHT_BROWSERS_PATH || "").trim();
+  const roots = [];
+  if (fromEnv && fromEnv !== "0") roots.push(fromEnv);
+  if (home) roots.push(path.join(home, ".cache", "ms-playwright"));
+  roots.push("/opt/ms-playwright");
+
+  const matches = [];
+  for (const root of roots) {
+    if (!root || !fsSync.existsSync(root)) continue;
+    let entries = [];
+    try {
+      entries = fsSync.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^chromium-\d+$/.test(entry.name)) continue;
+      const accepted = acceptBrowserPath(path.join(root, entry.name, "chrome-linux", "chrome"));
+      if (accepted) matches.push(accepted);
+    }
+  }
+  matches.sort((a, b) => {
+    const rev = (filePath) => Number(filePath.match(/chromium-(\d+)/)?.[1] || 0);
+    return rev(b) - rev(a);
+  });
+  return matches[0] || "";
+}
+
+function armChromiumLaunchError() {
+  return new Error(
+    "No ARM64 Chromium/Chrome found. Ubuntu's chromium package is a Snap and cannot start under PM2, " +
+      "and Puppeteer's Chrome download is x86_64 so it will not run on this machine. " +
+      "As the same Linux user that runs PM2, install Playwright's ARM64 Chromium: " +
+      "`npx --yes playwright install chromium`. " +
+      "Then restart PM2. The app uses ~/.cache/ms-playwright automatically, " +
+      "or set PUPPETEER_EXECUTABLE_PATH to the chrome binary inside chromium-*/chrome-linux/."
+  );
 }
 
 // Puppeteer's bundled Chrome for linux_arm is often an invalid binary (shell reports
@@ -191,14 +253,19 @@ function resolvePuppeteerExecutablePath() {
       process.env.CHROMIUM_PATH ||
       ""
   ).trim();
-  if (fromEnv) {
-    if (!fsSync.existsSync(fromEnv)) {
+  if (fromEnv && fsSync.existsSync(fromEnv)) {
+    if (isSnapChromium(fromEnv)) throw snapChromiumLaunchError();
+    if (!isElfForCurrentArch(fromEnv)) {
       throw new Error(
-        `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist.`
+        `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that binary is not a ${process.arch} executable.`
       );
     }
-    if (isSnapChromium(fromEnv)) throw snapChromiumLaunchError();
     return fromEnv;
+  }
+  if (fromEnv) {
+    console.warn(
+      `PUPPETEER_EXECUTABLE_PATH is set to "${fromEnv}" but that file does not exist. Searching for an installed browser instead.`
+    );
   }
 
   const candidates = [
@@ -222,19 +289,19 @@ function resolvePuppeteerExecutablePath() {
     }
   }
 
+  const playwrightChrome = findPlaywrightChromium();
+  if (playwrightChrome) return playwrightChrome;
+
   let sawSnap = false;
   for (const snapCandidate of ["/snap/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/chromium"]) {
     if (fsSync.existsSync(snapCandidate) && isSnapChromium(snapCandidate)) sawSnap = true;
   }
 
-  // On ARM Linux, Puppeteer's cached Chrome is commonly broken — fail with a clear fix.
+  // Chrome for Testing publishes no Linux ARM64 binary (the download is x86_64 and dies with
+  // `Syntax error: ")" unexpected`). Require a native ARM browser instead of launching it.
   const arch = String(process.arch || "");
   if (process.platform === "linux" && (arch === "arm" || arch === "arm64")) {
-    throw new Error(
-      "No non-snap Chromium/Chrome found. Puppeteer's bundled browser does not work on ARM Linux. " +
-        "Install Google Chrome for Testing with `npx puppeteer browsers install chrome` in backend/, " +
-        "then set PUPPETEER_EXECUTABLE_PATH to the printed path in backend/.env."
-    );
+    throw armChromiumLaunchError();
   }
 
   if (sawSnap) throw snapChromiumLaunchError();

@@ -41,7 +41,13 @@ In `backend/.env`:
 PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 ```
 
-Then `pm2 restart` the app. On ARM (Graviton), that `.deb` is not available — from `backend/` run `npx puppeteer browsers install chrome` and set `PUPPETEER_EXECUTABLE_PATH` to the path it prints.
+Then `pm2 restart` the app. On ARM (Graviton) that `.deb` does not exist, and `npx puppeteer browsers install chrome` downloads an x86_64 binary that will not run. Install Playwright’s ARM64 Chromium as the same user that runs PM2 (the `pm2-administrator` service user, not root):
+
+```bash
+npx --yes playwright install chromium
+```
+
+Restart PM2 and leave `PUPPETEER_EXECUTABLE_PATH` unset. The app uses the `chrome` file under `~/.cache/ms-playwright/chromium-<number>/chrome-linux/`. The `<number>` is assigned by Playwright; do not type that placeholder into `.env`.
 
 Install Node.js 20 LTS and PM2:
 
