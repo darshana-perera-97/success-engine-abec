@@ -417,28 +417,34 @@ function resolvePuppeteerExecutablePath() {
   return "";
 }
 
-function buildWhatsappClientOptions(cleanUserId, webVersion) {
+function buildWhatsappClientOptions(cleanUserId, webVersion, { livePage = false } = {}) {
   const cacheType = String(process.env.WHATSAPP_WEB_VERSION_CACHE || "local").trim().toLowerCase();
   const options = {
     authStrategy: new LocalAuth({
       clientId: sanitizeUserIdForPath(cleanUserId),
       dataPath: path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)),
     }),
-    webVersion,
     authTimeoutMs: 45000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 15000,
     bypassCSP: true,
     puppeteer: buildPuppeteerOptions(),
+    // QR linking must load the current web.whatsapp.com page. A pinned HTML
+    // snapshot is often older than the version the phone accepts, so the scan
+    // shows "Couldn't link device".
+    useLiveWhatsappWeb: livePage === true,
   };
-  if (cacheType === "remote") {
-    options.webVersionCache = {
-      type: "remote",
-      remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
-      strict: false,
-    };
-  } else {
-    options.webVersionCache = { type: "local" };
+  if (!options.useLiveWhatsappWeb && webVersion) {
+    options.webVersion = webVersion;
+    if (cacheType === "remote") {
+      options.webVersionCache = {
+        type: "remote",
+        remotePath: WHATSAPP_WEB_VERSION_CACHE_REMOTE_PATH,
+        strict: false,
+      };
+    } else {
+      options.webVersionCache = { type: "local" };
+    }
   }
   return options;
 }
@@ -471,6 +477,8 @@ function buildPuppeteerOptions() {
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
+      // HeadlessChrome in the default user agent makes WhatsApp reject the link.
+      "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     ],
   };
   const executablePath = resolvePuppeteerExecutablePath();
@@ -701,6 +709,7 @@ function patchWhatsappWebJsClient() {
     const page = this.pupPage;
     if (!page) return;
     guardWhatsappPuppeteerPage(page, this.pupBrowser);
+    if (this.options.useLiveWhatsappWeb) return;
 
     try {
       const { type: webCacheType, ...webCacheOptions } = this.options.webVersionCache || { type: "local" };
@@ -2062,15 +2071,6 @@ async function startWhatsappSession(
     await delay(WHATSAPP_BROWSER_ORPHAN_PAUSE_MS);
   }
   await fs.mkdir(path.join(WHATSAPP_CONNECTIONS_DIR, sanitizeUserIdForPath(cleanUserId)), { recursive: true });
-  let client;
-  try {
-    const webVersion = await resolveWhatsappWebVersion();
-    client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion));
-  } catch (error) {
-    state.initializing = false;
-    state.recovering = false;
-    throw error;
-  }
   const requestedSilent = silentReconnect === true && !state.userRequestedQr;
   let restoreSilently = requestedSilent && !state.requireVisibleQr;
   if (requestedSilent) {
@@ -2082,6 +2082,19 @@ async function startWhatsappSession(
     }
   } else {
     clearSilentRestoreBudget(state);
+  }
+  const linkWithLivePage = !restoreSilently;
+  let client;
+  try {
+    const webVersion = linkWithLivePage ? "" : await resolveWhatsappWebVersion();
+    client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion, { livePage: linkWithLivePage }));
+  } catch (error) {
+    state.initializing = false;
+    state.recovering = false;
+    throw error;
+  }
+  if (linkWithLivePage) {
+    logEvent("whatsapp", "linking with live WhatsApp Web page", { userId: cleanUserId });
   }
   state.sessionGeneration = Number(state.sessionGeneration || 0) + 1;
   state.client = client;
