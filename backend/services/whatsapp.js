@@ -82,7 +82,7 @@ const { appendWhatsappIncoming, readWhatsappIncoming, uniqueWhatsappIncomingRows
 const { logEvent } = require("../lib/logger");
 const { resolveWhatsappWebVersion, invalidateWhatsappWebVersionCache } = require("./whatsappWebVersion");
 
-const AUTHENTICATED_STUCK_TIMEOUT_MS = 45 * 1000;
+const AUTHENTICATED_STUCK_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_BOOT_AUTH_TIMEOUT_MS = 90 * 1000;
 const WHATSAPP_PROFILE_PIC_TIMEOUT_MS = 8 * 1000;
 const WHATSAPP_READY_PROMOTION_INTERVAL_MS = 2 * 1000;
@@ -92,7 +92,7 @@ const WHATSAPP_INIT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS = 3;
 const WHATSAPP_SILENT_RECONNECT_BASE_MS = 5 * 1000;
 const WHATSAPP_SILENT_QR_GRACE_MS = 12 * 1000;
-const WHATSAPP_SILENT_RESTORE_MAX_MS = 15 * 1000;
+const WHATSAPP_SILENT_RESTORE_MAX_MS = 60 * 1000;
 const WHATSAPP_BROWSER_RESTART_PAUSE_MS = 1500;
 const WHATSAPP_BROWSER_ORPHAN_PAUSE_MS = 500;
 const WHATSAPP_RECONNECT_QUEUE_GAP_MS = 100;
@@ -477,8 +477,6 @@ function buildPuppeteerOptions() {
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
-      // HeadlessChrome in the default user agent makes WhatsApp reject the link.
-      "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     ],
   };
   const executablePath = resolvePuppeteerExecutablePath();
@@ -709,6 +707,15 @@ function patchWhatsappWebJsClient() {
     const page = this.pupPage;
     if (!page) return;
     guardWhatsappPuppeteerPage(page, this.pupBrowser);
+    try {
+      const currentAgent = typeof page.browser === "function" ? await page.browser().userAgent() : "";
+      const cleanedAgent = String(currentAgent || "").replace(/HeadlessChrome/gi, "Chrome");
+      if (cleanedAgent && cleanedAgent !== currentAgent && typeof page.setUserAgent === "function") {
+        await page.setUserAgent(cleanedAgent);
+      }
+    } catch {
+      // Keep the browser default if the user agent cannot be read.
+    }
     if (this.options.useLiveWhatsappWeb) return;
 
     try {
@@ -941,7 +948,10 @@ function enqueueWhatsappReconnect(
   if (!id || isWhatsappShuttingDown) return;
   const live = ensureWhatsappState(id);
   if (live.userRequestedQr && silentReconnect !== false) return;
-  if (whatsappReconnectActiveUserId === id) return;
+  if (whatsappReconnectActiveUserId === id) {
+    if (force) ensureWhatsappState(id).retryAfterCurrentTry = true;
+    return;
+  }
   if (whatsappReconnectQueuedIds.has(id)) return;
   whatsappReconnectQueuedIds.add(id);
   markQueuedWhatsappReconnect(id, silentReconnect);
@@ -1632,11 +1642,14 @@ async function revealSilentRestoreQr(state, client, userId) {
   }
 }
 
-function scheduleSilentRestoreDeadline(state, client, userId) {
+function scheduleSilentRestoreDeadline(state, client, userId, extraMs = 0) {
   if (!state) return;
   clearSilentRestoreDeadline(state);
   if (!state.silentRestoreStartedAt) state.silentRestoreStartedAt = Date.now();
-  const remaining = Math.max(0, WHATSAPP_SILENT_RESTORE_MAX_MS - (Date.now() - state.silentRestoreStartedAt));
+  const remaining =
+    Number(extraMs) > 0
+      ? Number(extraMs)
+      : Math.max(0, WHATSAPP_SILENT_RESTORE_MAX_MS - (Date.now() - state.silentRestoreStartedAt));
   state.silentRestoreDeadlineTimer = setTimeout(() => {
     state.silentRestoreDeadlineTimer = null;
     void forceQrAfterSilentRestoreTimeout(state, client, userId);
@@ -1655,6 +1668,18 @@ async function forceQrAfterSilentRestoreTimeout(state, client, userId) {
     state.status === "authenticated" ||
     state.status === "awaiting_qr_scan"
   ) {
+    return;
+  }
+  if (
+    Number(state.silentRestoreExtensions || 0) < 1 &&
+    (state.initializing || isWhatsappPuppeteerPageOpen(state))
+  ) {
+    state.silentRestoreExtensions = Number(state.silentRestoreExtensions || 0) + 1;
+    logEvent("whatsapp", "saved session still starting; waiting longer", {
+      userId: cleanUserId,
+      extension: state.silentRestoreExtensions,
+    });
+    scheduleSilentRestoreDeadline(state, client, cleanUserId, 30 * 1000);
     return;
   }
   logEvent("whatsapp", "silent restore timed out; showing QR", { userId: cleanUserId });
@@ -1739,7 +1764,10 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
   ) {
     return;
   }
-  if (whatsappReconnectActiveUserId === cleanUserId) return;
+  if (whatsappReconnectActiveUserId === cleanUserId) {
+    if (force) state.retryAfterCurrentTry = true;
+    return;
+  }
   if (whatsappReconnectQueuedIds.has(cleanUserId)) return;
   const exhausted = state.reconnectAttempts >= WHATSAPP_SILENT_RECONNECT_MAX_ATTEMPTS;
   if (exhausted) {
@@ -1785,8 +1813,34 @@ function scheduleSilentWhatsappReconnect(userId, { reason = "", force = false } 
   if (typeof state.reconnectTimer.unref === "function") state.reconnectTimer.unref();
 }
 
-function markWhatsappAuthenticatedTimeout(state, userId = "") {
+async function markWhatsappAuthenticatedTimeout(state, userId = "") {
   if (!state || state.status !== "authenticated") return;
+  const cleanUserId = String(userId || "").trim();
+  if (Number(state.authTimeoutExtensions || 0) < 2 && state.client) {
+    let waState = "";
+    try {
+      waState = String((await state.client.getState()) || "").toUpperCase();
+    } catch {
+      waState = "";
+    }
+    if (waState === "CONNECTED" || waState === "PAIRING" || waState === "OPENING") {
+      state.authTimeoutExtensions = Number(state.authTimeoutExtensions || 0) + 1;
+      logEvent("whatsapp", "link still in progress; waiting longer", {
+        userId: cleanUserId,
+        waState,
+        extension: state.authTimeoutExtensions,
+      });
+      try {
+        await tryPromoteAuthenticatedWhatsappSession(state, state.client, cleanUserId);
+      } catch {
+        // Promotion is best-effort; the ready event can still arrive.
+      }
+      if (state.status !== "authenticated") return;
+      clearWhatsappAuthenticatedTimeout(state);
+      scheduleWhatsappAuthenticatedTimeout(state, cleanUserId);
+      return;
+    }
+  }
   state.authTimedOut = true;
   state.status = "error";
   state.readyAt = 0;
@@ -1801,7 +1855,6 @@ function markWhatsappAuthenticatedTimeout(state, userId = "") {
       // Ignore cleanup failure; the timed-out client has already been detached.
     });
   }
-  const cleanUserId = String(userId || "").trim();
   if (!cleanUserId) return;
   userHasSavedWhatsappSession(cleanUserId)
     .then((hasSaved) => {
@@ -2083,10 +2136,11 @@ async function startWhatsappSession(
   } else {
     clearSilentRestoreBudget(state);
   }
-  const linkWithLivePage = !restoreSilently;
+  const pinnedVersion = String(process.env.WHATSAPP_WEB_VERSION || "").trim();
+  const linkWithLivePage = !pinnedVersion;
   let client;
   try {
-    const webVersion = linkWithLivePage ? "" : await resolveWhatsappWebVersion();
+    const webVersion = linkWithLivePage ? "" : pinnedVersion;
     client = new Client(buildWhatsappClientOptions(cleanUserId, webVersion, { livePage: linkWithLivePage }));
   } catch (error) {
     state.initializing = false;
@@ -2116,6 +2170,8 @@ async function startWhatsappSession(
     state.reconnectAttempts = 0;
   }
   state.authTimedOut = false;
+  state.authTimeoutExtensions = 0;
+  state.silentRestoreExtensions = 0;
   state.qrRecoveryInFlight = false;
   clearWhatsappAuthenticatedTimeout(state);
   clearWhatsappQrDeadline(state);

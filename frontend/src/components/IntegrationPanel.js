@@ -170,8 +170,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const reconnectStartedAtRef = useRef(0);
   const linkingStartedAtRef = useRef(0);
   const connectingStartedAtRef = useRef(0);
-  const forcedQrRef = useRef(false);
-  const handleRegenerateQrRef = useRef(async () => {});
   const preferQrUntilRef = useRef(0);
   const userId = String(currentUser?.id || "").trim();
   const isAdmin = String(currentUser?.role || "").trim() === "Admin";
@@ -196,7 +194,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
   const statusKey = String(state?.status || "disconnected");
   const isSessionReady = statusKey === "connected";
   const isLinkingWhatsapp = statusKey === "authenticated";
-  const linkingTakingLong = isLinkingWhatsapp && linkingWaitMs >= 20000;
+  const linkingTakingLong = isLinkingWhatsapp && linkingWaitMs >= 60000;
   const hasQrCode = canShowQrCode && Boolean(state?.qrCodeDataUrl);
   const isConnectingForQr = statusKey === "connecting" && !hasQrCode;
   const connectingTakingLong = isConnectingForQr && connectingWaitMs >= 20000;
@@ -208,7 +206,7 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
     !canManage &&
     (statusKey === "connecting" || statusKey === "reconnecting" || statusKey === "awaiting_qr_scan");
   const isReconnecting = statusKey === "reconnecting";
-  const reconnectTakingLong = isReconnecting && reconnectWaitMs >= 15000;
+  const reconnectTakingLong = isReconnecting && reconnectWaitMs >= 45000;
   const canRegenerateQr =
     canShowQrCode &&
     !isSessionReady &&
@@ -285,7 +283,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
     const keepClock = statusKey === "reconnecting" || statusKey === "connecting";
     if (!keepClock) {
       reconnectStartedAtRef.current = 0;
-      forcedQrRef.current = false;
       setReconnectWaitMs(0);
       return undefined;
     }
@@ -448,7 +445,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
 
   const handleDisconnectToQr = async () => {
     if (!userId || !canShowQrCode || isSessionReady || isLinkingWhatsapp) return;
-    forcedQrRef.current = true;
     preferQrUntilRef.current = Date.now() + 90 * 1000;
     reconnectStartedAtRef.current = 0;
     setReconnectWaitMs(0);
@@ -501,20 +497,6 @@ export function IntegrationPanel({ currentUser, branchWhatsappEnabled = false, b
       setContext({ ...defaultContext, ...response.context });
     }
   };
-  handleRegenerateQrRef.current = handleRegenerateQr;
-
-  // If a saved session is still "reconnecting" after the server grace period,
-  // ask for a visible QR once. A newer server does this on its own; this covers
-  // a restore that never leaves the spinner.
-  useEffect(() => {
-    if (statusKey !== "reconnecting") return undefined;
-    if (reconnectWaitMs < 20000 || !canShowQrCode || hasQrCode || loading || forcedQrRef.current) {
-      return undefined;
-    }
-    forcedQrRef.current = true;
-    handleRegenerateQrRef.current();
-    return undefined;
-  }, [statusKey, reconnectWaitMs, canShowQrCode, hasQrCode, loading]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
