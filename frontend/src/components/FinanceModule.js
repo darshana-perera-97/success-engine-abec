@@ -355,6 +355,8 @@ const FinanceModule = ({
   const [newDesc, setNewDesc] = useState("");
   const [newCurrency, setNewCurrency] = useState("LKR");
   const [newDueDate, setNewDueDate] = useState("");
+  const [newIssueDate, setNewIssueDate] = useState(() => getLocalDateIso());
+  const isAdmin = String(userRole || "").trim().toLowerCase() === "admin";
   const [newAttachmentLink, setNewAttachmentLink] = useState("");
   const [newAttachmentFile, setNewAttachmentFile] = useState(null);
   const [newPaymentAccountId, setNewPaymentAccountId] = useState("");
@@ -572,6 +574,7 @@ const FinanceModule = ({
     setNewAmount("");
     setNewDesc("");
     setNewDueDate("");
+    setNewIssueDate(getLocalDateIso());
     setNewAttachmentLink("");
     setNewAttachmentFile(null);
     setNewPaymentAccountId("");
@@ -609,6 +612,12 @@ const FinanceModule = ({
         return;
       }
     }
+    const todayIso = getLocalDateIso();
+    const effectiveDate = isAdmin ? String(newIssueDate || "").trim() : todayIso;
+    if (isAdmin && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) {
+      setCreateError("Select a valid effective date.");
+      return;
+    }
     setIsCreatingInvoice(true);
     setIsCreateOpen(false);
     onNotify?.(
@@ -626,8 +635,8 @@ const FinanceModule = ({
       amount: newIsWaveOff ? 0 : parseFloat(newAmount),
       currency: newCurrency,
       description: newDesc,
-      issueDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-      dueDate: newIsWaveOff ? (/* @__PURE__ */ new Date()).toISOString().split("T")[0] : newDueDate,
+      issueDate: effectiveDate,
+      dueDate: newIsWaveOff ? effectiveDate : newDueDate,
       status: newIsWaveOff ? "Wave-off Pending" : "Pending",
       isWaveOff: newIsWaveOff || undefined,
       waveOffReason: newIsWaveOff ? String(newWaveOffReason || "").trim() : undefined,
@@ -1310,7 +1319,21 @@ const FinanceModule = ({
             }
           )
         ] }),
-        /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
+        isAdmin ? /* @__PURE__ */ jsxs("div", { children: [
+          /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Effective Date" }),
+          /* @__PURE__ */ jsx(
+            "input",
+            {
+              required: true,
+              type: "date",
+              className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500",
+              value: newIssueDate,
+              onChange: (e) => setNewIssueDate(e.target.value)
+            }
+          ),
+          /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1.5", children: "Past dates are allowed. This is the invoice issue date." })
+        ] }) : null,
+        /* @__PURE__ */ jsxs("div", { className: isAdmin ? "" : "md:col-span-2", children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Due Date" }),
           /* @__PURE__ */ jsx(
             "input",
@@ -1318,12 +1341,13 @@ const FinanceModule = ({
               required: !newIsWaveOff,
               disabled: newIsWaveOff,
               type: "date",
-              min: getLocalDateIso(),
+              ...(isAdmin ? {} : { min: getLocalDateIso() }),
               className: "w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-md outline-none focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-400",
               value: newDueDate,
               onChange: (e) => setNewDueDate(e.target.value)
             }
-          )
+          ),
+          isAdmin && !newIsWaveOff ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1.5", children: "Past dates are allowed." }) : null
         ] }),
         !newIsWaveOff ? /* @__PURE__ */ jsxs("div", { className: "md:col-span-2", children: [
           /* @__PURE__ */ jsx("label", { className: "text-xs font-semibold text-slate-500 uppercase block mb-1", children: "Payment account" }),

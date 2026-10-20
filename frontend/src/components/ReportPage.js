@@ -24,6 +24,8 @@ const SECTION_ICONS = {
   visa: Plane,
 };
 
+const ALL_CONDITIONS = "all";
+
 const defaultFilters = {
   dateFrom: "",
   dateTo: "",
@@ -69,6 +71,7 @@ const ReportPage = ({
   onSelectStudent = null,
 }) => {
   const [filters, setFilters] = React.useState(defaultFilters);
+  const [selectedCondition, setSelectedCondition] = React.useState(ALL_CONDITIONS);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [reqStudents, setReqStudents] = React.useState([]);
   const [reqLoading, setReqLoading] = React.useState(true);
@@ -142,6 +145,23 @@ const ReportPage = ({
   );
 
   const activeFilterCount = React.useMemo(() => countActiveFilters(filters), [filters]);
+
+  const visibleSections = React.useMemo(() => {
+    if (selectedCondition === ALL_CONDITIONS) return REPORT_SECTIONS;
+    return REPORT_SECTIONS.map((section) => ({
+      ...section,
+      metrics: section.metrics.filter((metric) => metric.id === selectedCondition),
+    })).filter((section) => section.metrics.length > 0);
+  }, [selectedCondition]);
+
+  const selectedConditionLabel = React.useMemo(() => {
+    if (selectedCondition === ALL_CONDITIONS) return "All conditions";
+    for (const section of REPORT_SECTIONS) {
+      const metric = section.metrics.find((entry) => entry.id === selectedCondition);
+      if (metric) return metric.label;
+    }
+    return "All conditions";
+  }, [selectedCondition]);
 
   const updateFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -239,8 +259,8 @@ const ReportPage = ({
             /* @__PURE__ */ jsx("p", {
               className: "text-sm text-slate-500",
               children: scopeLabel
-                ? `Allocated student metrics for ${scopeLabel}.`
-                : "Allocated student metrics for your account.",
+                ? `Allocated student metrics for ${scopeLabel}. Showing ${selectedConditionLabel}.`
+                : `Allocated student metrics for your account. Showing ${selectedConditionLabel}.`,
             }),
             !reqLoading && /* @__PURE__ */ jsxs("p", {
               className: "text-xs text-slate-400 mt-1",
@@ -255,6 +275,32 @@ const ReportPage = ({
             }),
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 shrink-0", children: [
+            /* @__PURE__ */ jsxs("label", {
+              className: "flex items-center gap-2 text-sm text-slate-600",
+              children: [
+                /* @__PURE__ */ jsx("span", {
+                  className: "font-semibold whitespace-nowrap",
+                  children: "Condition",
+                }),
+                /* @__PURE__ */ jsxs("select", {
+                  value: selectedCondition,
+                  onChange: (e) => setSelectedCondition(e.target.value),
+                  "aria-label": "Report condition",
+                  className: "min-w-[16rem] max-w-xs px-3 py-2 text-sm border border-gray-200 rounded-md bg-white text-slate-800",
+                  children: [
+                    /* @__PURE__ */ jsx("option", { value: ALL_CONDITIONS, children: "All conditions" }),
+                    ...REPORT_SECTIONS.map((section) =>
+                      /* @__PURE__ */ jsx("optgroup", {
+                        label: section.title,
+                        children: section.metrics.map((metric) =>
+                          /* @__PURE__ */ jsx("option", { value: metric.id, children: metric.label }, metric.id)
+                        ),
+                      }, section.id)
+                    ),
+                  ],
+                }),
+              ],
+            }),
             /* @__PURE__ */ jsxs(Button, {
               onClick: handlePreviewPdf,
               disabled: exportBusy,
@@ -417,7 +463,7 @@ const ReportPage = ({
           }),
         }),
 
-      REPORT_SECTIONS.map((section) => {
+      visibleSections.map((section) => {
         const Icon = SECTION_ICONS[section.id] || BarChart3;
         return /* @__PURE__ */ jsxs("section", {
           key: section.id,
@@ -449,7 +495,7 @@ const ReportPage = ({
               ],
             }),
             /* @__PURE__ */ jsx("div", {
-              className: "flex flex-row gap-3 w-full",
+              className: section.metrics.length === 1 ? "flex flex-row gap-3 w-full max-w-xs" : "flex flex-row gap-3 w-full",
               children: section.metrics.map((metric) =>
                 /* @__PURE__ */ jsx(MetricTile, {
                   label: metric.label,
