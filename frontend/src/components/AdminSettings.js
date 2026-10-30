@@ -1,12 +1,45 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
-import { Globe, Save, Settings, Landmark, Trash2, Wallet, MessageSquare } from "lucide-react";
+import { Archive, Download, Globe, Save, Settings, Landmark, Trash2, Wallet, MessageSquare } from "lucide-react";
 import { Button } from "./Button";
-import { createCountry, createPaymentAccount, deleteCountry, deletePaymentAccount, getBranches, getCountries, getPaymentAccounts, updateBranchCountries } from "../authApi";
+import { createBackup, createCountry, createPaymentAccount, deleteBackup, deleteCountry, deletePaymentAccount, downloadBackup, getBackups, getBranches, getCountries, getPaymentAccounts, updateBranchCountries } from "../authApi";
 import { getStoredBranchCountries } from "../utils/branchCountries";
 import { TableSkeletonRows } from "./LoadingPlaceholder";
 import { dt, DataTablePagination } from "./DataTable";
 import { useClientPagination } from "../hooks/usePagination";
+
+function formatBackupWhen(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatEta(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "Estimating time remaining…";
+  if (value < 10) return "Less than 10 seconds remaining";
+  if (value < 60) return `About ${Math.round(value)} seconds remaining`;
+  const minutes = Math.round(value / 60);
+  if (minutes < 60) return minutes === 1 ? "About 1 minute remaining" : `About ${minutes} minutes remaining`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!rest) return hours === 1 ? "About 1 hour remaining" : `About ${hours} hours remaining`;
+  return `About ${hours} hr ${rest} min remaining`;
+}
+
+function formatBackupSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onSaveSystemData, paymentAccounts = [], onPaymentAccountsChange }) => {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -65,6 +98,14 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   const [branchCountriesError, setBranchCountriesError] = useState("");
   const [branchCountriesSuccess, setBranchCountriesSuccess] = useState("");
   const [isSavingBranchCountriesSettings, setIsSavingBranchCountriesSettings] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [backupJob, setBackupJob] = useState(null);
+  const [backupsReady, setBackupsReady] = useState(false);
+  const [backupError, setBackupError] = useState("");
+  const [backupSuccess, setBackupSuccess] = useState("");
+  const [downloadingBackupName, setDownloadingBackupName] = useState("");
+  const [deletingBackupName, setDeletingBackupName] = useState("");
+  const backupRunning = backupJob?.status === "preparing" || backupJob?.status === "running";
 
   const loadBranches = async () => {
     try {
@@ -113,11 +154,37 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     }
   };
 
+  const loadBackups = async () => {
+    try {
+      const result = await getBackups();
+      if (!result.ok) {
+        setBackupError(result.error || "Failed to load backups.");
+        return;
+      }
+      setBackups(result.data);
+      setBackupJob(result.job || null);
+      if (result.job?.status === "failed" && result.job.error) {
+        setBackupError(result.job.error);
+      }
+    } finally {
+      setBackupsReady(true);
+    }
+  };
+
   useEffect(() => {
     loadCountries();
     loadBranches();
     loadPaymentAccounts();
+    loadBackups();
   }, []);
+
+  useEffect(() => {
+    if (!backupRunning) return undefined;
+    const timer = window.setInterval(() => {
+      loadBackups();
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [backupRunning]);
 
   useEffect(() => {
     if (Array.isArray(paymentAccounts) && paymentAccounts.length > 0) {
@@ -206,6 +273,14 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
     setPageSize: setPaymentPageSize,
     totalRows: paymentTotalRows,
   } = useClientPagination(localPaymentAccounts, localPaymentAccounts.length);
+  const {
+    pageItems: paginatedBackups,
+    page: backupPage,
+    setPage: setBackupPage,
+    pageSize: backupPageSize,
+    setPageSize: setBackupPageSize,
+    totalRows: backupTotalRows,
+  } = useClientPagination(backups, backups.map((backup) => backup.name).join("|"));
 
   return /* @__PURE__ */ jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxs("div", { children: [
@@ -768,6 +843,112 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
         rowLabel: "accounts",
         className: "border-t-0 bg-white",
       }) : null
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4", children: [
+      /* @__PURE__ */ jsxs("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", children: [
+        /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center gap-2", children: [
+            /* @__PURE__ */ jsx(Archive, { size: 18, className: "text-slate-600" }),
+            /* @__PURE__ */ jsx("h3", { className: "text-base font-semibold text-slate-900", children: "Backup" })
+          ] }),
+          /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 max-w-2xl", children: "Create a zip of the server data folder, except WhatsApp connection files. Backups are saved on the server with the date and time, and can be downloaded or deleted." })
+        ] }),
+        /* @__PURE__ */ jsx(Button, {
+          type: "button",
+          isLoading: backupRunning,
+          disabled: backupRunning,
+          onClick: async () => {
+            setBackupError("");
+            setBackupSuccess("");
+            const result = await createBackup();
+            if (result.job) setBackupJob(result.job);
+            if (!result.ok) {
+              setBackupError(result.error || "Failed to start backup.");
+            }
+          },
+          children: "Backup now"
+        })
+      ] }),
+      backupError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: backupError }) : null,
+      backupSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: backupSuccess }) : null,
+      backupRunning ? /* @__PURE__ */ jsxs("div", { className: "max-w-3xl space-y-2", children: [
+        /* @__PURE__ */ jsx("div", { className: "h-2 overflow-hidden rounded-full bg-slate-100", children: /* @__PURE__ */ jsx("div", { className: `h-full bg-slate-900 transition-all duration-500 ${backupJob?.status === "preparing" ? "w-1/3 animate-pulse" : ""}`, style: backupJob?.status === "running" ? { width: `${Math.max(backupJob.percent || 0, 2)}%` } : undefined }) }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600", children: backupJob?.etaSeconds == null ? `Estimating time remaining…${backupJob?.percent ? ` · ${backupJob.percent}%` : ""}` : `${formatEta(backupJob.etaSeconds)} · ${backupJob.percent || 0}%` })
+      ] }) : backupJob?.status === "failed" ? null : backupJob?.status === "completed" && backupJob.completedAt ? /* @__PURE__ */ jsx("p", { className: "text-xs text-emerald-700", children: `Completed ${formatBackupWhen(backupJob.completedAt)}` }) : backups[0]?.createdAt ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Completed ${formatBackupWhen(backups[0].createdAt)}` }) : null,
+      /* @__PURE__ */ jsxs("div", { className: `${dt.embedded} max-w-3xl`, children: [
+        /* @__PURE__ */ jsxs("table", { className: dt.table, children: [
+          /* @__PURE__ */ jsx("thead", { className: dt.head, children: /* @__PURE__ */ jsxs("tr", { children: [
+            /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "File" }),
+            /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Completed" }),
+            /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-left font-semibold", children: "Size" }),
+            /* @__PURE__ */ jsx("th", { className: "px-3 py-2.5 text-right font-semibold", children: " " })
+          ] }) }),
+          /* @__PURE__ */ jsx("tbody", { className: dt.body, children: !backupsReady ? /* @__PURE__ */ jsx(TableSkeletonRows, { rows: 3, cols: 4, compact: true }) : backups.length === 0 ? /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", { colSpan: 4, className: dt.emptyRow, children: "No backups yet. Use Backup now to create one." }) }) : paginatedBackups.map((backup) => /* @__PURE__ */ jsxs("tr", { className: dt.row, children: [
+            /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-800 font-medium break-all", children: backup.name }),
+            /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-600 whitespace-nowrap", children: formatBackupWhen(backup.createdAt) }),
+            /* @__PURE__ */ jsx("td", { className: "px-3 py-2.5 text-slate-600 whitespace-nowrap", children: formatBackupSize(backup.sizeBytes) }),
+            /* @__PURE__ */ jsxs("td", { className: "px-3 py-2.5 text-right whitespace-nowrap", children: [
+              /* @__PURE__ */ jsx(Button, {
+                type: "button",
+                variant: "secondary",
+                size: "sm",
+                className: "mr-2",
+                isLoading: downloadingBackupName === backup.name,
+                onClick: async () => {
+                  setBackupError("");
+                  setBackupSuccess("");
+                  setDownloadingBackupName(backup.name);
+                  const result = await downloadBackup(backup.name, backup.sizeBytes);
+                  setDownloadingBackupName("");
+                  if (!result.ok) {
+                    setBackupError(result.error || "Failed to download backup.");
+                  }
+                },
+                children: /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center gap-1.5", children: [
+                  /* @__PURE__ */ jsx(Download, { size: 14 }),
+                  "Download"
+                ] })
+              }),
+              /* @__PURE__ */ jsx(Button, {
+                type: "button",
+                variant: "ghost",
+                size: "sm",
+                className: "text-rose-600 hover:text-rose-700 hover:bg-rose-50",
+                isLoading: deletingBackupName === backup.name,
+                onClick: async () => {
+                  const when = formatBackupWhen(backup.createdAt);
+                  const confirmed = window.confirm(`Delete backup ${backup.name}${when ? ` from ${when}` : ""}? This cannot be undone.`);
+                  if (!confirmed) return;
+                  setBackupError("");
+                  setBackupSuccess("");
+                  setDeletingBackupName(backup.name);
+                  const result = await deleteBackup(backup.name);
+                  setDeletingBackupName("");
+                  if (!result.ok) {
+                    setBackupError(result.error || "Failed to delete backup.");
+                    return;
+                  }
+                  setBackups(result.data);
+                  setBackupSuccess("Backup deleted.");
+                },
+                children: /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center gap-1.5", children: [
+                  /* @__PURE__ */ jsx(Trash2, { size: 14 }),
+                  "Delete"
+                ] })
+              })
+            ] })
+          ] }, backup.name)) })
+        ] }),
+        backupsReady && backups.length > 0 ? /* @__PURE__ */ jsx(DataTablePagination, {
+          page: backupPage,
+          pageSize: backupPageSize,
+          totalRows: backupTotalRows,
+          onPageChange: setBackupPage,
+          onPageSizeChange: setBackupPageSize,
+          rowLabel: "backups",
+          className: "border-t-0 bg-white",
+        }) : null
       ] })
     ] })
   ] });

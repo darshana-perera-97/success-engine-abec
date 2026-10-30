@@ -2477,6 +2477,83 @@ export async function reconnectAdminWhatsappSession(userId) {
   }
 }
 
+export async function getBackups() {
+  try {
+    const res = await fetch(`${API_BASE}/api/backups`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load backups." };
+    }
+    return { ok: true, data: data.data, job: data.job || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createBackup() {
+  try {
+    const res = await fetch(`${API_BASE}/api/backups`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.job) {
+      return { ok: false, error: data.error || "Failed to start backup.", job: data.job || null };
+    }
+    return { ok: true, job: data.job };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function deleteBackup(name) {
+  const fileName = String(name || "").trim();
+  if (!fileName) return { ok: false, error: "Backup file is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/backups/${encodeURIComponent(fileName)}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to delete backup." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function downloadBackup(name, sizeBytes) {
+  const fileName = String(name || "").trim();
+  if (!fileName) return { ok: false, error: "Backup file is required." };
+  const url = `${API_BASE}/api/backups/${encodeURIComponent(fileName)}`;
+  const largeFile = Number(sizeBytes) > 80 * 1024 * 1024;
+  if (largeFile) {
+    const iframe = document.createElement("iframe");
+    iframe.hidden = true;
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    window.setTimeout(() => iframe.remove(), 10 * 60 * 1000);
+    return { ok: true };
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.error || "Failed to download backup." };
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
 export async function decideInvoiceAmountChangeRequest(requestId, payload) {
   const id = String(requestId || "").trim();
   if (!id) return { ok: false, error: "Request id is required." };

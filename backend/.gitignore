@@ -1,6 +1,7 @@
 node_modules/
 .env
 /data
+/backups
 .wwebjs_cache
 
 # Runtime data — live server only; not committed. Ignore bulky/sensitive subdirs:
@@ -9,3 +10,4 @@ node_modules/
 /data/whatsapp-connections/
 /data/studentDocs/
 /data/assets/
+/backups/
