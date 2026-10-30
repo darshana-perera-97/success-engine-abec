@@ -1,5 +1,5 @@
 const { spawn, execFile } = require("child_process");
-const { createReadStream, createWriteStream } = require("fs");
+const { createReadStream } = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const { pipeline } = require("stream/promises");
@@ -123,6 +123,17 @@ const CRC_TABLE = (() => {
 })();
 
 function createCrc32() {
+  if (typeof zlib.crc32 === "function") {
+    let crc = 0;
+    return {
+      update(buffer) {
+        crc = zlib.crc32(buffer, crc);
+      },
+      digest() {
+        return crc >>> 0;
+      },
+    };
+  }
   let crc = 0xffffffff;
   return {
     update(buffer) {
@@ -188,7 +199,26 @@ async function collectEntries(dir, prefix, entries) {
   }
 }
 
-async function compressFile(out, filePath) {
+async function writeAt(handle, chunk, position) {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset, position + offset);
+    if (!bytesWritten) throw backupError("Could not write the backup archive.");
+    offset += bytesWritten;
+  }
+}
+
+function zip64Extra(values) {
+  const extra = Buffer.alloc(4 + values.length * 8);
+  extra.writeUInt16LE(0x0001, 0);
+  extra.writeUInt16LE(values.length * 8, 2);
+  values.forEach((value, index) => {
+    extra.writeBigUInt64LE(BigInt(value), 4 + index * 8);
+  });
+  return extra;
+}
+
+async function compressFile(handle, state, filePath, level) {
   let uncompressedSize = 0;
   let compressedSize = 0;
   const crc = createCrc32();
@@ -207,94 +237,90 @@ async function compressFile(out, filePath) {
   });
   const writer = new Writable({
     write(chunk, _encoding, callback) {
-      if (out.write(chunk)) {
-        callback();
-        return;
-      }
-      out.once("drain", callback);
+      const position = state.offset;
+      state.offset += chunk.length;
+      writeAt(handle, chunk, position).then(() => callback()).catch(callback);
     },
   });
-  await pipeline(createReadStream(filePath), countInput, zlib.createDeflateRaw({ level: 6 }), countOutput, writer);
+  await pipeline(createReadStream(filePath), countInput, zlib.createDeflateRaw({ level }), countOutput, writer);
   return { crc: crc.digest(), uncompressedSize, compressedSize, method: 8 };
 }
 
-async function appendZipEntry(out, state, entry) {
-  const zipName = entry.type === "dir" ? `${entry.rel}/` : entry.rel;
-  const nameBuf = Buffer.from(zipName, "utf8");
-  if (nameBuf.length > 0xffff) {
-    throw backupError(`Path is too long to store in a zip: ${zipName}`);
-  }
-  const dos = dosDateTime(entry.stat.mtime);
-  const localOffset = state.offset;
-  if (localOffset > ZIP32_MAX) {
-    throw backupError("Backup is too large for a standard zip archive.");
-  }
+function localHeader({ nameBuf, dos, method, flags, crc, compressedSize, uncompressedSize, version, extraLen }) {
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(version, 4);
+  header.writeUInt16LE(flags, 6);
+  header.writeUInt16LE(method, 8);
+  header.writeUInt16LE(dos.time, 10);
+  header.writeUInt16LE(dos.date, 12);
+  header.writeUInt32LE(crc >>> 0, 14);
+  header.writeUInt32LE(compressedSize >>> 0, 18);
+  header.writeUInt32LE(uncompressedSize >>> 0, 22);
+  header.writeUInt16LE(nameBuf.length, 26);
+  header.writeUInt16LE(extraLen, 28);
+  return header;
+}
 
-  let method = 0;
-  let crc = 0;
-  let uncompressedSize = 0;
-  let compressedSize = 0;
-  let payload = null;
+function centralHeader(record, extraLen) {
+  const zip64Sizes = Boolean(record.zip64Sizes);
+  const zip64Offset = record.localOffset > ZIP32_MAX;
+  const zip64 = zip64Sizes || zip64Offset;
+  const header = Buffer.alloc(46);
+  header.writeUInt32LE(0x02014b50, 0);
+  header.writeUInt16LE((3 << 8) | (zip64 ? 45 : 20), 4);
+  header.writeUInt16LE(zip64 ? 45 : 20, 6);
+  header.writeUInt16LE(record.flags, 8);
+  header.writeUInt16LE(record.method, 10);
+  header.writeUInt16LE(record.dos.time, 12);
+  header.writeUInt16LE(record.dos.date, 14);
+  header.writeUInt32LE(record.crc >>> 0, 16);
+  header.writeUInt32LE(zip64Sizes ? ZIP32_MAX : record.compressedSize >>> 0, 20);
+  header.writeUInt32LE(zip64Sizes ? ZIP32_MAX : record.uncompressedSize >>> 0, 24);
+  header.writeUInt16LE(record.nameBuf.length, 28);
+  header.writeUInt16LE(extraLen, 30);
+  header.writeUInt16LE(0, 32);
+  header.writeUInt16LE(0, 34);
+  header.writeUInt16LE(0, 36);
+  header.writeUInt32LE(record.externalAttr >>> 0, 38);
+  header.writeUInt32LE(zip64Offset ? ZIP32_MAX : record.localOffset >>> 0, 42);
+  return header;
+}
 
-  if (entry.type === "symlink") {
-    const target = await fs.readlink(entry.full);
-    payload = Buffer.from(target, "utf8");
-    const crc32 = createCrc32();
-    crc32.update(payload);
-    crc = crc32.digest();
-    uncompressedSize = payload.length;
-    compressedSize = payload.length;
-  } else if (entry.type === "file") {
-    if (entry.stat.size >= ZIP32_MAX) {
-      throw backupError(`File is too large to store in a standard zip: ${entry.rel}`);
-    }
-    if (entry.stat.size === 0) {
-      method = 0;
-    } else {
-      const header = localHeader({ nameBuf, dos, method: 8, flags: 0x0008, crc: 0, compressedSize: 0, uncompressedSize: 0 });
-      await writeToStream(out, header);
-      await writeToStream(out, nameBuf);
-      state.offset += header.length + nameBuf.length;
-      const compressed = await compressFile(out, entry.full);
-      if (compressed.compressedSize > ZIP32_MAX || compressed.uncompressedSize > ZIP32_MAX) {
-        throw backupError(`File is too large to store in a standard zip: ${entry.rel}`);
-      }
-      const descriptor = Buffer.alloc(16);
-      descriptor.writeUInt32LE(0x08074b50, 0);
-      descriptor.writeUInt32LE(compressed.crc, 4);
-      descriptor.writeUInt32LE(compressed.compressedSize, 8);
-      descriptor.writeUInt32LE(compressed.uncompressedSize, 12);
-      await writeToStream(out, descriptor);
-      state.offset += compressed.compressedSize + descriptor.length;
-      state.records.push({
-        nameBuf,
-        dos,
-        method: 8,
-        flags: 0x0008,
-        crc: compressed.crc,
-        compressedSize: compressed.compressedSize,
-        uncompressedSize: compressed.uncompressedSize,
-        localOffset,
-        externalAttr: 0,
-      });
-      return;
-    }
-  }
+function centralExtra(record) {
+  const values = [];
+  if (record.zip64Sizes) values.push(record.uncompressedSize, record.compressedSize);
+  if (record.localOffset > ZIP32_MAX) values.push(record.localOffset);
+  return values.length ? zip64Extra(values) : Buffer.alloc(0);
+}
 
+async function appendKnownEntry(handle, state, entry, fields) {
+  const { nameBuf, dos, method, crc, compressedSize, uncompressedSize, payload, mode, zip64Sizes } = fields;
+  const extra = zip64Sizes ? zip64Extra([uncompressedSize, compressedSize]) : Buffer.alloc(0);
   const header = localHeader({
     nameBuf,
     dos,
     method,
     flags: 0,
     crc,
-    compressedSize,
-    uncompressedSize,
+    compressedSize: zip64Sizes ? ZIP32_MAX : compressedSize,
+    uncompressedSize: zip64Sizes ? ZIP32_MAX : uncompressedSize,
+    version: zip64Sizes ? 45 : 20,
+    extraLen: extra.length,
   });
-  await writeToStream(out, header);
-  await writeToStream(out, nameBuf);
-  if (payload && payload.length) await writeToStream(out, payload);
-  state.offset += header.length + nameBuf.length + (payload ? payload.length : 0);
-  const mode = entry.type === "symlink" ? 0o120777 : entry.type === "dir" ? 0o040755 : 0o100644;
+  const localOffset = state.offset;
+  await writeAt(handle, header, state.offset);
+  state.offset += header.length;
+  await writeAt(handle, nameBuf, state.offset);
+  state.offset += nameBuf.length;
+  if (extra.length) {
+    await writeAt(handle, extra, state.offset);
+    state.offset += extra.length;
+  }
+  if (payload && payload.length) {
+    await writeAt(handle, payload, state.offset);
+    state.offset += payload.length;
+  }
   state.records.push({
     nameBuf,
     dos,
@@ -305,89 +331,194 @@ async function appendZipEntry(out, state, entry) {
     uncompressedSize,
     localOffset,
     externalAttr: mode << 16,
+    zip64Sizes,
   });
 }
 
-function localHeader({ nameBuf, dos, method, flags, crc, compressedSize, uncompressedSize }) {
-  const header = Buffer.alloc(30);
-  header.writeUInt32LE(0x04034b50, 0);
-  header.writeUInt16LE(20, 4);
-  header.writeUInt16LE(flags, 6);
-  header.writeUInt16LE(method, 8);
-  header.writeUInt16LE(dos.time, 10);
-  header.writeUInt16LE(dos.date, 12);
-  header.writeUInt32LE(crc >>> 0, 14);
-  header.writeUInt32LE(compressedSize >>> 0, 18);
-  header.writeUInt32LE(uncompressedSize >>> 0, 22);
-  header.writeUInt16LE(nameBuf.length, 26);
-  header.writeUInt16LE(0, 28);
-  return header;
+async function appendZipEntry(handle, state, entry, level) {
+  const zipName = entry.type === "dir" ? `${entry.rel}/` : entry.rel;
+  const nameBuf = Buffer.from(zipName, "utf8");
+  if (nameBuf.length > 0xffff) {
+    throw backupError(`Path is too long to store in a zip: ${zipName}`);
+  }
+  const dos = dosDateTime(entry.stat.mtime);
+  const fileSize = entry.type === "file" ? entry.stat.size : 0;
+  const zip64File = Boolean(state.forceZip64) || fileSize >= ZIP32_MAX - 8 * 1024 * 1024;
+
+  if (entry.type === "symlink") {
+    const target = await fs.readlink(entry.full);
+    const payload = Buffer.from(target, "utf8");
+    const crc32 = createCrc32();
+    crc32.update(payload);
+    await appendKnownEntry(handle, state, entry, {
+      nameBuf,
+      dos,
+      method: 0,
+      crc: crc32.digest(),
+      compressedSize: payload.length,
+      uncompressedSize: payload.length,
+      payload,
+      mode: 0o120777,
+      zip64Sizes: zip64File,
+    });
+  } else if (entry.type !== "file" || fileSize === 0) {
+    await appendKnownEntry(handle, state, entry, {
+      nameBuf,
+      dos,
+      method: 0,
+      crc: 0,
+      compressedSize: 0,
+      uncompressedSize: 0,
+      payload: null,
+      mode: entry.type === "dir" ? 0o040755 : 0o100644,
+      zip64Sizes: entry.type === "file" && zip64File,
+    });
+  } else {
+    const localOffset = state.offset;
+    const extra = zip64File ? zip64Extra([0, 0]) : Buffer.alloc(0);
+    const header = localHeader({
+      nameBuf,
+      dos,
+      method: 8,
+      flags: 0x0008,
+      crc: 0,
+      compressedSize: zip64File ? ZIP32_MAX : 0,
+      uncompressedSize: zip64File ? ZIP32_MAX : 0,
+      version: zip64File ? 45 : 20,
+      extraLen: extra.length,
+    });
+    await writeAt(handle, header, state.offset);
+    state.offset += header.length;
+    await writeAt(handle, nameBuf, state.offset);
+    state.offset += nameBuf.length;
+    const extraSizesPos = extra.length ? state.offset + 4 : 0;
+    if (extra.length) {
+      await writeAt(handle, extra, state.offset);
+      state.offset += extra.length;
+    }
+    const compressed = await compressFile(handle, state, entry.full, level);
+    if (!zip64File && (compressed.compressedSize > ZIP32_MAX || compressed.uncompressedSize > ZIP32_MAX)) {
+      throw backupError(`File is too large to store in a standard zip: ${entry.rel}`);
+    }
+    if (zip64File) {
+      const sizes = Buffer.alloc(16);
+      sizes.writeBigUInt64LE(BigInt(compressed.uncompressedSize), 0);
+      sizes.writeBigUInt64LE(BigInt(compressed.compressedSize), 8);
+      await writeAt(handle, sizes, extraSizesPos);
+      const descriptor = Buffer.alloc(24);
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(compressed.crc, 4);
+      descriptor.writeBigUInt64LE(BigInt(compressed.compressedSize), 8);
+      descriptor.writeBigUInt64LE(BigInt(compressed.uncompressedSize), 16);
+      await writeAt(handle, descriptor, state.offset);
+      state.offset += descriptor.length;
+    } else {
+      const descriptor = Buffer.alloc(16);
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(compressed.crc, 4);
+      descriptor.writeUInt32LE(compressed.compressedSize, 8);
+      descriptor.writeUInt32LE(compressed.uncompressedSize, 12);
+      await writeAt(handle, descriptor, state.offset);
+      state.offset += descriptor.length;
+    }
+    state.records.push({
+      nameBuf,
+      dos,
+      method: 8,
+      flags: 0x0008,
+      crc: compressed.crc,
+      compressedSize: compressed.compressedSize,
+      uncompressedSize: compressed.uncompressedSize,
+      localOffset,
+      externalAttr: 0o100644 << 16,
+      zip64Sizes: zip64File,
+    });
+  }
+
+  if (typeof state.onEntry === "function") {
+    state.onEntry(entry.type === "file" ? fileSize : 0);
+  }
 }
 
-function centralHeader(record) {
-  const header = Buffer.alloc(46);
-  header.writeUInt32LE(0x02014b50, 0);
-  header.writeUInt16LE((3 << 8) | 20, 4);
-  header.writeUInt16LE(20, 6);
-  header.writeUInt16LE(record.flags, 8);
-  header.writeUInt16LE(record.method, 10);
-  header.writeUInt16LE(record.dos.time, 12);
-  header.writeUInt16LE(record.dos.date, 14);
-  header.writeUInt32LE(record.crc >>> 0, 16);
-  header.writeUInt32LE(record.compressedSize >>> 0, 20);
-  header.writeUInt32LE(record.uncompressedSize >>> 0, 24);
-  header.writeUInt16LE(record.nameBuf.length, 28);
-  header.writeUInt16LE(0, 30);
-  header.writeUInt16LE(0, 32);
-  header.writeUInt16LE(0, 34);
-  header.writeUInt16LE(0, 36);
-  header.writeUInt32LE(record.externalAttr >>> 0, 38);
-  header.writeUInt32LE(record.localOffset >>> 0, 42);
-  return header;
+async function writeCentralDirectory(handle, state) {
+  const centralOffset = state.offset;
+  for (const record of state.records) {
+    const extra = centralExtra(record);
+    const header = centralHeader(record, extra.length);
+    await writeAt(handle, header, state.offset);
+    state.offset += header.length;
+    await writeAt(handle, record.nameBuf, state.offset);
+    state.offset += record.nameBuf.length;
+    if (extra.length) {
+      await writeAt(handle, extra, state.offset);
+      state.offset += extra.length;
+    }
+  }
+  const centralSize = state.offset - centralOffset;
+  const count = state.records.length;
+  const zip64Archive = Boolean(state.forceZip64) || centralOffset > ZIP32_MAX || centralSize > ZIP32_MAX || count > 0xffff;
+  if (zip64Archive) {
+    const eocd64Offset = state.offset;
+    const eocd64 = Buffer.alloc(56);
+    eocd64.writeUInt32LE(0x06064b50, 0);
+    eocd64.writeBigUInt64LE(44n, 4);
+    eocd64.writeUInt16LE((3 << 8) | 45, 12);
+    eocd64.writeUInt16LE(45, 14);
+    eocd64.writeUInt32LE(0, 16);
+    eocd64.writeUInt32LE(0, 20);
+    eocd64.writeBigUInt64LE(BigInt(count), 24);
+    eocd64.writeBigUInt64LE(BigInt(count), 32);
+    eocd64.writeBigUInt64LE(BigInt(centralSize), 40);
+    eocd64.writeBigUInt64LE(BigInt(centralOffset), 48);
+    await writeAt(handle, eocd64, state.offset);
+    state.offset += eocd64.length;
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    locator.writeUInt32LE(0, 4);
+    locator.writeBigUInt64LE(BigInt(eocd64Offset), 8);
+    locator.writeUInt32LE(1, 16);
+    await writeAt(handle, locator, state.offset);
+    state.offset += locator.length;
+  }
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(count > 0xffff ? 0xffff : count, 8);
+  eocd.writeUInt16LE(count > 0xffff ? 0xffff : count, 10);
+  eocd.writeUInt32LE(centralSize > ZIP32_MAX ? ZIP32_MAX : centralSize, 12);
+  eocd.writeUInt32LE(centralOffset > ZIP32_MAX ? ZIP32_MAX : centralOffset, 16);
+  eocd.writeUInt16LE(0, 20);
+  await writeAt(handle, eocd, state.offset);
+  state.offset += eocd.length;
 }
 
-async function zipDirectoryWithNode(sourceDir, zipPath) {
+async function zipDirectoryWithNode(sourceDir, zipPath, options = {}) {
   const entries = [];
   await collectEntries(sourceDir, "", entries);
-  const out = createWriteStream(zipPath);
-  const state = { offset: 0, records: [] };
+  const totalBytes = entries.reduce((sum, entry) => sum + (entry.type === "file" ? entry.stat.size : 0), 0);
+  const level = totalBytes > 512 * 1024 * 1024 ? 1 : 6;
+  const handle = await fs.open(zipPath, "w");
+  const state = {
+    offset: 0,
+    records: [],
+    forceZip64: Boolean(options.forceZip64),
+    onEntry: options.onEntry,
+  };
   try {
     for (const entry of entries) {
-      await appendZipEntry(out, state, entry);
+      await appendZipEntry(handle, state, entry, level);
     }
-    const centralOffset = state.offset;
-    for (const record of state.records) {
-      const header = centralHeader(record);
-      await writeToStream(out, header);
-      await writeToStream(out, record.nameBuf);
-      state.offset += header.length + record.nameBuf.length;
-    }
-    const centralSize = state.offset - centralOffset;
-    if (centralOffset > ZIP32_MAX || centralSize > ZIP32_MAX || state.records.length > 0xffff) {
-      throw backupError("Backup is too large for a standard zip archive.");
-    }
-    const eocd = Buffer.alloc(22);
-    eocd.writeUInt32LE(0x06054b50, 0);
-    eocd.writeUInt16LE(0, 4);
-    eocd.writeUInt16LE(0, 6);
-    eocd.writeUInt16LE(state.records.length, 8);
-    eocd.writeUInt16LE(state.records.length, 10);
-    eocd.writeUInt32LE(centralSize, 12);
-    eocd.writeUInt32LE(centralOffset, 16);
-    eocd.writeUInt16LE(0, 20);
-    await writeToStream(out, eocd);
-    await new Promise((resolve, reject) => {
-      out.end(() => resolve());
-      out.once("error", reject);
-    });
+    await writeCentralDirectory(handle, state);
+    await handle.close();
   } catch (error) {
-    out.destroy();
+    await handle.close().catch(() => {});
     throw error;
   }
 }
 
-async function zipDirectory(sourceDir, zipPath) {
-  if (await zipCliAvailable()) {
+async function zipDirectory(sourceDir, zipPath, options = {}) {
+  if (!options.forceNode && (await zipCliAvailable())) {
     try {
       await runZipCli(sourceDir, zipPath);
       return;
@@ -395,7 +526,7 @@ async function zipDirectory(sourceDir, zipPath) {
       if (!error || error.code !== "ENOENT") throw error;
     }
   }
-  await zipDirectoryWithNode(sourceDir, zipPath);
+  await zipDirectoryWithNode(sourceDir, zipPath, options);
 }
 
 async function toBackupRecord(name) {
@@ -596,7 +727,14 @@ function watchArchiveGrowth(partialPath, job) {
 
 async function zipTreeWithProgress(sourceDir, zipPath, files, job) {
   if (!(await zipCliAvailable())) {
-    await zipDirectory(sourceDir, zipPath);
+    await zipDirectory(sourceDir, zipPath, {
+      onEntry(bytes) {
+        job.processedBytes += bytes;
+        job.inflightBytes = 0;
+        const elapsed = Math.max(1, Date.now() - job.startedMs);
+        if (job.processedBytes > 0) job.bytesPerMs = job.processedBytes / elapsed;
+      },
+    });
     job.processedBytes = job.totalBytes;
     job.inflightBytes = 0;
     return;
@@ -691,6 +829,8 @@ async function runBackupJob(job) {
     job.completedAt = new Date().toISOString();
     if (error && error.code === "ENOENT" && !partialPath) {
       job.error = "Data folder was not found.";
+    } else if (error && error.code === "ENOSPC") {
+      job.error = "The server does not have enough free disk space for this backup.";
     } else {
       job.error = error?.message || "Failed to create backup.";
     }
