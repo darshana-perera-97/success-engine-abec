@@ -2479,7 +2479,7 @@ export async function reconnectAdminWhatsappSession(userId) {
 
 export async function getBackups() {
   try {
-    const res = await fetch(`${API_BASE}/api/backups`);
+    const res = await fetch(`${API_BASE}/api/backups`, { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !Array.isArray(data.data)) {
       return { ok: false, error: data.error || "Failed to load backups." };
@@ -2492,7 +2492,7 @@ export async function getBackups() {
 
 export async function createBackup() {
   try {
-    const res = await fetch(`${API_BASE}/api/backups`, { method: "POST" });
+    const res = await fetch(`${API_BASE}/api/backups`, { method: "POST", cache: "no-store" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || !data.job) {
       return { ok: false, error: data.error || "Failed to start backup.", job: data.job || null };

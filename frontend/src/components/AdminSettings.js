@@ -20,6 +20,26 @@ function formatBackupWhen(iso) {
   });
 }
 
+function formatElapsed(startedAt, now) {
+  const started = new Date(startedAt).getTime();
+  if (!Number.isFinite(started)) return "";
+  const seconds = Math.max(0, Math.floor((now - started) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m elapsed`;
+  if (minutes > 0) return `${minutes}m ${String(secs).padStart(2, "0")}s elapsed`;
+  return `${secs}s elapsed`;
+}
+
+function estimateEtaSeconds(job, now) {
+  if (job?.etaSeconds != null && Number.isFinite(Number(job.etaSeconds))) return Number(job.etaSeconds);
+  const percent = Number(job?.percent) || 0;
+  if (percent < 1 || !job?.startedAt) return null;
+  const elapsedSec = Math.max(1, (now - new Date(job.startedAt).getTime()) / 1000);
+  return Math.max(1, Math.round((elapsedSec * (100 - percent)) / percent));
+}
+
 function formatEta(seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) return "Estimating time remaining…";
@@ -106,6 +126,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   const [downloadingBackupName, setDownloadingBackupName] = useState("");
   const [deletingBackupName, setDeletingBackupName] = useState("");
   const backupRunning = backupJob?.status === "preparing" || backupJob?.status === "running";
+  const [backupClock, setBackupClock] = useState(() => Date.now());
 
   const loadBranches = async () => {
     try {
@@ -181,6 +202,7 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
   useEffect(() => {
     if (!backupRunning) return undefined;
     const timer = window.setInterval(() => {
+      setBackupClock(Date.now());
       loadBackups();
     }, 1000);
     return () => window.clearInterval(timer);
@@ -873,8 +895,15 @@ const AdminSettings = ({ meetingSettings, onSaveMeetingSettings, systemData, onS
       backupError ? /* @__PURE__ */ jsx("div", { className: "text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2", children: backupError }) : null,
       backupSuccess ? /* @__PURE__ */ jsx("div", { className: "text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2", children: backupSuccess }) : null,
       backupRunning ? /* @__PURE__ */ jsxs("div", { className: "max-w-3xl space-y-2", children: [
-        /* @__PURE__ */ jsx("div", { className: "h-2 overflow-hidden rounded-full bg-slate-100", children: /* @__PURE__ */ jsx("div", { className: `h-full bg-slate-900 transition-all duration-500 ${backupJob?.status === "preparing" ? "w-1/3 animate-pulse" : ""}`, style: backupJob?.status === "running" ? { width: `${Math.max(backupJob.percent || 0, 2)}%` } : undefined }) }),
-        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600", children: backupJob?.etaSeconds == null ? `Estimating time remaining…${backupJob?.percent ? ` · ${backupJob.percent}%` : ""}` : `${formatEta(backupJob.etaSeconds)} · ${backupJob.percent || 0}%` })
+        /* @__PURE__ */ jsx("div", { className: "h-2 overflow-hidden rounded-full bg-slate-100", children: /* @__PURE__ */ jsx("div", { className: `h-full bg-slate-900 transition-all duration-500 ${(backupJob?.percent || 0) > 0 ? "" : "w-1/3 animate-pulse"}`, style: (backupJob?.percent || 0) > 0 ? { width: `${Math.max(backupJob.percent, 2)}%` } : undefined }) }),
+        /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600", children: (() => {
+          const elapsed = formatElapsed(backupJob?.startedAt, backupClock);
+          const size = backupJob?.totalBytes ? formatBackupSize(backupJob.totalBytes) : "";
+          const etaSeconds = estimateEtaSeconds(backupJob, backupClock);
+          if (backupJob?.status === "preparing") return `Counting files…${elapsed ? ` · ${elapsed}` : ""}`;
+          if (etaSeconds == null) return `Estimating time remaining…${elapsed ? ` · ${elapsed}` : ""}${size ? ` · ${size}` : ""}`;
+          return `${formatEta(etaSeconds)} · ${backupJob?.percent || 0}%${elapsed ? ` · ${elapsed}` : ""}`;
+        })() })
       ] }) : backupJob?.status === "failed" ? null : backupJob?.status === "completed" && backupJob.completedAt ? /* @__PURE__ */ jsx("p", { className: "text-xs text-emerald-700", children: `Completed ${formatBackupWhen(backupJob.completedAt)}` }) : backups[0]?.createdAt ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: `Completed ${formatBackupWhen(backups[0].createdAt)}` }) : null,
       /* @__PURE__ */ jsxs("div", { className: `${dt.embedded} max-w-3xl`, children: [
         /* @__PURE__ */ jsxs("table", { className: dt.table, children: [

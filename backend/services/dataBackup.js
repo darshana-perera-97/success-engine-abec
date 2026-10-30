@@ -457,9 +457,12 @@ function describeJob(job) {
     };
   }
   let processed = job.processedBytes;
+  if (job.status === "running" && job.guessedProcessed > processed) {
+    processed = job.guessedProcessed;
+  }
   if (job.status === "running" && job.inflightBytes > 0 && job.bytesPerMs > 0) {
-    const guessed = job.bytesPerMs * Math.max(0, Date.now() - job.inflightStartedAt);
-    processed += Math.min(job.inflightBytes * 0.95, guessed);
+    const guessed = job.processedBytes + Math.min(job.inflightBytes * 0.95, job.bytesPerMs * Math.max(0, Date.now() - job.inflightStartedAt));
+    if (guessed > processed) processed = guessed;
   }
   const total = job.totalBytes;
   let percent = 0;
@@ -546,6 +549,51 @@ async function measureDataTree(dir) {
   return { files, totalBytes };
 }
 
+async function readGrowingArchiveBytes(partialPath) {
+  const sizes = [];
+  try {
+    const stat = await fs.stat(partialPath);
+    if (stat.isFile()) sizes.push(stat.size);
+  } catch {
+    // The zip tool writes a temporary file beside the destination until the batch finishes.
+  }
+  let names = [];
+  try {
+    names = await fs.readdir(path.dirname(partialPath));
+  } catch {
+    return sizes.length ? Math.max(...sizes) : 0;
+  }
+  await Promise.all(names.map(async (name) => {
+    if (isSafeBackupName(name) || name.startsWith(".")) return;
+    try {
+      const stat = await fs.stat(path.join(path.dirname(partialPath), name));
+      if (stat.isFile()) sizes.push(stat.size);
+    } catch {
+      // Ignore files that disappear while zip renames its temporary archive.
+    }
+  }));
+  return sizes.length ? Math.max(...sizes) : 0;
+}
+
+function watchArchiveGrowth(partialPath, job) {
+  const timer = setInterval(() => {
+    if (job.status !== "running" && job.status !== "preparing") return;
+    readGrowingArchiveBytes(partialPath).then((bytes) => {
+      if (!bytes) return;
+      job.outputBytes = Math.max(job.outputBytes || 0, bytes);
+      const ratio = job.sourcePerOutput || 1;
+      const guessed = Math.min((job.totalBytes || bytes) * 0.98, job.outputBytes * ratio);
+      job.guessedProcessed = Math.max(job.processedBytes || 0, guessed);
+      const elapsed = Math.max(1, Date.now() - job.startedMs);
+      if (job.guessedProcessed > 0 && elapsed >= 2000) {
+        job.bytesPerMs = job.guessedProcessed / elapsed;
+      }
+    }).catch(() => {});
+  }, 1000);
+  if (typeof timer.unref === "function") timer.unref();
+  return () => clearInterval(timer);
+}
+
 async function zipTreeWithProgress(sourceDir, zipPath, files, job) {
   if (!(await zipCliAvailable())) {
     await zipDirectory(sourceDir, zipPath);
@@ -566,6 +614,7 @@ async function zipTreeWithProgress(sourceDir, zipPath, files, job) {
     batchSize = 0;
     job.inflightBytes = size;
     job.inflightStartedAt = Date.now();
+    const outputBefore = job.outputBytes || 0;
     try {
       await runZipAdd(sourceDir, zipPath, paths);
     } catch (error) {
@@ -580,6 +629,13 @@ async function zipTreeWithProgress(sourceDir, zipPath, files, job) {
     }
     job.processedBytes += size;
     job.inflightBytes = 0;
+    const outputNow = await readGrowingArchiveBytes(zipPath);
+    job.outputBytes = Math.max(job.outputBytes || 0, outputNow);
+    const outputDelta = job.outputBytes - outputBefore;
+    if (outputDelta > 0) {
+      const sample = size / outputDelta;
+      job.sourcePerOutput = job.sourcePerOutput ? job.sourcePerOutput * 0.7 + sample * 0.3 : sample;
+    }
     const elapsed = Math.max(1, Date.now() - job.startedMs);
     job.bytesPerMs = job.processedBytes / elapsed;
   }
@@ -606,6 +662,8 @@ async function runBackupJob(job) {
     job.name = name;
     job.totalBytes = measured.totalBytes;
     job.status = "running";
+    const stopWatch = watchArchiveGrowth(partialPath, job);
+    try {
     if (!measured.files.length) {
       await zipDirectory(DATA_DIR, partialPath);
     } else {
@@ -620,9 +678,13 @@ async function runBackupJob(job) {
     const record = await toBackupRecord(name);
     job.processedBytes = job.totalBytes;
     job.inflightBytes = 0;
+    job.guessedProcessed = job.totalBytes;
     job.status = "completed";
     job.completedAt = record.createdAt;
     job.name = record.name;
+    } finally {
+      stopWatch();
+    }
   } catch (error) {
     job.status = "failed";
     job.inflightBytes = 0;
