@@ -99,7 +99,8 @@ const DETAIL_FIELD_ORDER = [
   ["intakeMonth", "Intake month"],
   ["intakeYear", "Intake year"],
   ["message", "Message"],
-  ["source", "Source"]
+  ["source", "Source"],
+  ["assignedCounselorName", "Assigned counselor"]
 ];
 
 function formatDetailValue(value) {
@@ -127,6 +128,9 @@ function buildFullDetailRows(row) {
     if (key === "source") {
       display = formatRequestedStudentSource(row);
     }
+    if (key === "assignedCounselorName") {
+      display = String(raw || row.assignedCounselorId || "").trim() || "—";
+    }
     if (key === "preferredCourses") {
       const courses = normalizePreferredCourses(raw);
       display = courses.length ? courses.map(formatCourseLabel).join("; ") : "—";
@@ -138,7 +142,7 @@ function buildFullDetailRows(row) {
     out.push({ label, value: display });
   }
   for (const key of Object.keys(row).sort((a, b) => a.localeCompare(b))) {
-    if (orderedKeys.has(key)) continue;
+    if (orderedKeys.has(key) || key === "assignedCounselorId") continue;
     out.push({ label: key, value: formatDetailValue(row[key]) });
   }
   return out;
@@ -152,6 +156,10 @@ function counselorOptionsForRow(_userRole, _scopeBranch, _requestRow, accounts) 
       const right = String(b.username || b.email || b.id || "").toLowerCase();
       return left.localeCompare(right);
     });
+}
+
+function counselorAccountLabel(account) {
+  return String(account?.username || account?.email || account?.id || "").trim();
 }
 
 function counselorRowsToMultiSelectOptions(rows) {
@@ -197,6 +205,9 @@ export function RequestedStudents({
   const [importSaving, setImportSaving] = useState(false);
   const [importParseLoading, setImportParseLoading] = useState(false);
   const [importFormatLabel, setImportFormatLabel] = useState("");
+  const [importCounselorId, setImportCounselorId] = useState("");
+  const [importCounselorRows, setImportCounselorRows] = useState([]);
+  const [importCounselorsLoading, setImportCounselorsLoading] = useState(false);
   const [removingId, setRemovingId] = useState("");
   const [branchCountriesEnabled, setBranchCountriesEnabled] = useState(false);
   const [branchRecords, setBranchRecords] = useState([]);
@@ -354,8 +365,13 @@ export function RequestedStudents({
           setViewAccessCounselorIds((prev) =>
             prev.filter((id) => filtered.some((c) => String(c.id) === String(id)))
           );
-        } else if (filtered.length === 1) {
-          setPrimaryCounselorId(String(filtered[0].id || ""));
+        } else {
+          const preset = String(pipelineRow?.assignedCounselorId || "").trim();
+          if (preset && filtered.some((c) => String(c.id) === preset)) {
+            setPrimaryCounselorId(preset);
+          } else if (filtered.length === 1) {
+            setPrimaryCounselorId(String(filtered[0].id || ""));
+          }
         }
       } finally {
         if (seq === counselorFetchSeq.current) setAccountsLoading(false);
@@ -420,10 +436,49 @@ export function RequestedStudents({
     setImportRows([]);
     setImportFileName("");
     setImportFormatLabel("");
+    setImportCounselorId("");
     setImportError("");
     setImportSaving(false);
     setImportParseLoading(false);
+    setImportCounselorsLoading(false);
   };
+
+  useEffect(() => {
+    if (!importPreviewOpen) return undefined;
+    let cancelled = false;
+    (async () => {
+      setImportCounselorsLoading(true);
+      const res = await getAccounts();
+      if (cancelled) return;
+      if (!res.ok) {
+        setImportCounselorRows([]);
+        setImportCounselorId("");
+        setImportError(res.error || "Could not load counselors.");
+        setImportCounselorsLoading(false);
+        return;
+      }
+      const filtered = counselorOptionsForRow(userRole, scopeBranch, null, res.data);
+      setImportCounselorRows(filtered);
+      const onlyId = filtered.length === 1 ? String(filtered[0].id || "") : "";
+      setImportCounselorId((prev) => {
+        if (filtered.some((c) => String(c.id) === String(prev))) return String(prev);
+        return onlyId;
+      });
+      if (onlyId) {
+        setImportRows((prev) =>
+          prev.map((row) =>
+            String(row.assignedCounselorId || "").trim()
+              ? row
+              : { ...row, assignedCounselorId: onlyId }
+          )
+        );
+      }
+      setImportCounselorsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [importPreviewOpen, userRole, scopeBranch]);
 
   const handleImportFileChange = async (event) => {
     const file = event.target.files?.[0];
@@ -456,35 +511,66 @@ export function RequestedStudents({
     setImportRows((prev) => prev.filter((row) => row.importKey !== importKey));
   };
 
+  const applyImportCounselorToAll = (counselorId) => {
+    const id = String(counselorId || "").trim();
+    setImportCounselorId(id);
+    if (!id) return;
+    setImportRows((prev) => prev.map((row) => ({ ...row, assignedCounselorId: id })));
+  };
+
+  const handleImportRowCounselorChange = (importKey, counselorId) => {
+    setImportRows((prev) =>
+      prev.map((row) =>
+        row.importKey === importKey ? { ...row, assignedCounselorId: String(counselorId || "") } : row
+      )
+    );
+  };
+
   const handleConfirmImport = async () => {
     if (!importRows.length) {
       setImportError("No leads left to import.");
       return;
     }
+    const missingCounselor = importRows.filter((row) => !String(row.assignedCounselorId || "").trim());
+    if (missingCounselor.length) {
+      const names = missingCounselor
+        .slice(0, 5)
+        .map((row) => row.name || row.phone || "Unnamed lead")
+        .join(", ");
+      const extra = missingCounselor.length > 5 ? ` and ${missingCounselor.length - 5} more` : "";
+      setImportError(`Choose a counselor for every lead. Missing: ${names}${extra}.`);
+      return;
+    }
     setImportSaving(true);
     setImportError("");
-    const payload = importRows.map((row) => ({
-      metaLeadId: row.metaLeadId || null,
-      submittedAt: row.submittedAt,
-      name: row.name,
-      email: row.email,
-      phone: row.phone,
-      whatsappNumber: row.whatsappNumber || row.phone || null,
-      countryToVisit: row.countryToVisit,
-      city: row.city,
-      nearestOffice: row.nearestOffice,
-      livingStatus: row.livingStatus,
-      visaRejectionAnyCountry: row.visaRejectionAnyCountry,
-      currentEducationLevel: row.currentEducationLevel,
-      intendedProgram: row.intendedProgram,
-      intakeMonth: row.intakeMonth || null,
-      intakeYear: row.intakeYear || null,
-      message: row.message,
-      source: row.source,
-      platform: row.platform,
-      campaignName: row.campaignName,
-      formName: row.formName
-    }));
+    const payload = importRows.map((row) => {
+      const counselorId = String(row.assignedCounselorId || "").trim();
+      const counselor = importCounselorRows.find((account) => String(account.id) === counselorId);
+      return {
+        metaLeadId: row.metaLeadId || null,
+        submittedAt: row.submittedAt,
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+        whatsappNumber: row.whatsappNumber || row.phone || null,
+        countryToVisit: row.countryToVisit,
+        city: row.city,
+        nearestOffice: row.nearestOffice,
+        livingStatus: row.livingStatus,
+        visaRejectionAnyCountry: row.visaRejectionAnyCountry,
+        currentEducationLevel: row.currentEducationLevel,
+        intendedProgram: row.intendedProgram,
+        intakeMonth: row.intakeMonth || null,
+        intakeYear: row.intakeYear || null,
+        message: row.message,
+        source: row.source,
+        platform: row.platform,
+        campaignName: row.campaignName,
+        formName: row.formName,
+        assignedCounselorId: counselorId,
+        assignedCounselorName: counselorAccountLabel(counselor)
+      };
+    });
     const result = await bulkImportReqStudents(payload);
     setImportSaving(false);
     if (!result.ok) {
@@ -698,6 +784,7 @@ export function RequestedStudents({
                   <DataTableTh>Country</DataTableTh>
                   <DataTableTh>Phone</DataTableTh>
                   <DataTableTh>Source</DataTableTh>
+                  <DataTableTh>Counselor</DataTableTh>
                   <DataTableTh>Added</DataTableTh>
                   <DataTableTh align="right">Actions</DataTableTh>
                 </tr>
@@ -717,6 +804,12 @@ export function RequestedStudents({
                       title={formatRequestedStudentSource(row)}
                     >
                       {formatRequestedStudentSource(row)}
+                    </DataTableTd>
+                    <DataTableTd
+                      className="max-w-[160px] truncate"
+                      title={row.assignedCounselorName || ""}
+                    >
+                      {row.assignedCounselorName || "—"}
                     </DataTableTd>
                     <DataTableTd className="whitespace-nowrap text-slate-500" title={row.submittedAt || ""}>
                       {formatSubmittedAt(row.submittedAt)}
@@ -895,7 +988,7 @@ export function RequestedStudents({
           onClick={closeImportPreview}
         >
           <div
-            className="my-auto w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-2xl"
+            className="my-auto w-full max-w-6xl rounded-xl border border-slate-200 bg-white shadow-2xl"
             onClick={(ev) => ev.stopPropagation()}
           >
             <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
@@ -905,6 +998,7 @@ export function RequestedStudents({
                   {importFileName ? `${importFileName} · ` : ""}
                   {importFormatLabel ? `${importFormatLabel} · ` : ""}
                   {importRows.length} lead{importRows.length === 1 ? "" : "s"} ready to add to Requested Students.
+                  Assign a counselor to each lead. Use the control below to fill every row, then change any lead that should have a different counselor.
                 </p>
               </div>
               <button
@@ -915,6 +1009,36 @@ export function RequestedStudents({
               >
                 <X size={20} />
               </button>
+            </div>
+
+            <div className="border-b border-slate-100 px-5 py-4">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Apply counselor to all leads
+              </label>
+              <p className="mb-2 text-xs text-slate-500">
+                {filterDescription} Choosing a counselor here fills every row. Each lead can still be changed individually.
+              </p>
+              {importCounselorsLoading && importCounselorRows.length === 0 ? (
+                <p className="text-sm text-slate-500">Loading counselors…</p>
+              ) : importCounselorRows.length === 0 ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  No counselor accounts found. Add counselor accounts in team management first.
+                </p>
+              ) : (
+                <select
+                  disabled={importSaving || importCounselorsLoading}
+                  value={importCounselorId}
+                  onChange={(e) => applyImportCounselorToAll(e.target.value)}
+                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="">Select counselor to apply to all…</option>
+                  {importCounselorRows.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {counselorAccountLabel(c) + (c.branch ? ` — ${c.branch}` : "")}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="max-h-[min(60vh,520px)] overflow-auto px-5 py-4">
@@ -929,6 +1053,7 @@ export function RequestedStudents({
                       <th className={dt.thCompact}>Country</th>
                       <th className={dt.thCompact}>Education</th>
                       <th className={dt.thCompact}>Intake</th>
+                      <th className={dt.thCompact}>Counselor</th>
                       <th className={dt.thCompactRight}>Actions</th>
                     </tr>
                   </thead>
@@ -940,6 +1065,26 @@ export function RequestedStudents({
                         <td className={dt.tdCompact}>{row.countryToVisit || "—"}</td>
                         <td className={dt.tdCompact}>{row.currentEducationLevel || "—"}</td>
                         <td className={dt.tdCompact}>{formatIntakeLabel(row.intakeMonth, row.intakeYear) || "—"}</td>
+                        <td className={dt.tdCompact}>
+                          <select
+                            disabled={importSaving || importCounselorsLoading || importCounselorRows.length === 0}
+                            value={String(row.assignedCounselorId || "")}
+                            onChange={(e) => handleImportRowCounselorChange(row.importKey, e.target.value)}
+                            aria-label={`Counselor for ${row.name || "lead"}`}
+                            className={`w-full min-w-[11rem] rounded-md border bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60 ${
+                              String(row.assignedCounselorId || "").trim()
+                                ? "border-slate-200"
+                                : "border-amber-300"
+                            }`}
+                          >
+                            <option value="">Select counselor…</option>
+                            {importCounselorRows.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {counselorAccountLabel(c) + (c.branch ? ` — ${c.branch}` : "")}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
                         <td className={dt.tdActions}>
                           <Button
                             type="button"
@@ -983,7 +1128,13 @@ export function RequestedStudents({
               </Button>
               <Button
                 type="button"
-                disabled={importSaving || importRows.length === 0}
+                disabled={
+                  importSaving ||
+                  importCounselorsLoading ||
+                  importRows.length === 0 ||
+                  importCounselorRows.length === 0 ||
+                  importRows.some((row) => !String(row.assignedCounselorId || "").trim())
+                }
                 isLoading={importSaving}
                 onClick={handleConfirmImport}
               >

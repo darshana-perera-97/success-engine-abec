@@ -32,13 +32,14 @@ export function buildCvTemplateMockData(companyName = "Sample Company") {
     role: "Computer Science Graduate",
     email: "alex.morgan@email.com",
     phone: "(+94) 77 123 4567",
+    address: "Colombo, Sri Lanka",
     experience: [
       { title: "Software Engineering Intern", company: companyName, period: "JUN 2024 – AUG 2024" },
       { title: "Research Assistant", company: "State University", period: "JAN 2023 – MAY 2024" },
     ],
     education: [
-      { degree: "BSc Computer Science", school: "State University" },
-      { degree: "Advanced Level", school: "Central College" },
+      { degree: "BSc Computer Science", school: "State University", period: "2019 – 2023" },
+      { degree: "Advanced Level", school: "Central College", period: "2016 – 2018" },
     ],
     testScores: [
       { name: "IELTS", score: "7.0" },

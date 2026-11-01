@@ -1,9 +1,10 @@
 import { jsx, jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight, Filter, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Clock, Building2, UserCircle, ChevronRight, Filter, X, ArrowDownUp, ChevronDown } from "lucide-react";
 import { Button } from "./Button";
 import { dt, DataTablePagination } from "./DataTable";
 import { useClientPagination } from "../hooks/usePagination";
+import { normalizePipelineStatus, PIPELINE_STEPS } from "../pipeline";
 
 function formatOverdue(ms) {
   const m = Math.max(0, ms);
@@ -29,6 +30,38 @@ function countActiveEscalationFilters(filters, { showBranch, showCounselor }) {
   if (showBranch && filters.branch !== "All") count += 1;
   if (showCounselor && filters.counselor !== "All") count += 1;
   return count;
+}
+
+const defaultEscalationSort = { sortBy: "time", sortDirection: "desc" };
+
+function escalationStageOrder(stage) {
+  const canonical = normalizePipelineStatus(stage);
+  const idx = PIPELINE_STEPS.indexOf(canonical);
+  return idx === -1 ? PIPELINE_STEPS.length + 1 : idx;
+}
+
+function sortEscalationRows(rows, sortBy, sortDirection, counselorLabel) {
+  const dir = sortDirection === "desc" ? -1 : 1;
+  const list = [...(rows || [])];
+  list.sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === "counselor") {
+      cmp = counselorLabel(a).localeCompare(counselorLabel(b), undefined, { sensitivity: "base" });
+    } else if (sortBy === "stage") {
+      cmp = escalationStageOrder(a.stage) - escalationStageOrder(b.stage);
+    } else {
+      cmp = (Number(a.overdueMs) || 0) - (Number(b.overdueMs) || 0);
+    }
+    if (cmp === 0) {
+      cmp = String(a.studentName || a.studentId || "").localeCompare(
+        String(b.studentName || b.studentId || ""),
+        undefined,
+        { sensitivity: "base" }
+      );
+    }
+    return cmp * dir;
+  });
+  return list;
 }
 
 function filterEscalationsByPanel(escalations, filters, { showBranch, showCounselor }) {
@@ -57,6 +90,10 @@ const StageEscalations = ({
 }) => {
   const [escalationFilters, setEscalationFilters] = useState(defaultEscalationFilters);
   const [escalationFiltersOpen, setEscalationFiltersOpen] = useState(false);
+  const [sortPrefs, setSortPrefs] = useState(defaultEscalationSort);
+  const { sortBy, sortDirection } = sortPrefs;
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef(null);
   const showBranchFilter = variant === "admin";
   const showCounselorFilter = variant === "admin" || variant === "manager";
   const showEscalationFilters = true;
@@ -109,13 +146,27 @@ const StageEscalations = ({
       }),
     [escalations, escalationFilters, showBranchFilter, showCounselorFilter]
   );
+  const sortedEscalations = useMemo(() => {
+    const counselorLabel = (row) => {
+      const key = String(row?.counselorId || "").trim();
+      if (!key) return "Unknown";
+      const employee = employeeLookup[key];
+      if (employee) {
+        return String(employee.name || employee.username || employee.email || key).trim() || key;
+      }
+      return key;
+    };
+    return sortEscalationRows(filteredEscalations, sortBy, sortDirection, counselorLabel);
+  }, [filteredEscalations, sortBy, sortDirection, employeeLookup]);
   const escalationPaginationResetKey = useMemo(
     () =>
       JSON.stringify({
         filters: escalationFilters,
-        count: filteredEscalations.length
+        sortBy,
+        sortDirection,
+        count: sortedEscalations.length
       }),
-    [escalationFilters, filteredEscalations.length]
+    [escalationFilters, sortBy, sortDirection, sortedEscalations.length]
   );
   const {
     pageItems: pageEscalations,
@@ -124,7 +175,7 @@ const StageEscalations = ({
     pageSize,
     setPageSize,
     totalRows,
-  } = useClientPagination(filteredEscalations, escalationPaginationResetKey);
+  } = useClientPagination(sortedEscalations, escalationPaginationResetKey);
   const updateEscalationFilter = (key, value) => {
     setEscalationFilters((prev) => ({ ...prev, [key]: value }));
   };
@@ -139,6 +190,21 @@ const StageEscalations = ({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [escalationFiltersOpen]);
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const onDoc = (e) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) setSortMenuOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setSortMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sortMenuOpen]);
 
   const emptyCopy =
     filteredEscalations.length === 0 && escalations.length > 0 && activeEscalationFilterCount > 0
@@ -181,6 +247,62 @@ const StageEscalations = ({
           /* @__PURE__ */ jsxs("div", {
             className: "flex flex-wrap items-center gap-2 shrink-0",
             children: [
+              /* @__PURE__ */ jsxs("div", { className: "relative", ref: sortMenuRef, children: [
+                /* @__PURE__ */ jsx("button", {
+                  type: "button",
+                  onClick: () => setSortMenuOpen((open) => !open),
+                  className: `inline-flex items-center justify-center w-9 h-9 rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-slate-200 ${sortMenuOpen ? "ring-2 ring-slate-300 border-slate-300" : ""}`,
+                  "aria-expanded": sortMenuOpen,
+                  "aria-haspopup": "dialog",
+                  "aria-label": "Sort escalations",
+                  title: "Sort list",
+                  children: /* @__PURE__ */ jsx(ArrowDownUp, { size: 16, className: "text-slate-600" })
+                }),
+                sortMenuOpen && /* @__PURE__ */ jsxs("div", {
+                  className: "absolute right-0 top-full z-50 mt-2 w-[min(100vw-2rem,17rem)] rounded-xl border border-slate-200 bg-white p-4 shadow-lg",
+                  role: "dialog",
+                  "aria-label": "Sort options",
+                  onMouseDown: (e) => e.stopPropagation(),
+                  children: [
+                    /* @__PURE__ */ jsx("p", { className: "text-xs font-bold uppercase tracking-wider text-slate-500 mb-3", children: "Sort list" }),
+                    /* @__PURE__ */ jsxs("div", { className: "space-y-3", children: [
+                      /* @__PURE__ */ jsxs("div", { children: [
+                        /* @__PURE__ */ jsx("label", { className: "block text-xs font-semibold text-slate-600 mb-1.5", htmlFor: "escalation-sort-by", children: "Sort by" }),
+                        /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+                          /* @__PURE__ */ jsxs("select", {
+                            id: "escalation-sort-by",
+                            value: sortBy,
+                            onChange: (e) => setSortPrefs((prev) => ({ ...prev, sortBy: e.target.value })),
+                            className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200",
+                            children: [
+                              /* @__PURE__ */ jsx("option", { value: "counselor", children: "Counselor name" }),
+                              /* @__PURE__ */ jsx("option", { value: "time", children: "Time (overdue)" }),
+                              /* @__PURE__ */ jsx("option", { value: "stage", children: "Stage" })
+                            ]
+                          }),
+                          /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" })
+                        ] })
+                      ] }),
+                      /* @__PURE__ */ jsxs("div", { children: [
+                        /* @__PURE__ */ jsx("label", { className: "block text-xs font-semibold text-slate-600 mb-1.5", htmlFor: "escalation-sort-order", children: "Order" }),
+                        /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+                          /* @__PURE__ */ jsxs("select", {
+                            id: "escalation-sort-order",
+                            value: sortDirection,
+                            onChange: (e) => setSortPrefs((prev) => ({ ...prev, sortDirection: e.target.value })),
+                            className: "w-full appearance-none pl-3 pr-8 py-2.5 text-sm border border-slate-200 rounded-xl bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200",
+                            children: [
+                              /* @__PURE__ */ jsx("option", { value: "asc", children: "Ascending" }),
+                              /* @__PURE__ */ jsx("option", { value: "desc", children: "Descending" })
+                            ]
+                          }),
+                          /* @__PURE__ */ jsx(ChevronDown, { size: 14, className: "absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" })
+                        ] })
+                      ] })
+                    ] })
+                  ]
+                })
+              ] }),
               showEscalationFilters &&
                 /* @__PURE__ */ jsxs(Button, {
                   type: "button",

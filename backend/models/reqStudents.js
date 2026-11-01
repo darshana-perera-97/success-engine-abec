@@ -116,6 +116,8 @@ async function appendReqStudentsBulk(entries) {
         platform: raw.platform || null,
         campaignName: raw.campaignName || null,
         formName: raw.formName || null,
+        assignedCounselorId: String(raw.assignedCounselorId || "").trim() || null,
+        assignedCounselorName: String(raw.assignedCounselorName || "").trim() || null,
       };
 
       list.push(entry);

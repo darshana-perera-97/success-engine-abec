@@ -48,19 +48,21 @@ function parseNotesForProgramEducation(notes) {
   return [
     {
       degree: (programM?.[1] || "").trim() || "Program of interest",
-      school: (eduM?.[1] || "").trim()
+      school: (eduM?.[1] || "").trim(),
+      period: ""
     }
   ];
 }
 function buildResumeDataFromStudent(student) {
   const emptyRowExp = { title: "", company: "", period: "" };
-  const emptyRowEdu = { degree: "", school: "" };
+  const emptyRowEdu = { degree: "", school: "", period: "" };
   const emptyScores = [{ name: "IELTS", score: "" }];
   const base = {
     name: "",
     role: "",
     email: "",
     phone: "",
+    address: "",
     experience: [emptyRowExp],
     education: [emptyRowEdu],
     testScores: emptyScores,
@@ -79,6 +81,7 @@ function buildResumeDataFromStudent(student) {
       role: String(gv.role || "").trim(),
       email: String(gv.email || "").trim(),
       phone: String(gv.phone || "").trim(),
+      address: String(gv.address || "").trim(),
       experience: Array.isArray(gv.experience) && gv.experience.length ? gv.experience.map((e) => ({
         title: String(e?.title || ""),
         company: String(e?.company || ""),
@@ -86,7 +89,8 @@ function buildResumeDataFromStudent(student) {
       })) : [emptyRowExp],
       education: Array.isArray(gv.education) && gv.education.length ? gv.education.map((e) => ({
         degree: String(e?.degree || ""),
-        school: String(e?.school || "")
+        school: String(e?.school || ""),
+        period: String(e?.period || "")
       })) : [emptyRowEdu],
       testScores: Array.isArray(gv.testScores) && gv.testScores.length ? gv.testScores.map((t) => ({
         name: String(t?.name || ""),
@@ -107,6 +111,9 @@ function buildResumeDataFromStudent(student) {
   }
   const status = String(student.status || "").trim();
   const country = String(student.country || "").trim();
+  if (!String(data.address || "").trim() && country) {
+    data.address = country;
+  }
   if (!String(data.role || "").trim()) {
     data.role = [status, country].filter(Boolean).join(" · ");
   }
@@ -125,7 +132,7 @@ function buildResumeDataFromStudent(student) {
     data.profilePicture = avatar;
   }
   const parsedEdu = parseNotesForProgramEducation(student.notes);
-  const eduIsBlank = data.education.every((e) => !String(e.degree || "").trim() && !String(e.school || "").trim());
+  const eduIsBlank = data.education.every((e) => !String(e.degree || "").trim() && !String(e.school || "").trim() && !String(e.period || "").trim());
   if (parsedEdu && eduIsBlank) {
     data.education = parsedEdu;
   }
@@ -148,13 +155,14 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     role: `CO-Founder | ${COMPANY_NAME}`,
     email: "info@abecpremier.com",
     phone: "(+94) 77 96 95 412",
+    address: "Colombo, Sri Lanka",
     experience: [
       { title: "Co-Founder & GTM Lead", company: COMPANY_NAME, period: "OCT 2020 \u2013 PRESENT" },
       { title: "Lead Product Designer", company: "Reach Solutions", period: "2017 \u2013 2020" }
     ],
     education: [
-      { degree: "Bachelor of Information Technology (BIT)", school: "University of Colombo" },
-      { degree: "Higher National Diploma Digital Communication", school: "Aquinas College" }
+      { degree: "Bachelor of Information Technology (BIT)", school: "University of Colombo", period: "2016 \u2013 2020" },
+      { degree: "Higher National Diploma Digital Communication", school: "Aquinas College", period: "2014 \u2013 2016" }
     ],
     testScores: [
       { name: "IELTS", score: "7.5" }
@@ -201,7 +209,7 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
     handleDataChange("education", newEdu);
   };
   const addEducation = () => {
-    handleDataChange("education", [...editableData.education, { degree: "", school: "" }]);
+    handleDataChange("education", [...editableData.education, { degree: "", school: "", period: "" }]);
   };
   const duplicateEducation = (index) => {
     const newEdu = [...editableData.education];
@@ -807,6 +815,19 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                           }
                         )
                       ] })
+                    ] }),
+                    /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+                      /* @__PURE__ */ jsx("label", { className: "text-[10px] uppercase font-bold text-slate-400", children: "Address" }),
+                      /* @__PURE__ */ jsx(
+                        "input",
+                        {
+                          type: "text",
+                          value: editableData.address || "",
+                          onChange: (e) => handleDataChange("address", e.target.value),
+                          placeholder: "e.g. 12 Galle Road, Colombo, Sri Lanka",
+                          className: "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
+                        }
+                      )
                     ] })
                   ] })
                 ] })
@@ -910,6 +931,19 @@ const AIResumeBuilder = ({ onNavigate, onSaveCV, currentStudent, onUploadStudent
                           onChange: (e) => updateEducation(i, "school", e.target.value),
                           placeholder: "e.g. University of Colombo",
                           className: "w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-900 outline-none focus:border-indigo-500 transition-all"
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsxs("div", { className: "space-y-1", children: [
+                      /* @__PURE__ */ jsx("label", { className: "text-[10px] uppercase font-bold text-slate-400", children: "Date Period" }),
+                      /* @__PURE__ */ jsx(
+                        "input",
+                        {
+                          type: "text",
+                          value: edu.period || "",
+                          onChange: (e) => updateEducation(i, "period", e.target.value),
+                          placeholder: "e.g. 2016 \u2013 2020",
+                          className: "w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-indigo-600 outline-none focus:border-indigo-500 transition-all"
                         }
                       )
                     ] })

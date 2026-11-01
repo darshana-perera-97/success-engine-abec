@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Eye, FileText, RefreshCw } from "lucide-react";
-import { getCountryChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getIntakeChangeRequests, getBranchChangeRequests, getBranchWhatsappMessengerChangeRequests, getRefundRequests, getInvoiceAmountChangeRequests } from "../authApi";
+import { getCountryChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getIntakeChangeRequests, getBranchChangeRequests, getBranchWhatsappMessengerChangeRequests, getRefundRequests, getInvoiceAmountChangeRequests, getEnrollmentStatusChangeRequests } from "../authApi";
 import { Button } from "./Button";
 import {
   DataTablePagination,
@@ -44,7 +44,7 @@ export function MyRequests({
     }
     setLoading(true);
     setError("");
-    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult, amountChangeResult] = await Promise.all([
+    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult, amountChangeResult, statusResult] = await Promise.all([
       getCountryChangeRequests({ requestedBy: requesterId }),
       getStudentDetailChangeRequests({ requestedBy: requesterId }),
       getInvoiceWaveOffRequests({ requestedBy: requesterId }),
@@ -54,9 +54,10 @@ export function MyRequests({
       getBranchChangeRequests({ requestedBy: requesterId }),
       getBranchWhatsappMessengerChangeRequests({ requestedBy: requesterId }),
       getInvoiceAmountChangeRequests({ requestedBy: requesterId }),
+      getEnrollmentStatusChangeRequests({ requestedBy: requesterId }),
     ]);
-    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok && !amountChangeResult.ok) {
-      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || amountChangeResult.error || "Failed to load requests.");
+    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok && !amountChangeResult.ok && !statusResult.ok) {
+      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || amountChangeResult.error || statusResult.error || "Failed to load requests.");
       setRows([]);
     } else {
       setRows(
@@ -69,7 +70,8 @@ export function MyRequests({
           refundResult.ok ? refundResult.data : [],
           branchResult.ok ? branchResult.data : [],
           whatsappContactResult.ok ? whatsappContactResult.data : [],
-          amountChangeResult.ok ? amountChangeResult.data : []
+          amountChangeResult.ok ? amountChangeResult.data : [],
+          statusResult.ok ? statusResult.data : []
         )
       );
     }
@@ -99,7 +101,7 @@ export function MyRequests({
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">My Requests</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Country, intake, branch, WhatsApp contact, student detail, removal, refund, invoice amount, and invoice wave-off requests you have submitted.
+              Country, intake, branch, status, WhatsApp contact, student detail, removal, refund, invoice amount, and invoice wave-off requests you have submitted.
             </p>
           </div>
         </div>
@@ -118,7 +120,7 @@ export function MyRequests({
           <div className={`${dt.loadingWrap} text-center text-sm text-rose-600`}>{error}</div>
         ) : rows.length === 0 ? (
           <div className={`${dt.emptyWrap} ${dt.emptyText}`}>
-            No requests yet. Submit a change from a student profile (Edit details, Change country, or Remove).
+            No requests yet. Submit a change from a student profile (Edit details, Change country, Status, or Remove).
           </div>
         ) : (
           <>

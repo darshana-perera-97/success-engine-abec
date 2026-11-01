@@ -447,16 +447,26 @@ export async function getReqStudents(params = {}) {
 }
 
 /** Admin/Manager: bulk import Meta leads (or similar) into req-students.json */
-export async function bulkImportReqStudents(entries) {
+export async function bulkImportReqStudents(entries, options = {}) {
   const rows = Array.isArray(entries) ? entries : [];
   if (!rows.length) {
     return { ok: false, error: "At least one lead is required." };
+  }
+  const assignedCounselorId = String(options.assignedCounselorId || "").trim();
+  const missingCounselor = rows.some(
+    (row) => !String(row?.assignedCounselorId || assignedCounselorId || "").trim()
+  );
+  if (missingCounselor) {
+    return { ok: false, error: "Choose a counselor for every lead." };
   }
   try {
     const res = await fetch(`${API_BASE}/api/req-students/bulk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries: rows })
+      body: JSON.stringify({
+        entries: rows,
+        ...(assignedCounselorId ? { assignedCounselorId } : {})
+      })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
@@ -1450,6 +1460,34 @@ export async function createUniversityProgram(payload) {
   }
 }
 
+export async function createUniversityProgramsBulk(programs) {
+  try {
+    const res = await fetch(`${API_BASE}/api/university-programs/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ programs })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return {
+        ok: false,
+        error: data.error || "Failed to import universities.",
+        skipped: Array.isArray(data.skipped) ? data.skipped : []
+      };
+    }
+    return {
+      ok: true,
+      data: data.data,
+      skipped: Array.isArray(data.skipped) ? data.skipped : []
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "Cannot reach university data server. Please contact the Support team."
+    };
+  }
+}
+
 export async function updateUniversityProgramVisibility(programId, isHidden) {
   try {
     const res = await fetch(`${API_BASE}/api/university-programs/${encodeURIComponent(programId)}/visibility`, {
@@ -1953,6 +1991,64 @@ export async function decideCountryChangeRequest(requestId, payload) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
       return { ok: false, error: data.error || "Failed to review country change request." };
+    }
+    return { ok: true, data: data.data || null, student: data.student || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function getEnrollmentStatusChangeRequests(params = {}) {
+  try {
+    const search = new URLSearchParams();
+    const requestedBy = String(params.requestedBy || "").trim();
+    const status = String(params.status || "").trim();
+    const studentId = String(params.studentId || "").trim();
+    if (requestedBy) search.set("requestedBy", requestedBy);
+    if (status) search.set("status", status);
+    if (studentId) search.set("studentId", studentId);
+    if (params.pendingOnly) search.set("pendingOnly", "1");
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/enrollment-status-change-requests${query}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !Array.isArray(data.data)) {
+      return { ok: false, error: data.error || "Failed to load status change requests." };
+    }
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function createEnrollmentStatusChangeRequest(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/api/enrollment-status-change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to submit status change request." };
+    }
+    return { ok: true, data: data.data || null };
+  } catch {
+    return { ok: false, error: "Cannot reach the server." };
+  }
+}
+
+export async function decideEnrollmentStatusChangeRequest(requestId, payload) {
+  const id = String(requestId || "").trim();
+  if (!id) return { ok: false, error: "Request id is required." };
+  try {
+    const res = await fetch(`${API_BASE}/api/enrollment-status-change-requests/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || "Failed to review status change request." };
     }
     return { ok: true, data: data.data || null, student: data.student || null };
   } catch {

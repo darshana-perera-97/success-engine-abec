@@ -25,6 +25,15 @@ function getStatusColor(status) {
       return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "Enrolled":
       return "bg-teal-50 text-teal-800 border-teal-200";
+    case "Dropped":
+    case "Dropped student":
+    case "Dropped students":
+      return "bg-rose-50 text-rose-800 border-rose-200";
+    case "Diverted":
+    case "Diverted Student":
+    case "Diverted student":
+    case "Diverted students":
+      return "bg-orange-50 text-orange-800 border-orange-200";
     case "Requested Lead":
       return "bg-amber-50 text-amber-800 border-amber-200";
     default:

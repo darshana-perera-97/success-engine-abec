@@ -14,14 +14,40 @@ function formatFilterValue(value, fallback = "All") {
   return v && v !== "All" ? v : fallback;
 }
 
+const CELL_PAD_X = 2.4;
+const ROW_PAD_Y = 1.7;
+const TABLE_LINE = 4.5;
+
 function wrapLines(pdf, text, maxWidth) {
-  return pdf.splitTextToSize(String(text || ""), maxWidth);
+  const value = text == null ? "—" : String(text).trim();
+  if (!value) return [""];
+  const safeWidth = Math.max(4, maxWidth);
+  if (pdf.getTextWidth(value) <= safeWidth + 0.4) return [value];
+  const lines = pdf.splitTextToSize(value, safeWidth);
+  return lines.map((line) => {
+    if (pdf.getTextWidth(line) <= safeWidth + 0.25) return line;
+    let cut = line;
+    while (cut.length > 1 && pdf.getTextWidth(`${cut}…`) > safeWidth) {
+      cut = cut.slice(0, -1);
+    }
+    return cut.length < line.length ? `${cut}…` : cut;
+  });
 }
 
-function truncate(text, maxLen) {
-  const value = String(text || "").trim();
-  if (value.length <= maxLen) return value || "—";
-  return `${value.slice(0, Math.max(0, maxLen - 1))}…`;
+function layoutColumns(specs, contentWidth) {
+  const weights = specs.map((col) => col.weight);
+  let mins = specs.map((col) => col.min);
+  let minTotal = mins.reduce((sum, min) => sum + min, 0);
+  if (minTotal > contentWidth) {
+    const scale = contentWidth / minTotal;
+    mins = mins.map((min) => min * scale);
+    minTotal = contentWidth;
+  }
+  const extra = contentWidth - minTotal;
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const widths = mins.map((min, index) => min + (weights[index] / weightSum) * extra);
+  widths[widths.length - 1] += contentWidth - widths.reduce((sum, width) => sum + width, 0);
+  return specs.map((col, index) => ({ ...col, width: widths[index] }));
 }
 
 function slugify(value) {
@@ -37,37 +63,39 @@ function resolveRowStatus(row) {
   return String(row?.student?.status || "—").trim() || "—";
 }
 
-function drawReportHeader(pdf, { title, filters, scopeLabel, filteredStudentsCount, filteredReqStudentsCount, marginX, lineHeight }) {
-  let y = 16;
+function drawReportHeader(pdf, { title, filters, scopeLabel, filteredStudentsCount, filteredReqStudentsCount, marginX, contentWidth, lineHeight }) {
+  let y = 14;
+  pdf.setTextColor(15, 23, 42);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(16);
-  pdf.text(title, marginX, y);
-  y += lineHeight + 2;
+  const titleLines = wrapLines(pdf, title, contentWidth);
+  titleLines.forEach((line) => {
+    pdf.text(line, marginX, y);
+    y += lineHeight + 1;
+  });
+  y += 1;
 
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
-  pdf.text(`Period: ${formatPeriodLabel(filters.dateFrom, filters.dateTo)}`, marginX, y);
-  y += lineHeight;
-  if (scopeLabel) {
-    pdf.text(`Scope: ${scopeLabel}`, marginX, y);
-    y += lineHeight;
-  }
-  pdf.text(`Generated: ${new Date().toLocaleString()}`, marginX, y);
-  y += lineHeight;
-  if (typeof filteredStudentsCount === "number") {
-    pdf.text(
-      `Students: ${filteredStudentsCount}${filteredReqStudentsCount > 0 ? ` · Requested leads: ${filteredReqStudentsCount}` : ""}`,
-      marginX,
-      y
-    );
-    y += lineHeight;
-  }
-  pdf.text(
+  pdf.setTextColor(51, 65, 85);
+  const metaLines = [
+    `Period: ${formatPeriodLabel(filters.dateFrom, filters.dateTo)}`,
+    scopeLabel ? `Scope: ${scopeLabel}` : "",
+    `Generated: ${new Date().toLocaleString()}`,
+    typeof filteredStudentsCount === "number"
+      ? `Students: ${filteredStudentsCount}${filteredReqStudentsCount > 0 ? ` · Requested leads: ${filteredReqStudentsCount}` : ""}`
+      : "",
     `Filters — Counselor: ${formatFilterValue(filters.counselor === "All" ? "All" : filters.counselorLabel || filters.counselor)} · Branch: ${formatFilterValue(filters.branch)} · Country: ${formatFilterValue(filters.country)}`,
-    marginX,
-    y
-  );
-  y += lineHeight + 3;
+  ].filter(Boolean);
+
+  metaLines.forEach((line) => {
+    wrapLines(pdf, line, contentWidth).forEach((wrapped) => {
+      pdf.text(wrapped, marginX, y);
+      y += lineHeight;
+    });
+  });
+  pdf.setTextColor(15, 23, 42);
+  y += 3;
   return y;
 }
 
@@ -87,120 +115,202 @@ function isInterviewTableRow(row) {
   return row?.tableVariant === "interview";
 }
 
+function columnSpecsForRows(rows) {
+  if (rows.some(isOfferTableRow)) {
+    return [
+      { label: "Student", min: 88, weight: 6, padX: 4 },
+      { label: "Country", min: 28, weight: 1 },
+      { label: "Branch", min: 28, weight: 1 },
+      { label: "Offer letter", min: 42, weight: 1.4 },
+      { label: "Status", min: 26, weight: 0.8 },
+      { label: "Received", min: 28, weight: 0.8 },
+      { label: "Counselor", min: 36, weight: 1.2 },
+    ];
+  }
+  if (rows.some(isInterviewTableRow)) {
+    return [
+      { label: "Student", min: 88, weight: 6, padX: 4 },
+      { label: "Country", min: 28, weight: 1 },
+      { label: "Branch", min: 28, weight: 1 },
+      { label: "Interview", min: 42, weight: 1.4 },
+      { label: "Outcome", min: 28, weight: 1 },
+      { label: "Completed", min: 28, weight: 0.8 },
+      { label: "Counselor", min: 36, weight: 1.2 },
+    ];
+  }
+  return [
+    { label: "Student", min: 96, weight: 5, padX: 4 },
+    { label: "Country", min: 36, weight: 1 },
+    { label: "Branch", min: 36, weight: 1 },
+    { label: "Stage", min: 40, weight: 1 },
+    { label: "Counselor", min: 44, weight: 1.2 },
+  ];
+}
+
+function cellsForRow(row, columns) {
+  const offer = columns.some((col) => col.label === "Offer letter");
+  const interview = columns.some((col) => col.label === "Interview");
+  const values = offer
+    ? [row.name, row.country, row.branch, row.offerName, row.offerStatus, resolveRowReceived(row), row.counselor]
+    : interview
+      ? [row.name, row.country, row.branch, row.interviewType, row.interviewOutcome, resolveRowReceived(row), row.counselor]
+      : [row.name, row.country, row.branch, resolveRowStatus(row), row.counselor];
+  return values.map((value) => {
+    const text = String(value ?? "").trim();
+    return text || null;
+  });
+}
+
+function drawFullWidthTable(pdf, {
+  columns,
+  bodyRows,
+  marginX,
+  pageHeight,
+  contentWidth,
+  startY,
+  emptyLabel = "No rows.",
+}) {
+  let y = startY;
+  const bottom = pageHeight - 10;
+
+  const paintHeader = () => {
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.setTextColor(51, 65, 85);
+    const wrapped = columns.map((col) => wrapLines(pdf, col.label, col.width - (col.padX ?? CELL_PAD_X) * 2));
+    const lineCount = Math.max(1, ...wrapped.map((lines) => lines.length));
+    const rowHeight = lineCount * TABLE_LINE + ROW_PAD_Y * 2;
+    pdf.setFillColor(241, 245, 249);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.setLineWidth(0.25);
+    pdf.rect(marginX, y, contentWidth, rowHeight, "FD");
+    const baseline = y + ROW_PAD_Y + TABLE_LINE - 1.15;
+    let x = marginX;
+    wrapped.forEach((lines, index) => {
+      const col = columns[index];
+      const padX = col.padX ?? CELL_PAD_X;
+      if (index > 0) {
+        pdf.setDrawColor(226, 232, 240);
+        pdf.setLineWidth(0.2);
+        pdf.line(x, y, x, y + rowHeight);
+      }
+      lines.forEach((line, lineIndex) => {
+        const textX = col.align === "right" ? x + col.width - padX : x + padX;
+        pdf.text(line, textX, baseline + lineIndex * TABLE_LINE, {
+          align: col.align === "right" ? "right" : "left",
+        });
+      });
+      x += col.width;
+    });
+    y += rowHeight;
+  };
+
+  const paintBodyRow = (cells, rowIndex) => {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(30, 41, 59);
+    const wrapped = columns.map((col, index) => wrapLines(pdf, cells[index], col.width - (col.padX ?? CELL_PAD_X) * 2));
+    const lineCount = Math.max(1, ...wrapped.map((lines) => lines.length));
+    const rowHeight = lineCount * TABLE_LINE + ROW_PAD_Y * 2;
+    if (y + rowHeight > bottom) {
+      pdf.addPage();
+      y = 14;
+      paintHeader();
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(30, 41, 59);
+    }
+    if (rowIndex % 2 === 1) {
+      pdf.setFillColor(248, 250, 252);
+      pdf.rect(marginX, y, contentWidth, rowHeight, "F");
+    }
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.15);
+    pdf.rect(marginX, y, contentWidth, rowHeight, "S");
+    const baseline = y + ROW_PAD_Y + TABLE_LINE - 1.15;
+    let x = marginX;
+    wrapped.forEach((lines, index) => {
+      const col = columns[index];
+      const padX = col.padX ?? CELL_PAD_X;
+      if (index > 0) {
+        pdf.setDrawColor(203, 213, 225);
+        pdf.setLineWidth(0.2);
+        pdf.line(x, y, x, y + rowHeight);
+      }
+      lines.forEach((line, lineIndex) => {
+        const textX = col.align === "right" ? x + col.width - padX : x + padX;
+        pdf.text(line, textX, baseline + lineIndex * TABLE_LINE, {
+          align: col.align === "right" ? "right" : "left",
+        });
+      });
+      x += col.width;
+    });
+    y += rowHeight;
+  };
+
+  if (y + TABLE_LINE * 3 > bottom) {
+    pdf.addPage();
+    y = 14;
+  }
+  paintHeader();
+
+  if (!bodyRows.length) {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(100, 116, 139);
+    const lines = wrapLines(pdf, emptyLabel, contentWidth - CELL_PAD_X * 2);
+    const rowHeight = lines.length * TABLE_LINE + ROW_PAD_Y * 2;
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.15);
+    pdf.rect(marginX, y, contentWidth, rowHeight, "S");
+    const baseline = y + ROW_PAD_Y + TABLE_LINE - 1.15;
+    lines.forEach((line, index) => {
+      pdf.text(line, marginX + CELL_PAD_X, baseline + index * TABLE_LINE);
+    });
+    y += rowHeight + 5;
+    return y;
+  }
+
+  bodyRows.forEach((cells, index) => paintBodyRow(cells, index));
+  y += 5;
+  return y;
+}
+
 function drawMetricTable(pdf, {
   metricLabel,
   rows = [],
   marginX,
-  pageWidth,
   pageHeight,
   contentWidth,
-  lineHeight,
   startY,
 }) {
   let y = startY;
-  const ensureSpace = (needed = lineHeight) => {
-    if (y + needed > pageHeight - 16) {
-      pdf.addPage();
-      y = 16;
-    }
-  };
+  if (y + 18 > pageHeight - 10) {
+    pdf.addPage();
+    y = 14;
+  }
 
-  ensureSpace(lineHeight * 2);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10);
-  pdf.text(`${metricLabel} (${rows.length})`, marginX, y);
-  y += lineHeight + 1;
+  pdf.setTextColor(15, 23, 42);
+  const title = `${metricLabel} (${rows.length})`;
+  wrapLines(pdf, title, contentWidth).forEach((line) => {
+    pdf.text(line, marginX, y);
+    y += 5;
+  });
+  y += 1.5;
 
-  const useOfferColumns = rows.some(isOfferTableRow);
-  const useInterviewColumns = !useOfferColumns && rows.some(isInterviewTableRow);
-  const columns = useOfferColumns
-    ? [
-        { label: "Student", width: 40 },
-        { label: "Country", width: 24 },
-        { label: "Branch", width: 24 },
-        { label: "Offer letter", width: 36 },
-        { label: "Status", width: 22 },
-        { label: "Received", width: 22 },
-        { label: "Counselor", width: 30 },
-      ]
-    : useInterviewColumns
-      ? [
-          { label: "Student", width: 40 },
-          { label: "Country", width: 24 },
-          { label: "Branch", width: 24 },
-          { label: "Interview", width: 36 },
-          { label: "Outcome", width: 28 },
-          { label: "Completed", width: 22 },
-          { label: "Counselor", width: 30 },
-        ]
-      : [
-        { label: "Student", width: 52 },
-        { label: "Country", width: 34 },
-        { label: "Branch", width: 34 },
-        { label: "Stage", width: 36 },
-        { label: "Counselor", width: 42 },
-      ];
+  const columns = layoutColumns(columnSpecsForRows(rows), contentWidth);
 
-  ensureSpace(lineHeight + 2);
-  pdf.setFillColor(241, 245, 249);
-  pdf.rect(marginX, y - 3, contentWidth, 6, "F");
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(7);
-  let x = marginX + 1;
-  for (const col of columns) {
-    pdf.text(col.label, x, y);
-    x += col.width;
-  }
-  y += lineHeight;
-
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(8);
-  if (!rows.length) {
-    ensureSpace(lineHeight);
-    pdf.text("No students match this metric.", marginX + 2, y);
-    y += lineHeight + 2;
-    return y;
-  }
-
-  for (const row of rows) {
-    ensureSpace(lineHeight + 1);
-    x = marginX + 1;
-    const cells = useOfferColumns
-      ? [
-          truncate(row.name, 34),
-          truncate(row.country, 20),
-          truncate(row.branch, 20),
-          truncate(row.offerName, 30),
-          truncate(row.offerStatus, 18),
-          truncate(resolveRowReceived(row), 18),
-          truncate(row.counselor, 26),
-        ]
-      : useInterviewColumns
-        ? [
-            truncate(row.name, 34),
-            truncate(row.country, 20),
-            truncate(row.branch, 20),
-            truncate(row.interviewType, 30),
-            truncate(row.interviewOutcome, 24),
-            truncate(resolveRowReceived(row), 18),
-            truncate(row.counselor, 26),
-          ]
-        : [
-          truncate(row.name, 44),
-          truncate(row.country, 28),
-          truncate(row.branch, 28),
-          truncate(resolveRowStatus(row), 30),
-          truncate(row.counselor, 36),
-        ];
-    for (let i = 0; i < columns.length; i += 1) {
-      pdf.text(String(cells[i] || "—"), x, y);
-      x += columns[i].width;
-    }
-    y += lineHeight + 1;
-  }
-
-  y += 2;
-  return y;
+  return drawFullWidthTable(pdf, {
+    columns,
+    bodyRows: rows.map((row) => cellsForRow(row, columns)),
+    marginX,
+    pageHeight,
+    contentWidth,
+    startY: y,
+    emptyLabel: "No students match this metric.",
+  });
 }
 
 async function createReportPdf({
@@ -217,9 +327,10 @@ async function createReportPdf({
   const pdf = new jsPDF("l", "mm", "a4");
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const marginX = 12;
+  const marginX = 8;
   const contentWidth = pageWidth - marginX * 2;
   const lineHeight = 5;
+  const countWidth = 36;
 
   let y = drawReportHeader(pdf, {
     title,
@@ -228,54 +339,41 @@ async function createReportPdf({
     filteredStudentsCount,
     filteredReqStudentsCount,
     marginX,
+    contentWidth,
     lineHeight,
   });
 
-  const ensureSpace = (needed = lineHeight) => {
-    if (y + needed > pageHeight - 16) {
-      pdf.addPage();
-      y = 16;
-    }
-  };
-
   for (const section of sections) {
-    ensureSpace(lineHeight * 3);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(11);
-    pdf.text(section.title, marginX, y);
-    y += lineHeight + 1;
-
-    pdf.setFillColor(241, 245, 249);
-    pdf.rect(marginX, y - 3, contentWidth, 6, "F");
-    pdf.setFontSize(8);
-    pdf.text("Metric", marginX + 2, y);
-    pdf.text("Count", pageWidth - marginX - 12, y);
-    y += lineHeight;
-
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(9);
-    for (const metric of section.metrics) {
-      const count = counts[metric.id] ?? 0;
-      const labelLines = wrapLines(pdf, metric.label, contentWidth - 24);
-      const rowHeight = Math.max(lineHeight, labelLines.length * lineHeight);
-      ensureSpace(rowHeight + 1);
-      labelLines.forEach((line, idx) => {
-        pdf.text(line, marginX + 2, y + idx * lineHeight);
-      });
-      pdf.text(String(count), pageWidth - marginX - 2, y, { align: "right" });
-      y += rowHeight + 1;
+    if (y + 20 > pageHeight - 10) {
+      pdf.addPage();
+      y = 14;
     }
-    y += 2;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(12);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(section.title, marginX, y);
+    y += 7;
+
+    y = drawFullWidthTable(pdf, {
+      columns: [
+        { label: "Metric", width: contentWidth - countWidth },
+        { label: "Count", width: countWidth, align: "right" },
+      ],
+      bodyRows: section.metrics.map((metric) => [metric.label, String(counts[metric.id] ?? 0)]),
+      marginX,
+      pageHeight,
+      contentWidth,
+      startY: y,
+      emptyLabel: "No metrics in this section.",
+    });
 
     for (const metric of section.metrics) {
       y = drawMetricTable(pdf, {
         metricLabel: metric.label,
         rows: lists[metric.id] || [],
         marginX,
-        pageWidth,
         pageHeight,
         contentWidth,
-        lineHeight,
         startY: y,
       });
     }
@@ -315,7 +413,7 @@ export async function downloadReportMetricPdf({
   const pdf = new jsPDF("l", "mm", "a4");
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const marginX = 12;
+  const marginX = 8;
   const contentWidth = pageWidth - marginX * 2;
   const lineHeight = 5;
 
@@ -326,6 +424,7 @@ export async function downloadReportMetricPdf({
     filteredStudentsCount,
     filteredReqStudentsCount,
     marginX,
+    contentWidth,
     lineHeight,
   });
 
@@ -333,10 +432,8 @@ export async function downloadReportMetricPdf({
     metricLabel,
     rows,
     marginX,
-    pageWidth,
     pageHeight,
     contentWidth,
-    lineHeight,
     startY: y,
   });
 

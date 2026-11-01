@@ -30,7 +30,8 @@ import {
   Search,
   Loader2,
   Plus,
-  KeyRound
+  KeyRound,
+  Activity
 } from "lucide-react";
 import { DocumentManager } from "./DocumentManager";
 import { TaskDocumentRequestsPanel } from "./TaskDocumentRequestsPanel";
@@ -75,7 +76,8 @@ import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
-import { getInvoicesByStudentId, getUniversityPrograms, getCountries, getBranches, createCountryChangeRequest, getCountryChangeRequests, createBranchChangeRequest, getBranchChangeRequests, createBranchWhatsappMessengerChangeRequest, getBranchWhatsappMessengerChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, sendStudentLoginDetails } from "../authApi";
+import { getInvoicesByStudentId, getUniversityPrograms, getCountries, getBranches, createCountryChangeRequest, getCountryChangeRequests, createBranchChangeRequest, getBranchChangeRequests, createBranchWhatsappMessengerChangeRequest, getBranchWhatsappMessengerChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, createEnrollmentStatusChangeRequest, getEnrollmentStatusChangeRequests, sendStudentLoginDetails } from "../authApi";
+import { enrollmentStatusBadgeClass, formatEnrollmentStatusLabel, normalizeEnrollmentStatus } from "../utils/enrollmentStatus";
 import { IntakeFields } from "./IntakeFields";
 import { formatStudentIntake, intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
@@ -209,14 +211,14 @@ function courseSelectionKey(course) {
 function formatCourseLabel(course) {
   const uni = String(course?.university || "").trim();
   const prog = String(course?.programName || "").trim();
-  if (uni && prog) return `${prog} — ${uni}`;
+  if (uni && prog && uni.toLowerCase() !== prog.toLowerCase()) return `${prog} — ${uni}`;
   return uni || prog || "Course";
 }
 function courseFromProgram(program) {
   if (!program || typeof program !== "object") return null;
   const programId = String(program.id || "").trim();
   const university = String(program.university || "").trim();
-  const programName = String(program.programName || "").trim();
+  const programName = String(program.programName || "").trim() || university;
   if (!programId || !university || !programName) return null;
   return {
     entryId: `pc-${programId}-${Date.now()}`,
@@ -255,6 +257,9 @@ const KeyDetails = ({
   canRequestCountryChange = false,
   onRequestCountryChange,
   countryChangePending = false,
+  canRequestEnrollmentStatusChange = false,
+  onRequestEnrollmentStatusChange,
+  enrollmentStatusChangePending = false,
   canRequestIntakeChange = false,
   onRequestIntakeChange,
   intakeChangePending = false,
@@ -269,7 +274,15 @@ const KeyDetails = ({
   whatsappContactChangePending = false
 }) => {
   const budgetUnset = !hasStudentAnnualBudget(student);
+  const enrollmentStatus = normalizeEnrollmentStatus(student.enrollmentStatus);
   const details = [
+    {
+      icon: Activity,
+      label: "Status",
+      value: formatEnrollmentStatusLabel(enrollmentStatus),
+      isStatus: true,
+      statusKey: enrollmentStatus
+    },
     { icon: MapPin, label: "Branch", value: student.branch || "—", isBranch: true },
     {
       icon: Globe,
@@ -305,6 +318,7 @@ const KeyDetails = ({
       const isBranch = item.isBranch === true;
       const isCountry = item.isCountry === true;
       const isIntake = item.isIntake === true;
+      const isStatus = item.isStatus === true;
       return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
         /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
         /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
@@ -315,6 +329,20 @@ const KeyDetails = ({
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Set Annual budget"
             ] })
+          ] }) : isStatus ? /* @__PURE__ */ jsxs("div", { className: "mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+              /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${enrollmentStatusBadgeClass(item.statusKey)}`, children: item.value }),
+              enrollmentStatusChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
+              canRequestEnrollmentStatusChange && onRequestEnrollmentStatusChange && !enrollmentStatusChangePending ? /* @__PURE__ */ jsxs("select", { value: "", onChange: (e) => {
+                const next = String(e.target.value || "").trim();
+                if (next) onRequestEnrollmentStatusChange(next);
+              }, className: "h-7 text-[11px] border border-gray-200 rounded-lg px-2 bg-white text-slate-700 focus:outline-none focus:border-indigo-500", "aria-label": "Change student status", children: [
+                /* @__PURE__ */ jsx("option", { value: "", children: "Change to…" }),
+                item.statusKey !== "active" ? /* @__PURE__ */ jsx("option", { value: "active", children: "Active" }) : null,
+                item.statusKey !== "dropped" ? /* @__PURE__ */ jsx("option", { value: "dropped", children: "Dropped" }) : null
+              ] }) : null
+            ] }),
+            student.enrollmentStatusReason ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1 [overflow-wrap:anywhere]", children: student.enrollmentStatusReason }) : null
           ] }) : isBranch ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
             /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
             branchChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
@@ -1050,6 +1078,14 @@ const StudentProfile = ({
   });
   const [countryOptions, setCountryOptions] = useState([]);
   const [countryChangePending, setCountryChangePending] = useState(false);
+  const [enrollmentStatusDialog, setEnrollmentStatusDialog] = useState({
+    open: false,
+    requestedStatus: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [enrollmentStatusChangePending, setEnrollmentStatusChangePending] = useState(false);
   const [branchDialog, setBranchDialog] = useState({
     open: false,
     branch: "",
@@ -1474,6 +1510,7 @@ const StudentProfile = ({
   const canManagerEditContact = userRole === "Manager" || userRole === "Admin";
   const canSetAnnualBudget = ["Admin", "Manager"].includes(userRole) || isCounselorEquivalentPortalRole(userRole);
   const canRequestCountryChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestEnrollmentStatusChange = Boolean(userRole);
   const canRequestBranchChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestWhatsappContactChange =
     branchWhatsappEnabled === true &&
@@ -1642,6 +1679,15 @@ const StudentProfile = ({
     const result = await getStudentRemovalRequests({ studentId, pendingOnly: true });
     setRemovalPending(result.ok && Array.isArray(result.data) && result.data.length > 0);
   }, [localStudent?.id]);
+  const refreshEnrollmentStatusChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setEnrollmentStatusChangePending(false);
+      return;
+    }
+    const result = await getEnrollmentStatusChangeRequests({ studentId, pendingOnly: true });
+    setEnrollmentStatusChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
   const refreshIntakeChangePending = useCallback(async () => {
     const studentId = String(localStudent?.id || "").trim();
     if (!studentId) {
@@ -1658,7 +1704,8 @@ const StudentProfile = ({
     refreshIntakeChangePending();
     refreshDetailChangePending();
     refreshRemovalPending();
-  }, [refreshCountryChangePending, refreshBranchChangePending, refreshWhatsappContactChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending]);
+    refreshEnrollmentStatusChangePending();
+  }, [refreshCountryChangePending, refreshBranchChangePending, refreshWhatsappContactChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending, refreshEnrollmentStatusChangePending]);
   useEffect(() => {
     refreshWhatsappContactAccount();
   }, [refreshWhatsappContactAccount]);
@@ -1766,6 +1813,75 @@ const StudentProfile = ({
     );
     setCountryChangePending(true);
     closeCountryDialog();
+  };
+  const openEnrollmentStatusDialog = (requestedStatus) => {
+    if (!canRequestEnrollmentStatusChange || enrollmentStatusChangePending) return;
+    const next = normalizeEnrollmentStatus(requestedStatus, "");
+    if (next !== "active" && next !== "dropped") return;
+    const current = normalizeEnrollmentStatus(localStudent.enrollmentStatus);
+    if (next === current) return;
+    setEnrollmentStatusDialog({
+      open: true,
+      requestedStatus: next,
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeEnrollmentStatusDialog = () => {
+    setEnrollmentStatusDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitEnrollmentStatusChange = async () => {
+    if (!canRequestEnrollmentStatusChange || enrollmentStatusChangePending) return;
+    const requestedStatus = normalizeEnrollmentStatus(enrollmentStatusDialog.requestedStatus, "");
+    const reason = String(enrollmentStatusDialog.reason || "").trim();
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (requestedStatus !== "active" && requestedStatus !== "dropped") {
+      setEnrollmentStatusDialog((prev) => ({ ...prev, error: "Choose Active or Dropped." }));
+      return;
+    }
+    if (!reason) {
+      setEnrollmentStatusDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setEnrollmentStatusDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setEnrollmentStatusDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createEnrollmentStatusChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedStatus,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setEnrollmentStatusDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    const requestedLabel = formatEnrollmentStatusLabel(requestedStatus);
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested status change",
+      target: `${localStudent.name} (${formatEnrollmentStatusLabel(localStudent.enrollmentStatus)} → ${requestedLabel})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      `Status change to ${requestedLabel} is pending admin approval.`,
+      "success"
+    );
+    setEnrollmentStatusChangePending(true);
+    closeEnrollmentStatusDialog();
   };
   const openBranchDialog = async () => {
     if (!canRequestBranchChange || branchChangePending) return;
@@ -2307,7 +2423,7 @@ const StudentProfile = ({
         if (aCountry === studentCountry && bCountry !== studentCountry) return -1;
         if (bCountry === studentCountry && aCountry !== studentCountry) return 1;
       }
-      return String(a.programName || "").localeCompare(String(b.programName || ""));
+      return String(a.programName || a.university || "").localeCompare(String(b.programName || b.university || ""));
     });
   }, [coursesDialog.programs, coursesDialog.search, coursesDialog.selected, existingProgramIds, localStudent.country]);
   const addManualCourseToSelection = () => {
@@ -3050,7 +3166,7 @@ const StudentProfile = ({
               currentUser,
               counselorIdentitySet
             }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestEnrollmentStatusChange, onRequestEnrollmentStatusChange: openEnrollmentStatusDialog, enrollmentStatusChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             /* @__PURE__ */ jsx(StudentSummaries, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
@@ -3149,8 +3265,8 @@ const StudentProfile = ({
               const programId = String(program.id || "").trim();
               const isSelected = (coursesDialog.selected || []).some((c) => String(c.programId || "").trim() === programId);
               return /* @__PURE__ */ jsxs("button", { type: "button", onClick: () => toggleCourseSelection(program), className: `w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${isSelected ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200" : "border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-white"}`, children: [
-                /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-800 [overflow-wrap:anywhere]", children: program.programName }),
-                /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-0.5 [overflow-wrap:anywhere]", children: program.university }),
+                /* @__PURE__ */ jsx("p", { className: "text-sm font-medium text-slate-800 [overflow-wrap:anywhere]", children: program.programName || program.university }),
+                program.programName ? /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-0.5 [overflow-wrap:anywhere]", children: program.university }) : null,
                 /* @__PURE__ */ jsxs("p", { className: "text-[11px] text-slate-500 mt-1", children: [
                   [program.country, program.intake].filter(Boolean).join(" • "),
                   program.tuition ? ` • ${Number(program.tuition).toLocaleString()} ${String(program.currency || "").trim()}` : ""
@@ -3262,6 +3378,30 @@ const StudentProfile = ({
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitWhatsappContactChange, disabled: whatsappContactDialog.saving || !String(whatsappContactDialog.messengerUserId || "").trim() || !String(whatsappContactDialog.reason || "").trim(), children: whatsappContactDialog.saving ? "Submitting…" : "Submit request" })
           ] })
         ] }) }),
+        enrollmentStatusDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeEnrollmentStatusDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request status change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeEnrollmentStatusDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current status: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatEnrollmentStatusLabel(localStudent.enrollmentStatus) }),
+              " → ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatEnrollmentStatusLabel(enrollmentStatusDialog.requestedStatus) })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: enrollmentStatusDialog.reason, onChange: (e) => setEnrollmentStatusDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's status should change…" })
+            ] }),
+            enrollmentStatusDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: enrollmentStatusDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The status updates after an Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeEnrollmentStatusDialog, disabled: enrollmentStatusDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitEnrollmentStatusChange, disabled: enrollmentStatusDialog.saving || !String(enrollmentStatusDialog.reason || "").trim(), children: enrollmentStatusDialog.saving ? "Submitting…" : "Submit request" })
+          ] })
+        ] }) }),
         countryDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCountryDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
             /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request country change" }),
@@ -3284,7 +3424,7 @@ const StudentProfile = ({
               /* @__PURE__ */ jsx("textarea", { value: countryDialog.reason, onChange: (e) => setCountryDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's destination country should change…" })
             ] }),
             countryDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: countryDialog.error }) : null,
-            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The country updates after a Manager, Team Lead, or Admin approves the request." })
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The country updates after a Manager, Team Lead, or Admin approves the request, and the student status becomes Diverted." })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeCountryDialog, disabled: countryDialog.saving, children: "Cancel" }),

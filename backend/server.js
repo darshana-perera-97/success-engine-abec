@@ -51,6 +51,7 @@ const aiRoutes = require("./routes/ai");
 const docMappingRoutes = require("./routes/docMapping");
 const webFormsRoutes = require("./routes/webForms");
 const countryChangeRequestRoutes = require("./routes/countryChangeRequests");
+const enrollmentStatusChangeRequestRoutes = require("./routes/enrollmentStatusChangeRequests");
 const studentDetailChangeRequestRoutes = require("./routes/studentDetailChangeRequests");
 const studentRemovalRequestRoutes = require("./routes/studentRemovalRequests");
 const intakeChangeRequestRoutes = require("./routes/intakeChangeRequests");
@@ -112,6 +113,7 @@ const server = http.createServer(async (req, res) => {
   if (await docMappingRoutes.handle(req, res, url)) return;
   if (await webFormsRoutes.handle(req, res, url)) return;
   if (await countryChangeRequestRoutes.handle(req, res, url)) return;
+  if (await enrollmentStatusChangeRequestRoutes.handle(req, res, url)) return;
   if (await studentDetailChangeRequestRoutes.handle(req, res, url)) return;
   if (await studentRemovalRequestRoutes.handle(req, res, url)) return;
   if (await intakeChangeRequestRoutes.handle(req, res, url)) return;

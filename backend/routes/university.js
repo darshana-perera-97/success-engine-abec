@@ -21,14 +21,112 @@ const {
 } = require("../models/reqStudents");
 const { readPaymentAccounts, writePaymentAccounts, normalizePaymentAccount } = require("../models/paymentAccounts");
 const { readUniversityPrograms, writeUniversityPrograms } = require("../models/universityPrograms");
+const { storeImageDataUrl } = require("../services/uploads");
 const { getWebFormById } = require("../models/webForms");
 const { readSystemData } = require("../models/systemData");
+const { readUsers } = require("../models/users");
+const { isStudentContactStaffRole } = require("../services/roles");
 const { validateIntakeFields } = require("../lib/intakeUtils");
 const { resolvePreferredCoursesAndProgram } = require("../lib/preferredCourses");
 const { normalizeStudentPhone, normalizeWhatsappNumber } = require("../services/whatsapp");
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+const UNIVERSITY_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function matchCountryName(value, countries) {
+  const key = String(value || "").trim().toLowerCase();
+  if (!key) return "";
+  return (countries || []).find((name) => String(name).trim().toLowerCase() === key) || "";
+}
+
+function dataUrlByteLength(dataUrl) {
+  const base64 = String(dataUrl || "").split(",")[1] || "";
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+async function resolveUniversityLogo(logo) {
+  const value = String(logo || "").trim();
+  if (!value) return { error: "University logo is required." };
+  if (value.startsWith("data:image/")) {
+    if (dataUrlByteLength(value) > UNIVERSITY_LOGO_MAX_BYTES) {
+      return { error: "Logo must be under 2MB." };
+    }
+    const stored = await storeImageDataUrl(value, "uni-logo");
+    if (!stored) return { error: "Logo must be a PNG, JPG, WEBP, or GIF image." };
+    return { logoUrl: stored };
+  }
+  if (isHttpUrl(value)) return { logoUrl: value };
+  return { error: "Logo must be an uploaded image or an image link (http or https)." };
+}
+
+async function normalizeUniversityInput(body, countries) {
+  const source = body && typeof body === "object" ? body : {};
+  const university = String(source.university || "").trim();
+  const countryInput = String(source.country || "").trim();
+  const pageLink = String(source.pageLink || source.universityPageLink || "").trim();
+  const courseLink = String(source.courseLink || source.universityCourseLink || "").trim();
+  const country = matchCountryName(countryInput, countries);
+
+  if (!university) return { error: "University name is required." };
+  if (!countryInput) return { error: "Country is required." };
+  if (!country) return { error: `Country "${countryInput}" is not in the country list.` };
+  if (pageLink && !isHttpUrl(pageLink)) {
+    return { error: "University page link must be a valid http or https URL." };
+  }
+  if (courseLink && !isHttpUrl(courseLink)) {
+    return { error: "University course link must be a valid http or https URL." };
+  }
+  if (!pageLink && !courseLink) {
+    return { error: "Add a university page link, a course link, or both." };
+  }
+
+  const logo = await resolveUniversityLogo(source.logoUrl || source.logo || source.logoLink);
+  if (logo.error) return logo;
+  return {
+    university,
+    country,
+    logoUrl: logo.logoUrl,
+    pageLink,
+    courseLink,
+  };
+}
+
+function buildUniversityProgram(normalized) {
+  return {
+    id: `UP-${crypto.randomUUID().slice(0, 8)}`,
+    university: normalized.university,
+    programName: "",
+    country: normalized.country,
+    logoUrl: normalized.logoUrl,
+    pageLink: normalized.pageLink,
+    courseLink: normalized.courseLink,
+    tuition: 0,
+    currency: "",
+    duration: "",
+    intake: "",
+    minGPA: 0,
+    minIELTS: 0,
+    qualificationName: "",
+    qualificationMinValue: 0,
+    ranking: 0,
+    tags: [],
+    logoColor: "bg-slate-700",
+    isHidden: false,
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function filterReqStudentEntries(entries, { branchParam = "", branchCountriesEnabled = false, branches = [], globalCountries = [] } = {}) {
@@ -251,39 +349,68 @@ async function handle(req, res, url) {
         return true;
       }
 
+      const fallbackCounselorId = String(body.assignedCounselorId || "").trim();
+      const users = await readUsers();
+      const staffById = new Map(
+        users
+          .filter((user) => isStudentContactStaffRole(user.role))
+          .map((user) => [String(user.id || ""), user])
+      );
+
       const branchesList = await readBranches();
       const branchLocations = branchesList
         .map((b) => String(b?.location || "").trim())
         .filter(Boolean);
 
-      const normalized = rows
-        .map((row) => {
-          const name = String(row.name || "").trim();
-          const phone = String(row.phone || "").trim();
-          const metaLeadId = String(row.metaLeadId || "").trim();
-          let nearestOffice = String(row.nearestOffice || "").trim() || null;
-          if (nearestOffice && branchLocations.length) {
-            const matched = branchLocations.find(
-              (loc) => loc.toLowerCase() === nearestOffice.toLowerCase()
-            ) || branchLocations.find((loc) => {
-              const key = nearestOffice.toLowerCase();
-              const normalizedLoc = loc.toLowerCase();
-              return normalizedLoc.includes(key) || key.includes(normalizedLoc);
-            });
-            if (matched) nearestOffice = matched;
-          }
-          return {
-            ...row,
-            name,
-            phone,
-            metaLeadId,
-            email: normalizeEmail(row.email),
-            countryToVisit: String(row.countryToVisit || "").trim() || "UAE",
-            nearestOffice,
-            source: String(row.source || "marketing-team").trim() || "marketing-team",
-          };
-        })
-        .filter((row) => row.name || row.phone);
+      const counselorProblems = [];
+      const normalized = [];
+      for (const row of rows) {
+        const name = String(row.name || "").trim();
+        const phone = String(row.phone || "").trim();
+        if (!name && !phone) continue;
+        const metaLeadId = String(row.metaLeadId || "").trim();
+        let nearestOffice = String(row.nearestOffice || "").trim() || null;
+        if (nearestOffice && branchLocations.length) {
+          const matched = branchLocations.find(
+            (loc) => loc.toLowerCase() === nearestOffice.toLowerCase()
+          ) || branchLocations.find((loc) => {
+            const key = nearestOffice.toLowerCase();
+            const normalizedLoc = loc.toLowerCase();
+            return normalizedLoc.includes(key) || key.includes(normalizedLoc);
+          });
+          if (matched) nearestOffice = matched;
+        }
+        const leadLabel = name || phone || "A lead";
+        const assignedCounselorId = String(row.assignedCounselorId || fallbackCounselorId || "").trim();
+        const assignedCounselor = staffById.get(assignedCounselorId);
+        if (!assignedCounselorId || !assignedCounselor) {
+          counselorProblems.push(`${leadLabel} needs a valid counselor.`);
+          continue;
+        }
+        const assignedCounselorName = String(
+          assignedCounselor.username || assignedCounselor.email || assignedCounselor.id || ""
+        ).trim();
+        normalized.push({
+          ...row,
+          name,
+          phone,
+          metaLeadId,
+          email: normalizeEmail(row.email),
+          countryToVisit: String(row.countryToVisit || "").trim() || "UAE",
+          nearestOffice,
+          source: String(row.source || "marketing-team").trim() || "marketing-team",
+          assignedCounselorId,
+          assignedCounselorName,
+        });
+      }
+
+      if (counselorProblems.length) {
+        sendJson(res, 400, {
+          ok: false,
+          error: counselorProblems.slice(0, 8).join(" "),
+        });
+        return true;
+      }
 
       if (!normalized.length) {
         sendJson(res, 400, { ok: false, error: "No valid leads to import." });
@@ -722,72 +849,58 @@ async function handle(req, res, url) {
     return true;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/university-programs/bulk") {
+    try {
+      const body = await parseBody(req);
+      const items = Array.isArray(body.programs) ? body.programs : [];
+      if (!items.length) {
+        sendJson(res, 400, { ok: false, error: "Upload at least one university row." });
+        return true;
+      }
+      if (items.length > 500) {
+        sendJson(res, 400, { ok: false, error: "Import up to 500 universities at a time." });
+        return true;
+      }
+      const countries = await readCountries();
+      const created = [];
+      const skipped = [];
+      for (let index = 0; index < items.length; index += 1) {
+        const normalized = await normalizeUniversityInput(items[index], countries);
+        const row = Number(items[index]?.rowNumber) || index + 1;
+        if (normalized.error) {
+          skipped.push({ row, error: normalized.error });
+          continue;
+        }
+        created.push(buildUniversityProgram(normalized));
+      }
+      if (!created.length) {
+        sendJson(res, 400, {
+          ok: false,
+          error: skipped[0]?.error || "No valid universities to import.",
+          skipped,
+        });
+        return true;
+      }
+      const programs = await readUniversityPrograms();
+      await writeUniversityPrograms([...created, ...programs]);
+      sendJson(res, 201, { ok: true, data: created, skipped });
+    } catch {
+      sendJson(res, 400, { ok: false, error: "Invalid request body." });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/university-programs") {
     try {
       const body = await parseBody(req);
-      const university = String(body.university || "").trim();
-      const programName = String(body.programName || "").trim();
-      const country = String(body.country || "").trim();
-      const tuition = Number(body.tuition);
-      const currency = String(body.currency || "").trim().toUpperCase();
-      const duration = String(body.duration || "").trim();
-      const intake = String(body.intake || "").trim();
-      const minGPA = Number(body.minGPA);
-      const minIELTS = Number(body.minIELTS);
-      const qualificationName = String(body.qualificationName || "").trim();
-      const qualificationMinValue = Number(body.qualificationMinValue);
-      const ranking = Number(body.ranking);
-      const tags = Array.isArray(body.tags) ? body.tags.map((tag) => String(tag || "").trim()).filter(Boolean) : [];
-      const logoColor = String(body.logoColor || "").trim() || "bg-slate-700";
-
-      if (!university || !programName || !country || !currency || !duration || !intake) {
-        sendJson(res, 400, { ok: false, error: "University, program, country, currency, duration, and intake are required." });
+      const countries = await readCountries();
+      const normalized = await normalizeUniversityInput(body, countries);
+      if (normalized.error) {
+        sendJson(res, 400, { ok: false, error: normalized.error });
         return true;
       }
-      if (!Number.isFinite(tuition) || tuition <= 0) {
-        sendJson(res, 400, { ok: false, error: "Tuition must be a positive number." });
-        return true;
-      }
-      const hasQualification = !!qualificationName;
-      if (hasQualification && (!Number.isFinite(qualificationMinValue) || qualificationMinValue < 0)) {
-        sendJson(res, 400, { ok: false, error: "Qualification minimum value must be 0 or higher." });
-        return true;
-      }
-      if (!hasQualification) {
-        if (!Number.isFinite(minGPA) || minGPA < 0) {
-          sendJson(res, 400, { ok: false, error: "Minimum GPA must be 0 or higher." });
-          return true;
-        }
-        if (!Number.isFinite(minIELTS) || minIELTS < 0) {
-          sendJson(res, 400, { ok: false, error: "Minimum IELTS must be 0 or higher." });
-          return true;
-        }
-      }
-      if (!Number.isFinite(ranking) || ranking <= 0) {
-        sendJson(res, 400, { ok: false, error: "Ranking must be a positive number." });
-        return true;
-      }
-
       const programs = await readUniversityPrograms();
-      const program = {
-        id: `UP-${crypto.randomUUID().slice(0, 8)}`,
-        university,
-        programName,
-        country,
-        tuition,
-        currency,
-        duration,
-        intake,
-        minGPA: hasQualification ? 0 : minGPA,
-        minIELTS: hasQualification ? 0 : minIELTS,
-        qualificationName: hasQualification ? qualificationName : "",
-        qualificationMinValue: hasQualification ? qualificationMinValue : 0,
-        ranking: Math.floor(ranking),
-        tags,
-        logoColor,
-        isHidden: false,
-        createdAt: new Date().toISOString(),
-      };
+      const program = buildUniversityProgram(normalized);
       await writeUniversityPrograms([program, ...programs]);
       sendJson(res, 201, { ok: true, data: program });
     } catch {

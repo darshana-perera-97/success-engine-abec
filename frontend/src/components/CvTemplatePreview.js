@@ -24,7 +24,7 @@ function ModernEditorialPreview({ data, activeFlow }) {
       /* @__PURE__ */ jsxs("div", { className: "text-right text-xs text-slate-500 space-y-1", children: [
         /* @__PURE__ */ jsx("p", { children: data.email }),
         /* @__PURE__ */ jsx("p", { children: data.phone }),
-        /* @__PURE__ */ jsx("p", { children: "Colombo, Sri Lanka" })
+        data.address && /* @__PURE__ */ jsx("p", { children: data.address })
       ] })
     ] }),
     /* @__PURE__ */ jsxs("div", { className: "grid grid-cols-12 gap-8", children: [
@@ -42,9 +42,10 @@ function ModernEditorialPreview({ data, activeFlow }) {
               " ",
               data.phone
             ] }),
-            /* @__PURE__ */ jsxs("p", { className: "flex items-center gap-2", children: [
+            data.address && /* @__PURE__ */ jsxs("p", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsx(MapPin, { size: 12, className: "text-indigo-400" }),
-              " Colombo, Sri Lanka"
+              " ",
+              data.address
             ] })
           ] })
         ] }),
@@ -125,7 +126,10 @@ function ModernEditorialPreview({ data, activeFlow }) {
               }
             ),
             data.education.map((edu, i) => /* @__PURE__ */ jsxs("div", { className: "pl-6 border-l border-slate-100", children: [
-              /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: edu.degree }),
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-baseline gap-4 mb-1", children: [
+                /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: edu.degree }),
+                edu.period && /* @__PURE__ */ jsx("span", { className: "text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap", children: edu.period })
+              ] }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500 font-medium", children: edu.school })
             ] }, i))
           ] })
@@ -160,9 +164,9 @@ function ClassicProfessionalPreview({ data, activeFlow }) {
               /* @__PURE__ */ jsx(Phone, { size: 14 }),
               data.phone
             ] }),
-            /* @__PURE__ */ jsxs("span", { className: "flex items-center gap-1.5", children: [
+            data.address && /* @__PURE__ */ jsxs("span", { className: "flex items-center gap-1.5", children: [
               /* @__PURE__ */ jsx(MapPin, { size: 14 }),
-              "Colombo, Sri Lanka"
+              data.address
             ] })
           ] })
         ] })
@@ -192,7 +196,10 @@ function ClassicProfessionalPreview({ data, activeFlow }) {
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-1", children: "In Progress — 2026 · AI Strategy & Digital Transformation" })
             ] }),
             data.education.map((edu, i) => /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: edu.degree }),
+              /* @__PURE__ */ jsxs("div", { className: "flex justify-between items-baseline gap-4", children: [
+                /* @__PURE__ */ jsx("h3", { className: "font-bold text-slate-900 text-sm", children: edu.degree }),
+                edu.period && /* @__PURE__ */ jsx("span", { className: "text-xs text-slate-500 whitespace-nowrap", children: edu.period })
+              ] }),
               /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-600 mt-0.5", children: edu.school })
             ] }, i))
           ] })

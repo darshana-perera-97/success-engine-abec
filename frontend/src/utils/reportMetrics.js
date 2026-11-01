@@ -66,6 +66,14 @@ export const REPORT_SECTIONS = [
       { id: "enrolled", label: "Enrolled" },
     ],
   },
+  {
+    id: "outcomes",
+    title: "Outcomes",
+    metrics: [
+      { id: "droppedStudents", label: "Dropped students" },
+      { id: "divertedStudent", label: "Diverted Student" },
+    ],
+  },
 ];
 
 const VISA_LODGMENT_ITEMS = [
@@ -185,6 +193,21 @@ function stageIndex(status) {
   const canonical = normalizePipelineStatus(status);
   const idx = PIPELINE_STEPS.indexOf(canonical);
   return idx >= 0 ? idx : -1;
+}
+
+const DROPPED_STATUSES = new Set(["dropped", "dropped student", "dropped students"]);
+const DIVERTED_STATUSES = new Set(["diverted", "diverted student", "diverted students"]);
+
+function isDroppedStudent(student) {
+  return DROPPED_STATUSES.has(norm(student?.status));
+}
+
+function isDivertedStudent(student) {
+  return DIVERTED_STATUSES.has(norm(student?.status));
+}
+
+function isOutcomeStatus(student) {
+  return isDroppedStudent(student) || isDivertedStudent(student);
 }
 
 function appointmentOutcomeNotesMatch(apt, { passedOnly = false, failedOnly = false } = {}) {
@@ -325,9 +348,9 @@ function computeMetricForStudent(metricId, student, appointments) {
     case "totalLeadsAllocated":
       return true;
     case "prospectiveLeads":
-      return currentIdx <= inquiryIdx;
+      return !isOutcomeStatus(student) && currentIdx <= inquiryIdx;
     case "nonProspectiveLeads":
-      return currentIdx > inquiryIdx;
+      return !isOutcomeStatus(student) && currentIdx > inquiryIdx;
     case "signUp":
       return isSignUpComplete(student);
     case "registered":
@@ -424,6 +447,10 @@ function computeMetricForStudent(metricId, student, appointments) {
       );
     case "enrolled":
       return status === "Enrolled";
+    case "droppedStudents":
+      return isDroppedStudent(student);
+    case "divertedStudent":
+      return isDivertedStudent(student);
     default:
       return false;
   }

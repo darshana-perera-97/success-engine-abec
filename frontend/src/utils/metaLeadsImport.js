@@ -30,26 +30,37 @@ function formatIntake(raw) {
   return titleCaseWords(key.replace(/_/g, " "));
 }
 
-function inferCountryToVisit(row) {
-  const haystack = [
-    row.campaign_name,
-    row.ad_name,
-    row.form_name,
-    row.adset_name
-  ]
-    .map(cellText)
-    .join(" ")
-    .toLowerCase();
-  if (haystack.includes("dubai") || haystack.includes("uae")) return "UAE";
-  if (haystack.includes("uk") || haystack.includes("britain")) return "UK";
-  if (haystack.includes("usa") || haystack.includes("america")) return "USA";
-  if (haystack.includes("canada")) return "Canada";
-  if (haystack.includes("australia")) return "Australia";
-  if (haystack.includes("new zealand")) return "New Zealand";
-  return "UAE";
+// Whole words only, so "AUS" is Australia and the "US" inside "AUS" is ignored.
+// Two-letter English words ("us", "can") match only as uppercase campaign codes.
+const COUNTRY_RULES = [
+  { country: "UAE", pattern: /\b(?:uae|u\.a\.e\.?|dubai|united arab emirates)\b/i },
+  { country: "UK", pattern: /\b(?:uk|u\.k\.?|united kingdom|britain|england)\b/i },
+  { country: "USA", pattern: /\b(?:usa|u\.s\.a\.?|united states|america)\b/i },
+  { country: "USA", pattern: /\bUS\b/ },
+  { country: "Canada", pattern: /\bcanada\b/i },
+  { country: "Canada", pattern: /\bCAN\b/ },
+  { country: "Australia", pattern: /\b(?:australia|aus)\b/i },
+  { country: "New Zealand", pattern: /\b(?:new zealand|nz)\b/i }
+];
+
+function inferCountryFromText(text) {
+  const haystack = cellText(text);
+  if (!haystack) return "";
+  for (const rule of COUNTRY_RULES) {
+    if (rule.pattern.test(haystack)) return rule.country;
+  }
+  return "";
 }
 
-export function mapMetaLeadRow(rawRow, { branchLocations = [] } = {}) {
+function inferCountryToVisit(row, fileName = "") {
+  const fromCampaign = inferCountryFromText(
+    [row.campaign_name, row.ad_name, row.form_name, row.adset_name].map(cellText).join(" ")
+  );
+  if (fromCampaign) return fromCampaign;
+  return inferCountryFromText(fileName) || "UAE";
+}
+
+export function mapMetaLeadRow(rawRow, { branchLocations = [], fileName = "" } = {}) {
   const row = {};
   for (const [key, value] of Object.entries(rawRow || {})) {
     row[normalizeHeader(key)] = value;
@@ -59,7 +70,7 @@ export function mapMetaLeadRow(rawRow, { branchLocations = [] } = {}) {
   const name = cellText(row.full_name);
   const phone = normalizePhone(row.phone_number, row.work_phone_number);
   const nearestOffice = matchBranchLocation(row.nearest_branch, branchLocations);
-  const countryToVisit = inferCountryToVisit(row);
+  const countryToVisit = inferCountryToVisit(row, fileName);
   const currentEducationLevel = formatQualification(row.highest_qualification);
   const intendedProgram = formatIntake(row.preferred_intake);
   const platform = cellText(row.platform);

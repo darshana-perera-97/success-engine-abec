@@ -150,6 +150,9 @@ async function handle(req, res, url) {
         studemts[idx] = {
           ...studemts[idx],
           country: result.data.requestedCountry,
+          enrollmentStatus: "diverted",
+          enrollmentStatusReason: `Destination country changed to ${result.data.requestedCountry}.`,
+          enrollmentStatusUpdatedAt: nowIso,
           updatedAt: nowIso,
         };
         await writeStudemts(studemts);

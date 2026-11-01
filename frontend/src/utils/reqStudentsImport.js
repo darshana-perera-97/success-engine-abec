@@ -60,7 +60,7 @@ export async function parseReqStudentsImportFile(file, { branchLocations = [] } 
 
     if (isMetaLeadsHeaders(normalizedHeaders)) {
       const rows = rawRows
-        .map((raw) => mapMetaLeadRow(raw, { branchLocations }))
+        .map((raw) => mapMetaLeadRow(raw, { branchLocations, fileName: file.name }))
         .filter((row) => row.name || row.phone);
       if (!rows.length) {
         return { ok: false, error: "No valid leads with a name or phone number were found." };

@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import React from "react";
-import { Filter, BarChart3, Users, FileCheck, MessageSquare, DollarSign, Plane, X, Download, Eye } from "lucide-react";
+import { Filter, BarChart3, Users, FileCheck, MessageSquare, DollarSign, Plane, UserMinus, X, Download, Eye } from "lucide-react";
 import { Button } from "./Button";
 import { ReportStudentTable } from "./ReportStudentTable";
 import { ReportOffersTable } from "./ReportOffersTable";
@@ -22,6 +22,7 @@ const SECTION_ICONS = {
   cas: FileCheck,
   financial: DollarSign,
   visa: Plane,
+  outcomes: UserMinus,
 };
 
 const ALL_CONDITIONS = "all";

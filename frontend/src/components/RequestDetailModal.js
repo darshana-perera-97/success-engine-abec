@@ -20,6 +20,7 @@ export function RequestDetailModal({
   isBusy = false,
   counselorOptions = [],
   requireCounselorSelection = false,
+  reviewBlockedMessage = "",
 }) {
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectNote, setRejectNote] = useState("");
@@ -169,6 +170,12 @@ export function RequestDetailModal({
                 Approving moves the student to this branch and hands them over to the selected counselor.
               </p>
             </div>
+          ) : null}
+
+          {reviewBlockedMessage && isPending && !showReviewActions ? (
+            <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {reviewBlockedMessage}
+            </p>
           ) : null}
 
           {rejectMode ? (

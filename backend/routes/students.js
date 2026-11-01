@@ -24,6 +24,7 @@ const { readBranches } = require("../models/branches");
 const { readInvoices } = require("../models/invoices");
 const { appendReqStudent } = require("../models/reqStudents");
 const { normalizeEmail } = require("../services/roles");
+const { normalizeEnrollmentStatus } = require("../lib/enrollmentStatus");
 const {
   normalizePipelineStatus,
   applyRoleScope,
@@ -455,6 +456,7 @@ async function handle(req, res, url) {
         ielts,
         gpa,
         status,
+        enrollmentStatus: "active",
         budget,
         priority,
         counselor,
@@ -552,7 +554,18 @@ async function handle(req, res, url) {
         ...body,
         id: studemts[idx].id,
         updatedAt: nowIso,
+        enrollmentStatus: normalizeEnrollmentStatus(previous.enrollmentStatus),
       };
+      if (previous.enrollmentStatusReason) {
+        merged.enrollmentStatusReason = previous.enrollmentStatusReason;
+      } else {
+        delete merged.enrollmentStatusReason;
+      }
+      if (previous.enrollmentStatusUpdatedAt) {
+        merged.enrollmentStatusUpdatedAt = previous.enrollmentStatusUpdatedAt;
+      } else {
+        delete merged.enrollmentStatusUpdatedAt;
+      }
       if (Object.prototype.hasOwnProperty.call(body, "phone")) {
         const normalizedPhone = normalizeStudentPhone(body.phone);
         if (!normalizedPhone) {

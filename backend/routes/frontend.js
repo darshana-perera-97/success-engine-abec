@@ -275,7 +275,21 @@ async function handle(req, res, url) {
         return true;
       } catch {
         if (isStaticAssetRequest) {
-          const assetFromOtherBuild = await tryReadFrontendAssetFromBuildOutputs(requestedPath);
+          const nestedStaticPath = nestedStaticAssetPath(requestedPath);
+          if (nestedStaticPath) {
+            const nestedAbsolute = path.resolve(frontendRoot, nestedStaticPath.replace(/^[/\\]+/, ""));
+            if (nestedAbsolute.startsWith(distRoot)) {
+              try {
+                await sendFrontendFile(res, nestedAbsolute);
+                return true;
+              } catch {
+                // Fall through to the other build output.
+              }
+            }
+          }
+          const assetFromOtherBuild = await tryReadFrontendAssetFromBuildOutputs(
+            nestedStaticPath || requestedPath
+          );
           if (assetFromOtherBuild) {
             res.statusCode = 200;
             res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -299,6 +313,16 @@ async function handle(req, res, url) {
   }
 
   return false;
+}
+
+// Builds with PUBLIC_URL=. emit ./static/... which resolves under the current
+// route. /web-form/:id then requests /web-form/static/* instead of /static/*.
+function nestedStaticAssetPath(requestedPath) {
+  const normalized = String(requestedPath || "");
+  const marker = "/static/";
+  const index = normalized.indexOf(marker);
+  if (index <= 0) return "";
+  return normalized.slice(index);
 }
 
 module.exports = { handle, handleApi };

@@ -1,3 +1,4 @@
+import { formatEnrollmentStatusLabel } from "./enrollmentStatus";
 import { formatIntakeLabel } from "./intakeFields";
 
 const DETAIL_FIELD_LABELS = {
@@ -42,6 +43,7 @@ export function formatRequestTypeLabel(row) {
   if (row?.requestType === "branch-change") return "Branch change";
   if (row?.requestType === "whatsapp-contact-change") return "WhatsApp contact";
   if (row?.requestType === "refund") return "Refund";
+  if (row?.requestType === "enrollment-status-change") return "Status change";
   return "Country change";
 }
 
@@ -54,7 +56,8 @@ export function mergeRequestRows(
   refundRows = [],
   branchRows = [],
   whatsappContactRows = [],
-  amountChangeRows = []
+  amountChangeRows = [],
+  statusRows = []
 ) {
   const taggedCountry = (countryRows || []).map((row) => ({
     ...row,
@@ -92,6 +95,10 @@ export function mergeRequestRows(
     ...row,
     requestType: "invoice-amount-change",
   }));
+  const taggedStatus = (statusRows || []).map((row) => ({
+    ...row,
+    requestType: "enrollment-status-change",
+  }));
   return [
     ...taggedCountry,
     ...taggedDetail,
@@ -102,6 +109,7 @@ export function mergeRequestRows(
     ...taggedBranch,
     ...taggedWhatsappContact,
     ...taggedAmountChange,
+    ...taggedStatus,
   ].sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
 }
 
@@ -254,6 +262,11 @@ export function formatRequestChangeSummary(row) {
   if (row?.requestType === "whatsapp-contact-change") {
     const current = row.currentWhatsappName || row.currentMessengerName || "—";
     const requested = row.requestedWhatsappName || row.requestedMessengerName || "—";
+    return `${current} → ${requested}`;
+  }
+  if (row?.requestType === "enrollment-status-change") {
+    const current = formatEnrollmentStatusLabel(row.currentStatus);
+    const requested = formatEnrollmentStatusLabel(row.requestedStatus);
     return `${current} → ${requested}`;
   }
   if (row?.requestType === "refund") {
