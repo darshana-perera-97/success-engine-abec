@@ -12,6 +12,7 @@ import { AddStudentModal } from "./AddStudentModal";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import { MultiSelect } from "./MultiSelect";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
+import { formatStudentRegisteringDate } from "../utils/registeringDate";
 
 import { TableSkeletonRows } from "./LoadingPlaceholder";
 import { dt, DataTablePagination } from "./DataTable";
@@ -58,18 +59,7 @@ function studentTimeMs(student) {
 }
 
 function formatStudentAddedDate(student) {
-  const raw = student?.joinedDate || student?.createdAt || "";
-  if (!raw) return "—";
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return String(raw);
-  try {
-    return parsed.toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short"
-    });
-  } catch {
-    return parsed.toLocaleDateString();
-  }
+  return formatStudentRegisteringDate(student);
 }
 
 function StageSlaCell({ student, now }) {

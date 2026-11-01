@@ -25,6 +25,7 @@ const { readInvoices } = require("../models/invoices");
 const { appendReqStudent } = require("../models/reqStudents");
 const { normalizeEmail } = require("../services/roles");
 const { normalizeEnrollmentStatus } = require("../lib/enrollmentStatus");
+const { normalizeRegisteringDate, todayLocalIso } = require("../lib/registeringDate");
 const {
   normalizePipelineStatus,
   applyRoleScope,
@@ -368,6 +369,12 @@ async function handle(req, res, url) {
       const notes = String(body.notes || "").trim() || "Newly added via CRM.";
       const lastEducationDate =
         String(body.lastEducationDate || "").trim() || new Date().toISOString().split("T")[0];
+      const joinedDateInput = String(body.joinedDate || "").trim();
+      const joinedDate = joinedDateInput ? normalizeRegisteringDate(joinedDateInput) : todayLocalIso();
+      if (!joinedDate) {
+        sendJson(res, 400, { ok: false, error: "Enter a valid registering date." });
+        return true;
+      }
       const documents = Array.isArray(body.documents) ? body.documents : [];
       const city = String(body.city || "").trim();
       const livingStatus = String(body.livingStatus || "").trim();
@@ -476,7 +483,8 @@ async function handle(req, res, url) {
         message: message || null,
         inquirySource,
         createdAt: nowIso,
-        stageEnteredAt: nowIso
+        stageEnteredAt: nowIso,
+        joinedDate
       };
       if (counselorHistory.length > 0) {
         student.counselorHistory = counselorHistory;
@@ -566,6 +574,9 @@ async function handle(req, res, url) {
       } else {
         delete merged.enrollmentStatusUpdatedAt;
       }
+      merged.createdAt = previous.createdAt || merged.createdAt;
+      if (previous.joinedDate) merged.joinedDate = previous.joinedDate;
+      else delete merged.joinedDate;
       if (Object.prototype.hasOwnProperty.call(body, "phone")) {
         const normalizedPhone = normalizeStudentPhone(body.phone);
         if (!normalizedPhone) {

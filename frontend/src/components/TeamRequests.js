@@ -21,6 +21,8 @@ import {
   decideInvoiceAmountChangeRequest,
   getEnrollmentStatusChangeRequests,
   decideEnrollmentStatusChangeRequest,
+  getRegistrationDateChangeRequests,
+  decideRegistrationDateChangeRequest,
 } from "../authApi";
 import { Button } from "./Button";
 import {
@@ -93,7 +95,7 @@ export function TeamRequests({
     setLoading(true);
     setError("");
     const params = filter === "pending" ? { pendingOnly: true } : {};
-    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult, amountChangeResult, statusResult] = await Promise.all([
+    const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, whatsappContactResult, amountChangeResult, statusResult, registrationDateResult] = await Promise.all([
       getCountryChangeRequests(params),
       getStudentDetailChangeRequests(params),
       getInvoiceWaveOffRequests(params),
@@ -104,9 +106,10 @@ export function TeamRequests({
       getBranchWhatsappMessengerChangeRequests(params),
       getInvoiceAmountChangeRequests(params),
       getEnrollmentStatusChangeRequests(params),
+      getRegistrationDateChangeRequests(params),
     ]);
-    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok && !amountChangeResult.ok && !statusResult.ok) {
-      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || amountChangeResult.error || statusResult.error || "Failed to load team requests.");
+    if (!countryResult.ok && !detailResult.ok && !waveOffResult.ok && !removalResult.ok && !intakeResult.ok && !refundResult.ok && !branchResult.ok && !whatsappContactResult.ok && !amountChangeResult.ok && !statusResult.ok && !registrationDateResult.ok) {
+      setError(countryResult.error || detailResult.error || waveOffResult.error || removalResult.error || intakeResult.error || refundResult.error || branchResult.error || whatsappContactResult.error || amountChangeResult.error || statusResult.error || registrationDateResult.error || "Failed to load team requests.");
       setRows([]);
     } else {
       setRows(
@@ -120,7 +123,8 @@ export function TeamRequests({
           branchResult.ok ? branchResult.data : [],
           whatsappContactResult.ok ? whatsappContactResult.data : [],
           amountChangeResult.ok ? amountChangeResult.data : [],
-          statusResult.ok ? statusResult.data : []
+          statusResult.ok ? statusResult.data : [],
+          registrationDateResult.ok ? registrationDateResult.data : []
         )
       );
     }
@@ -180,6 +184,8 @@ export function TeamRequests({
           ? await decideBranchWhatsappMessengerChangeRequest(row.id, reviewerPayload)
         : row.requestType === "enrollment-status-change"
           ? await decideEnrollmentStatusChangeRequest(row.id, reviewerPayload)
+        : row.requestType === "registration-date-change"
+          ? await decideRegistrationDateChangeRequest(row.id, reviewerPayload)
           : await decideCountryChangeRequest(row.id, reviewerPayload);
     setBusyId("");
     if (!result.ok) {
@@ -219,6 +225,8 @@ export function TeamRequests({
           ? "WhatsApp contact change"
         : row.requestType === "enrollment-status-change"
           ? "status change"
+        : row.requestType === "registration-date-change"
+          ? "registering date change"
           : "country change";
     onAddActivity?.({
       user: userRole,
@@ -268,7 +276,7 @@ export function TeamRequests({
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Team Requests</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Review and approve country, branch, WhatsApp contact, intake, student status, student detail, removal, refund, invoice amount, and invoice wave-off requests from your team. Status changes can be approved by an Admin.
+              Review and approve country, branch, WhatsApp contact, intake, registering date, student status, student detail, removal, refund, invoice amount, and invoice wave-off requests from your team. Status changes can be approved by an Admin.
             </p>
           </div>
         </div>

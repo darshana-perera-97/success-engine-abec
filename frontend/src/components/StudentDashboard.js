@@ -18,13 +18,8 @@ import {
 import { getCvTemplateMeta } from "../utils/cvTemplates";
 import { toAbsoluteAssetUrl } from "../apiConfig";
 import { StudentSummaries } from "./StudentSummaries";
-const formatRegisteredDate = (student) => {
-  const candidate = student.joinedDate || student.createdAt || "";
-  if (!candidate) return "Not available";
-  const parsed = new Date(candidate);
-  if (Number.isNaN(parsed.getTime())) return String(candidate);
-  return parsed.toLocaleDateString();
-};
+import { formatStudentRegisteringDate } from "../utils/registeringDate";
+const formatRegisteredDate = (student) => formatStudentRegisteringDate(student, "Not available");
 const StudentDashboard = ({
   student,
   onNavigate,

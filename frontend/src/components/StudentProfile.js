@@ -76,10 +76,12 @@ import {
   applyVisaTickForVerifiedDocument,
   getEnrolledAdvanceBlockReasons
 } from "../studentEnrolledGate.js";
-import { getInvoicesByStudentId, getUniversityPrograms, getCountries, getBranches, createCountryChangeRequest, getCountryChangeRequests, createBranchChangeRequest, getBranchChangeRequests, createBranchWhatsappMessengerChangeRequest, getBranchWhatsappMessengerChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, createEnrollmentStatusChangeRequest, getEnrollmentStatusChangeRequests, sendStudentLoginDetails } from "../authApi";
+import { getInvoicesByStudentId, getUniversityPrograms, getCountries, getBranches, createCountryChangeRequest, getCountryChangeRequests, createBranchChangeRequest, getBranchChangeRequests, createBranchWhatsappMessengerChangeRequest, getBranchWhatsappMessengerChangeRequests, createIntakeChangeRequest, getIntakeChangeRequests, createStudentDetailChangeRequest, getStudentDetailChangeRequests, createStudentRemovalRequest, getStudentRemovalRequests, createEnrollmentStatusChangeRequest, getEnrollmentStatusChangeRequests, createRegistrationDateChangeRequest, getRegistrationDateChangeRequests, sendStudentLoginDetails } from "../authApi";
 import { enrollmentStatusBadgeClass, formatEnrollmentStatusLabel, normalizeEnrollmentStatus } from "../utils/enrollmentStatus";
 import { IntakeFields } from "./IntakeFields";
+import { DatePicker } from "./DatePicker";
 import { formatStudentIntake, intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
+import { formatRegisteringDate, formatStudentRegisteringDate, normalizeRegisteringDate, studentRegisteringDateIso } from "../utils/registeringDate";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { EditStudentDetailsRequestModal } from "./EditStudentDetailsRequestModal";
 import { RemoveStudentRequestModal } from "./RemoveStudentRequestModal";
@@ -249,6 +251,9 @@ const KeyDetails = ({
   preferredCourses = [],
   canEditContact = false,
   onEditContact,
+  canRequestDetailChange = false,
+  onRequestDetailChange,
+  detailChangePending = false,
   canSetBudget = false,
   onSetBudget,
   canRequestBranchChange = false,
@@ -263,6 +268,9 @@ const KeyDetails = ({
   canRequestIntakeChange = false,
   onRequestIntakeChange,
   intakeChangePending = false,
+  canRequestRegisteringDateChange = false,
+  onRequestRegisteringDateChange,
+  registeringDateChangePending = false,
   canManageCourses = false,
   onAddCourses,
   onRemoveCourse,
@@ -273,8 +281,19 @@ const KeyDetails = ({
   onRequestWhatsappContactChange,
   whatsappContactChangePending = false
 }) => {
+  const [editing, setEditing] = useState(false);
   const budgetUnset = !hasStudentAnnualBudget(student);
   const enrollmentStatus = normalizeEnrollmentStatus(student.enrollmentStatus);
+  const canOpenContactEditor = (canEditContact && onEditContact) || (canRequestDetailChange && onRequestDetailChange);
+  const showEditToggle = Boolean(
+    (canSetBudget && onSetBudget) ||
+    (canRequestEnrollmentStatusChange && onRequestEnrollmentStatusChange) ||
+    (canRequestBranchChange && onRequestBranchChange) ||
+    (canRequestCountryChange && onRequestCountryChange) ||
+    (canRequestIntakeChange && onRequestIntakeChange) ||
+    (canRequestRegisteringDateChange && onRequestRegisteringDateChange) ||
+    canOpenContactEditor
+  );
   const details = [
     {
       icon: Activity,
@@ -296,8 +315,14 @@ const KeyDetails = ({
       value: formatStudentIntake(student),
       isIntake: true
     },
-    { icon: Mail, label: "Email", value: student.email || "—" },
-    { icon: Phone, label: "Contact", value: student.phone || "—" },
+    {
+      icon: Calendar,
+      label: "Registering date",
+      value: formatStudentRegisteringDate(student),
+      isRegisteringDate: true
+    },
+    { icon: Mail, label: "Email", value: student.email || "—", isEmail: true },
+    { icon: Phone, label: "Contact", value: student.phone || "—", isContact: true },
     {
       icon: Banknote,
       label: "Annual budget",
@@ -308,61 +333,86 @@ const KeyDetails = ({
   return /* @__PURE__ */ jsxs("div", { className: "bg-white border border-gray-200 rounded-xl p-5 shadow-sm", children: [
     /* @__PURE__ */ jsxs("div", { className: "mb-4 flex items-center justify-between gap-2", children: [
       /* @__PURE__ */ jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "Key Details" }),
-      canEditContact && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px] shrink-0", onClick: onEditContact, children: [
-        /* @__PURE__ */ jsx(Pencil, { size: 13, strokeWidth: 1.75, className: "mr-1.5" }),
-        "Edit Contact"
-      ] })
+      showEditToggle ? /* @__PURE__ */ jsx(Button, { type: "button", size: "sm", variant: "outline", className: "h-8 px-2.5 text-[11px] shrink-0", title: editing ? "Exit edit" : "Edit key details", "aria-pressed": editing, onClick: () => setEditing((current) => !current), children: editing ? "Exit edit" : "Edit" }) : null
     ] }),
     /* @__PURE__ */ jsx("div", { className: "space-y-4", children: details.map((item) => {
       const isAnnualBudget = item.label === "Annual budget";
       const isBranch = item.isBranch === true;
       const isCountry = item.isCountry === true;
       const isIntake = item.isIntake === true;
+      const isRegisteringDate = item.isRegisteringDate === true;
+      const isEmail = item.isEmail === true;
+      const isContact = item.isContact === true;
       const isStatus = item.isStatus === true;
       return /* @__PURE__ */ jsxs("div", { className: "flex items-start gap-3", children: [
         /* @__PURE__ */ jsx(item.icon, { className: "text-slate-400 flex-shrink-0 mt-0.5", size: 16, strokeWidth: 1.5 }),
         /* @__PURE__ */ jsxs("div", { className: "min-w-0 flex-1", children: [
           /* @__PURE__ */ jsx("p", { className: "text-xs text-slate-500", children: item.label }),
-          isAnnualBudget ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
-            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
-            canSetBudget && budgetUnset && onSetBudget && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onSetBudget, children: [
+          isAnnualBudget ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium min-w-0 ${item.valueClass || "text-slate-800"}`, children: item.value }),
+            editing && canSetBudget && budgetUnset && onSetBudget && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: onSetBudget, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Set Annual budget"
             ] })
           ] }) : isStatus ? /* @__PURE__ */ jsxs("div", { className: "mt-0.5", children: [
-            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-              /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${enrollmentStatusBadgeClass(item.statusKey)}`, children: item.value }),
-              enrollmentStatusChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
-              canRequestEnrollmentStatusChange && onRequestEnrollmentStatusChange && !enrollmentStatusChangePending ? /* @__PURE__ */ jsxs("select", { value: "", onChange: (e) => {
-                const next = String(e.target.value || "").trim();
-                if (next) onRequestEnrollmentStatusChange(next);
-              }, className: "h-7 text-[11px] border border-gray-200 rounded-lg px-2 bg-white text-slate-700 focus:outline-none focus:border-indigo-500", "aria-label": "Change student status", children: [
-                /* @__PURE__ */ jsx("option", { value: "", children: "Change to…" }),
-                item.statusKey !== "active" ? /* @__PURE__ */ jsx("option", { value: "active", children: "Active" }) : null,
-                item.statusKey !== "dropped" ? /* @__PURE__ */ jsx("option", { value: "dropped", children: "Dropped" }) : null
-              ] }) : null
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+              /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+                /* @__PURE__ */ jsx("span", { className: `inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${enrollmentStatusBadgeClass(item.statusKey)}`, children: item.value }),
+                enrollmentStatusChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+              ] }),
+              editing && canRequestEnrollmentStatusChange && onRequestEnrollmentStatusChange && !enrollmentStatusChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: () => onRequestEnrollmentStatusChange(), children: [
+                /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+                "Change status"
+              ] })
             ] }),
             student.enrollmentStatusReason ? /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500 mt-1 [overflow-wrap:anywhere]", children: student.enrollmentStatusReason }) : null
-          ] }) : isBranch ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
-            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
-            branchChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
-            canRequestBranchChange && onRequestBranchChange && !branchChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestBranchChange, children: [
+          ] }) : isBranch ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+              branchChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+            ] }),
+            editing && canRequestBranchChange && onRequestBranchChange && !branchChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: onRequestBranchChange, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Change branch"
             ] })
-          ] }) : isCountry ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
-            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
-            countryChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
-            canRequestCountryChange && onRequestCountryChange && !countryChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestCountryChange, children: [
+          ] }) : isCountry ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+              countryChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+            ] }),
+            editing && canRequestCountryChange && onRequestCountryChange && !countryChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: onRequestCountryChange, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Change country"
             ] })
-          ] }) : isIntake ? /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 mt-0.5", children: [
-            /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
-            intakeChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null,
-            canRequestIntakeChange && onRequestIntakeChange && !intakeChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px]", onClick: onRequestIntakeChange, children: [
+          ] }) : isIntake ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+              intakeChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+            ] }),
+            editing && canRequestIntakeChange && onRequestIntakeChange && !intakeChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: onRequestIntakeChange, children: [
               /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
               "Change intake"
+            ] })
+          ] }) : isRegisteringDate ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value }),
+              registeringDateChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+            ] }),
+            editing && canRequestRegisteringDateChange && onRequestRegisteringDateChange && !registeringDateChangePending && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: onRequestRegisteringDateChange, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              "Change date"
+            ] })
+          ] }) : isEmail || isContact ? /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between gap-2 mt-0.5", children: [
+            /* @__PURE__ */ jsxs("div", { className: "flex flex-wrap items-center gap-2 min-w-0", children: [
+              /* @__PURE__ */ jsx("p", { className: `text-sm font-medium min-w-0 [overflow-wrap:anywhere] ${item.valueClass || "text-slate-800"}`, children: item.value }),
+              detailChangePending ? /* @__PURE__ */ jsx("span", { className: "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-200", children: "Change pending" }) : null
+            ] }),
+            editing && canOpenContactEditor && !(detailChangePending && !(canEditContact && onEditContact)) && /* @__PURE__ */ jsxs(Button, { size: "sm", variant: "outline", className: "h-7 px-2 text-[11px] ml-auto shrink-0", onClick: () => {
+              if (canEditContact && onEditContact) onEditContact(isEmail ? "email" : "phone");
+              else onRequestDetailChange();
+            }, children: [
+              /* @__PURE__ */ jsx(Pencil, { size: 12, strokeWidth: 1.75, className: "mr-1" }),
+              isEmail ? "Change email" : "Change contact"
             ] })
           ] }) : /* @__PURE__ */ jsx("p", { className: `text-sm font-medium ${item.valueClass || "text-slate-800"}`, children: item.value })
         ] })
@@ -1120,6 +1170,14 @@ const StudentProfile = ({
     error: ""
   });
   const [intakeChangePending, setIntakeChangePending] = useState(false);
+  const [registeringDateDialog, setRegisteringDateDialog] = useState({
+    open: false,
+    date: "",
+    reason: "",
+    saving: false,
+    error: ""
+  });
+  const [registeringDateChangePending, setRegisteringDateChangePending] = useState(false);
   const [detailChangeDialog, setDetailChangeDialog] = useState({
     open: false,
     saving: false,
@@ -1518,6 +1576,7 @@ const StudentProfile = ({
     userRole !== "Student" &&
     userRole !== "Accountant";
   const canRequestIntakeChange = userRole !== "Student" && userRole !== "Accountant";
+  const canRequestRegisteringDateChange = userRole !== "Student" && userRole !== "Accountant";
   const canRequestStudentDetailChange = userRole !== "Student" && userRole !== "Accountant";
   const profileIntakeOptions = useIntakeOptionsForCountry(localStudent?.country);
   const canRequestStudentRemoval = userRole !== "Student" && userRole !== "Accountant";
@@ -1585,10 +1644,12 @@ const StudentProfile = ({
       taskActions: defaultTaskActions
     });
   };
-  const openContactDialog = () => {
+  const openContactDialog = (field) => {
     if (!canManagerEditContact) return;
+    const focus = field === "email" || field === "phone" ? field : "both";
     setContactDialog({
       open: true,
+      focus,
       email: String(localStudent.email || ""),
       phone: String(localStudent.phone || "")
     });
@@ -1697,15 +1758,25 @@ const StudentProfile = ({
     const result = await getIntakeChangeRequests({ studentId, pendingOnly: true });
     setIntakeChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
   }, [localStudent?.id]);
+  const refreshRegisteringDateChangePending = useCallback(async () => {
+    const studentId = String(localStudent?.id || "").trim();
+    if (!studentId) {
+      setRegisteringDateChangePending(false);
+      return;
+    }
+    const result = await getRegistrationDateChangeRequests({ studentId, pendingOnly: true });
+    setRegisteringDateChangePending(result.ok && Array.isArray(result.data) && result.data.length > 0);
+  }, [localStudent?.id]);
   useEffect(() => {
     refreshCountryChangePending();
     refreshBranchChangePending();
     refreshWhatsappContactChangePending();
     refreshIntakeChangePending();
+    refreshRegisteringDateChangePending();
     refreshDetailChangePending();
     refreshRemovalPending();
     refreshEnrollmentStatusChangePending();
-  }, [refreshCountryChangePending, refreshBranchChangePending, refreshWhatsappContactChangePending, refreshIntakeChangePending, refreshDetailChangePending, refreshRemovalPending, refreshEnrollmentStatusChangePending]);
+  }, [refreshCountryChangePending, refreshBranchChangePending, refreshWhatsappContactChangePending, refreshIntakeChangePending, refreshRegisteringDateChangePending, refreshDetailChangePending, refreshRemovalPending, refreshEnrollmentStatusChangePending]);
   useEffect(() => {
     refreshWhatsappContactAccount();
   }, [refreshWhatsappContactAccount]);
@@ -1814,15 +1885,11 @@ const StudentProfile = ({
     setCountryChangePending(true);
     closeCountryDialog();
   };
-  const openEnrollmentStatusDialog = (requestedStatus) => {
+  const openEnrollmentStatusDialog = () => {
     if (!canRequestEnrollmentStatusChange || enrollmentStatusChangePending) return;
-    const next = normalizeEnrollmentStatus(requestedStatus, "");
-    if (next !== "active" && next !== "dropped") return;
-    const current = normalizeEnrollmentStatus(localStudent.enrollmentStatus);
-    if (next === current) return;
     setEnrollmentStatusDialog({
       open: true,
-      requestedStatus: next,
+      requestedStatus: "",
       reason: "",
       saving: false,
       error: ""
@@ -2111,6 +2178,75 @@ const StudentProfile = ({
     setIntakeChangePending(true);
     closeIntakeDialog();
   };
+  const openRegisteringDateDialog = () => {
+    if (!canRequestRegisteringDateChange || registeringDateChangePending) return;
+    setRegisteringDateDialog({
+      open: true,
+      date: studentRegisteringDateIso(localStudent),
+      reason: "",
+      saving: false,
+      error: ""
+    });
+  };
+  const closeRegisteringDateDialog = () => {
+    setRegisteringDateDialog((prev) => ({ ...prev, open: false, saving: false, error: "" }));
+  };
+  const handleSubmitRegisteringDateChange = async () => {
+    if (!canRequestRegisteringDateChange || registeringDateChangePending) return;
+    const reason = String(registeringDateDialog.reason || "").trim();
+    const requestedDate = normalizeRegisteringDate(registeringDateDialog.date);
+    const requesterId = String(currentUser?.id || authenticatedUser?.id || "").trim();
+    const requesterName = String(
+      currentUser?.username || currentUser?.name || authenticatedUser?.username || authenticatedUser?.name || userRole
+    ).trim();
+    if (!requestedDate) {
+      setRegisteringDateDialog((prev) => ({ ...prev, error: "Choose a valid registering date." }));
+      return;
+    }
+    if (requestedDate === studentRegisteringDateIso(localStudent)) {
+      setRegisteringDateDialog((prev) => ({ ...prev, error: "Choose a different registering date." }));
+      return;
+    }
+    if (!reason) {
+      setRegisteringDateDialog((prev) => ({ ...prev, error: "Enter a reason for this change." }));
+      return;
+    }
+    if (!requesterId) {
+      setRegisteringDateDialog((prev) => ({ ...prev, error: "Could not identify your account." }));
+      return;
+    }
+    setRegisteringDateDialog((prev) => ({ ...prev, saving: true, error: "" }));
+    const result = await createRegistrationDateChangeRequest({
+      studentId: localStudent.id,
+      studentName: localStudent.name,
+      requestedDate,
+      reason,
+      requestedByUserId: requesterId,
+      requestedByName: requesterName,
+      requestedByRole: userRole
+    });
+    if (!result.ok) {
+      setRegisteringDateDialog((prev) => ({ ...prev, saving: false, error: result.error || "Failed to submit request." }));
+      return;
+    }
+    const requestedLabel = formatRegisteringDate(requestedDate);
+    onAddActivity?.({
+      user: userRole,
+      role: userRole,
+      action: "requested registering date change",
+      target: `${localStudent.name} (${formatStudentRegisteringDate(localStudent)} → ${requestedLabel})`,
+      type: "system",
+      studentName: localStudent.name,
+      studentId: localStudent.id
+    });
+    onNotify?.(
+      "Request submitted",
+      `Registering date change to ${requestedLabel} is pending approval.`,
+      "success"
+    );
+    setRegisteringDateChangePending(true);
+    closeRegisteringDateDialog();
+  };
   const openDetailChangeDialog = () => {
     if (!canRequestStudentDetailChange || detailChangePending) return;
     setDetailChangeDialog({ open: true, saving: false, error: "" });
@@ -2324,11 +2460,13 @@ const StudentProfile = ({
   };
   const handleSaveContactDetails = () => {
     if (!canManagerEditContact) return;
+    const focus = contactDialog.focus === "email" || contactDialog.focus === "phone" ? contactDialog.focus : "both";
     const nextEmail = String(contactDialog.email || "").trim();
     const nextPhone = String(contactDialog.phone || "").trim();
     const prevEmail = String(localStudent.email || "").trim();
     const prevPhone = String(localStudent.phone || "").trim();
-    if (!nextEmail || !nextPhone) return;
+    if ((focus === "both" || focus === "email") && !nextEmail) return;
+    if ((focus === "both" || focus === "phone") && !nextPhone) return;
     if (nextEmail === prevEmail && nextPhone === prevPhone) {
       closeContactDialog();
       return;
@@ -3166,7 +3304,7 @@ const StudentProfile = ({
               currentUser,
               counselorIdentitySet
             }),
-            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestEnrollmentStatusChange, onRequestEnrollmentStatusChange: openEnrollmentStatusDialog, enrollmentStatusChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
+            /* @__PURE__ */ jsx(KeyDetails, { student: localStudent, preferredCourses, canEditContact: canManagerEditContact, onEditContact: openContactDialog, canRequestDetailChange: canRequestStudentDetailChange, onRequestDetailChange: openDetailChangeDialog, detailChangePending, canSetBudget: canSetAnnualBudget, onSetBudget: openBudgetDialog, canRequestBranchChange, onRequestBranchChange: openBranchDialog, branchChangePending, canRequestCountryChange, onRequestCountryChange: openCountryDialog, countryChangePending, canRequestEnrollmentStatusChange, onRequestEnrollmentStatusChange: openEnrollmentStatusDialog, enrollmentStatusChangePending, canRequestIntakeChange, onRequestIntakeChange: openIntakeDialog, intakeChangePending, canRequestRegisteringDateChange, onRequestRegisteringDateChange: openRegisteringDateDialog, registeringDateChangePending, canManageCourses: canManagePreferredCourses, onAddCourses: openCoursesDialog, onRemoveCourse: handleRemovePreferredCourse, showWhatsappContact: branchWhatsappEnabled === true, whatsappContactAccount, whatsappContactLoading, canRequestWhatsappContactChange, onRequestWhatsappContactChange: openWhatsappContactDialog, whatsappContactChangePending }),
             /* @__PURE__ */ jsx(SpecializedNotes, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             /* @__PURE__ */ jsx(StudentSummaries, { student: localStudent, onUpdateStudent: handleUpdateStudentLocal, currentUser, authenticatedUser, userRole }),
             showCounselorsRosterSection && /* @__PURE__ */ jsx(StudentProfileCounselorsRoster, {
@@ -3187,22 +3325,22 @@ const StudentProfile = ({
         ] }),
         contactDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeContactDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
-            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Edit contact details" }),
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: contactDialog.focus === "email" ? "Edit email" : contactDialog.focus === "phone" ? "Edit contact number" : "Edit contact details" }),
             /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeContactDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
-            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+            contactDialog.focus !== "phone" ? /* @__PURE__ */ jsxs("label", { className: "block", children: [
               /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Email" }),
               /* @__PURE__ */ jsx("input", { type: "email", value: contactDialog.email, onChange: (e) => setContactDialog((prev) => ({ ...prev, email: e.target.value })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "student@email.com" })
-            ] }),
-            /* @__PURE__ */ jsxs("label", { className: "block", children: [
-              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Phone" }),
+            ] }) : null,
+            contactDialog.focus !== "email" ? /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Contact number" }),
               /* @__PURE__ */ jsx("input", { type: "text", value: contactDialog.phone, onChange: (e) => setContactDialog((prev) => ({ ...prev, phone: e.target.value })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500", placeholder: "+8801XXXXXXXXX" })
-            ] })
+            ] }) : null
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeContactDialog, children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: !String(contactDialog.email || "").trim() || !String(contactDialog.phone || "").trim(), children: "Save changes" })
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSaveContactDetails, disabled: (contactDialog.focus !== "phone" && !String(contactDialog.email || "").trim()) || (contactDialog.focus !== "email" && !String(contactDialog.phone || "").trim()), children: "Save changes" })
           ] })
         ] }) }),
         coursesDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCoursesDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col", onClick: (e) => e.stopPropagation(), children: [
@@ -3386,9 +3524,15 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
             /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
               "Current status: ",
-              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatEnrollmentStatusLabel(localStudent.enrollmentStatus) }),
-              " → ",
-              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatEnrollmentStatusLabel(enrollmentStatusDialog.requestedStatus) })
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatEnrollmentStatusLabel(localStudent.enrollmentStatus) })
+            ] }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "New status" }),
+              /* @__PURE__ */ jsxs("select", { value: enrollmentStatusDialog.requestedStatus, onChange: (e) => setEnrollmentStatusDialog((prev) => ({ ...prev, requestedStatus: e.target.value, error: "" })), className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 bg-white", children: [
+                /* @__PURE__ */ jsx("option", { value: "", children: "Select status…" }),
+                normalizeEnrollmentStatus(localStudent.enrollmentStatus) !== "active" ? /* @__PURE__ */ jsx("option", { value: "active", children: "Active" }) : null,
+                normalizeEnrollmentStatus(localStudent.enrollmentStatus) !== "dropped" ? /* @__PURE__ */ jsx("option", { value: "dropped", children: "Dropped" }) : null
+              ] })
             ] }),
             /* @__PURE__ */ jsxs("label", { className: "block", children: [
               /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
@@ -3399,7 +3543,7 @@ const StudentProfile = ({
           ] }),
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeEnrollmentStatusDialog, disabled: enrollmentStatusDialog.saving, children: "Cancel" }),
-            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitEnrollmentStatusChange, disabled: enrollmentStatusDialog.saving || !String(enrollmentStatusDialog.reason || "").trim(), children: enrollmentStatusDialog.saving ? "Submitting…" : "Submit request" })
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitEnrollmentStatusChange, disabled: enrollmentStatusDialog.saving || !String(enrollmentStatusDialog.requestedStatus || "").trim() || !String(enrollmentStatusDialog.reason || "").trim(), children: enrollmentStatusDialog.saving ? "Submitting…" : "Submit request" })
           ] })
         ] }) }),
         countryDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeCountryDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
@@ -3461,6 +3605,34 @@ const StudentProfile = ({
           /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
             /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeIntakeDialog, disabled: intakeDialog.saving, children: "Cancel" }),
             /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitIntakeChange, disabled: intakeDialog.saving || !String(intakeDialog.reason || "").trim(), children: intakeDialog.saving ? "Submitting…" : "Submit request" })
+          ] })
+        ] }) }),
+        registeringDateDialog.open && /* @__PURE__ */ jsx("div", { className: "fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm", onClick: closeRegisteringDateDialog, children: /* @__PURE__ */ jsxs("div", { className: "bg-white rounded-xl border border-gray-200 shadow-2xl max-w-md w-full overflow-hidden", onClick: (e) => e.stopPropagation(), children: [
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/80", children: [
+            /* @__PURE__ */ jsx("h4", { className: "text-sm font-semibold text-slate-900", children: "Request registering date change" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "p-1 rounded-md text-slate-500 hover:bg-slate-100", onClick: closeRegisteringDateDialog, children: /* @__PURE__ */ jsx(X, { size: 18 }) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "p-4 space-y-3", children: [
+            /* @__PURE__ */ jsxs("p", { className: "text-xs text-slate-500", children: [
+              "Current registering date: ",
+              /* @__PURE__ */ jsx("span", { className: "font-medium text-slate-800", children: formatStudentRegisteringDate(localStudent) })
+            ] }),
+            /* @__PURE__ */ jsx(DatePicker, {
+              label: "New registering date",
+              value: registeringDateDialog.date,
+              onChange: (value) => setRegisteringDateDialog((prev) => ({ ...prev, date: value, error: "" })),
+              required: true
+            }),
+            /* @__PURE__ */ jsxs("label", { className: "block", children: [
+              /* @__PURE__ */ jsx("span", { className: "text-xs font-semibold text-slate-700", children: "Reason for change" }),
+              /* @__PURE__ */ jsx("textarea", { value: registeringDateDialog.reason, onChange: (e) => setRegisteringDateDialog((prev) => ({ ...prev, reason: e.target.value, error: "" })), rows: 3, className: "mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500 resize-y", placeholder: "Explain why this student's registering date should change…" })
+            ] }),
+            registeringDateDialog.error ? /* @__PURE__ */ jsx("p", { className: "text-xs text-rose-600", children: registeringDateDialog.error }) : null,
+            /* @__PURE__ */ jsx("p", { className: "text-[11px] text-slate-500", children: "This will be sent for approval. The registering date updates after a Manager, Team Lead, or Admin approves the request." })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { className: "px-4 py-3 border-t border-gray-100 flex justify-end gap-2", children: [
+            /* @__PURE__ */ jsx(Button, { size: "sm", variant: "outline", onClick: closeRegisteringDateDialog, disabled: registeringDateDialog.saving, children: "Cancel" }),
+            /* @__PURE__ */ jsx(Button, { size: "sm", onClick: handleSubmitRegisteringDateChange, disabled: registeringDateDialog.saving || !String(registeringDateDialog.reason || "").trim(), children: registeringDateDialog.saving ? "Submitting…" : "Submit request" })
           ] })
         ] }) }),
         /* @__PURE__ */ jsx(EditStudentDetailsRequestModal, {

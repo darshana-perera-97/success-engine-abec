@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoginScreen } from "./components/LoginScreen";
 import { clearLoginSession, getLoginSessionUser, hasLoginSession, normalizePortalRole, saveLoginSession } from "./authSession";
-import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getBranchChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests, getInvoiceAmountChangeRequests, getEnrollmentStatusChangeRequests } from "./authApi";
+import { createAccount, createStudent, getAccounts, getStudents, getStudentById, searchStudents, getPipelineCounts, updateStudent, updateAccountAvatar, updateAccountProfileContact, updateStudentAvatar, uploadStudentCv, uploadStudentDocument, uploadStudentProfileOtherDocument, uploadStudentUniversityOfferLetters, sendChatMessage, getChats, getMeetingSettings, updateMeetingSettings, getSystemData, updateSystemData, getPaymentAccounts, getBookings, createBooking, deleteBooking, getAppointments, createAppointment, updateAppointment, getActivities, createActivity, getInvoices, getStudentInvoices, createInvoice, updateInvoice, getTasks, createTask, updateTask, deleteReqStudent, getWhatsappStatus, getReqStudents, getCountryChangeRequests, getIntakeChangeRequests, getBranchChangeRequests, getStudentDetailChangeRequests, getInvoiceWaveOffRequests, getStudentRemovalRequests, getRefundRequests, getInvoiceAmountChangeRequests, getEnrollmentStatusChangeRequests, getRegistrationDateChangeRequests } from "./authApi";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ReportPage } from "./components/ReportPage";
 import { ManagerDashboard } from "./components/ManagerDashboard";
@@ -1313,7 +1313,7 @@ function App({ initialView = "dashboard" }) {
       return;
     }
     const loadTeamRequests = async () => {
-      const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, amountChangeResult, statusResult] = await Promise.all([
+      const [countryResult, detailResult, waveOffResult, removalResult, intakeResult, refundResult, branchResult, amountChangeResult, statusResult, registrationDateResult] = await Promise.all([
         getCountryChangeRequests({ pendingOnly: true }),
         getStudentDetailChangeRequests({ pendingOnly: true }),
         getInvoiceWaveOffRequests({ pendingOnly: true }),
@@ -1323,6 +1323,7 @@ function App({ initialView = "dashboard" }) {
         getBranchChangeRequests({ pendingOnly: true }),
         getInvoiceAmountChangeRequests({ pendingOnly: true }),
         getEnrollmentStatusChangeRequests({ pendingOnly: true }),
+        getRegistrationDateChangeRequests({ pendingOnly: true }),
       ]);
       if (cancelled) return;
       const countryCount = countryResult.ok && Array.isArray(countryResult.data) ? countryResult.data.length : 0;
@@ -1334,7 +1335,8 @@ function App({ initialView = "dashboard" }) {
       const branchCount = branchResult.ok && Array.isArray(branchResult.data) ? branchResult.data.length : 0;
       const amountChangeCount = amountChangeResult.ok && Array.isArray(amountChangeResult.data) ? amountChangeResult.data.length : 0;
       const statusCount = statusResult.ok && Array.isArray(statusResult.data) ? statusResult.data.length : 0;
-      setTeamRequestsCount(countryCount + detailCount + waveOffCount + removalCount + intakeCount + refundCount + branchCount + amountChangeCount + statusCount);
+      const registrationDateCount = registrationDateResult.ok && Array.isArray(registrationDateResult.data) ? registrationDateResult.data.length : 0;
+      setTeamRequestsCount(countryCount + detailCount + waveOffCount + removalCount + intakeCount + refundCount + branchCount + amountChangeCount + statusCount + registrationDateCount);
     };
     loadTeamRequests();
     const intervalId = setInterval(loadTeamRequests, POLL_MS.requestedStudents);
@@ -2724,7 +2726,7 @@ function App({ initialView = "dashboard" }) {
       } else if (currentRole === "Country Coordinator") {
         reportStudents = countryCoordinatorScopedStudents;
         if (countryCoordinatorScope.active) {
-          reportScopeLabel = `${countryCoordinatorScope.countryLabel} students`;
+          reportScopeLabel = `${countryCoordinatorScope.countryLabel} students and students assigned to you`;
         }
         reportAppointments =
           countryCoordinatorScope.active ? countryCoordinatorScopedAppointments : appointments;

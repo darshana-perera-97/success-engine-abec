@@ -1,5 +1,6 @@
 import { formatEnrollmentStatusLabel } from "./enrollmentStatus";
 import { formatIntakeLabel } from "./intakeFields";
+import { formatRegisteringDate } from "./registeringDate";
 
 const DETAIL_FIELD_LABELS = {
   name: "Name",
@@ -40,6 +41,7 @@ export function formatRequestTypeLabel(row) {
   if (row?.requestType === "invoice-wave-off") return "Invoice wave-off";
   if (row?.requestType === "invoice-amount-change") return "Invoice amount";
   if (row?.requestType === "intake-change") return "Intake change";
+  if (row?.requestType === "registration-date-change") return "Registering date";
   if (row?.requestType === "branch-change") return "Branch change";
   if (row?.requestType === "whatsapp-contact-change") return "WhatsApp contact";
   if (row?.requestType === "refund") return "Refund";
@@ -57,7 +59,8 @@ export function mergeRequestRows(
   branchRows = [],
   whatsappContactRows = [],
   amountChangeRows = [],
-  statusRows = []
+  statusRows = [],
+  registrationDateRows = []
 ) {
   const taggedCountry = (countryRows || []).map((row) => ({
     ...row,
@@ -99,6 +102,10 @@ export function mergeRequestRows(
     ...row,
     requestType: "enrollment-status-change",
   }));
+  const taggedRegistrationDate = (registrationDateRows || []).map((row) => ({
+    ...row,
+    requestType: "registration-date-change",
+  }));
   return [
     ...taggedCountry,
     ...taggedDetail,
@@ -110,6 +117,7 @@ export function mergeRequestRows(
     ...taggedWhatsappContact,
     ...taggedAmountChange,
     ...taggedStatus,
+    ...taggedRegistrationDate,
   ].sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
 }
 
@@ -254,6 +262,11 @@ export function formatRequestChangeSummary(row) {
   if (row?.requestType === "intake-change") {
     const current = formatIntakeLabel(row.currentIntakeMonth, row.currentIntakeYear) || "—";
     const requested = formatIntakeLabel(row.requestedIntakeMonth, row.requestedIntakeYear) || "—";
+    return `${current} → ${requested}`;
+  }
+  if (row?.requestType === "registration-date-change") {
+    const current = formatRegisteringDate(row.currentDate) || "—";
+    const requested = formatRegisteringDate(row.requestedDate) || "—";
     return `${current} → ${requested}`;
   }
   if (row?.requestType === "branch-change") {

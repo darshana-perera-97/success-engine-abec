@@ -15,6 +15,8 @@ import {
 import { canActAsPrimaryCounselorPortalRole } from "../roles";
 import { BranchWhatsappAccountSelect } from "./BranchWhatsappAccountSelect";
 import { resolveStudentBranchLabel } from "../utils/branchWhatsappAccounts";
+import { getLocalDateIso } from "./DatePicker";
+import { formatRegisteringDate, normalizeRegisteringDate } from "../utils/registeringDate";
 
 function resolveCounselorId(userRole, currentUser, counselorOptions) {
   if (!canActAsPrimaryCounselorPortalRole(userRole)) return "";
@@ -67,6 +69,7 @@ const AddStudentModal = ({
   const [offices, setOffices] = useState([]);
   const [optionsReady, setOptionsReady] = useState(false);
   const [form, setForm] = useState(() => emptyInquiryForm());
+  const [registeringDate, setRegisteringDate] = useState(() => getLocalDateIso());
   const [formError, setFormError] = useState("");
   const [formFieldErrors, setFormFieldErrors] = useState({});
   const [isSaving, setIsSaving] = useState(false);
@@ -119,6 +122,7 @@ const AddStudentModal = ({
     setFormError("");
     setFormFieldErrors({});
     setForm(emptyInquiryForm({ countries, offices }));
+    setRegisteringDate(getLocalDateIso());
     setAssignedCounselorId("");
     setBranchWhatsappMessengerUserId("");
     setStep(1);
@@ -172,9 +176,15 @@ const AddStudentModal = ({
     setForm(updater);
   };
 
+  const resolvedRegisteringDate = normalizeRegisteringDate(registeringDate);
+
   const handleFinalSubmit = async () => {
     setFormError("");
     setFormFieldErrors({});
+    if (!resolvedRegisteringDate) {
+      setFormError("Choose a valid registering date.");
+      return;
+    }
     const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
@@ -223,6 +233,7 @@ const AddStudentModal = ({
       intakeYear: fields.intakeYear,
       message: fields.message,
       inquirySource: fields.inquirySource || null,
+      joinedDate: resolvedRegisteringDate,
       lastEducationDate: new Date().toISOString().split("T")[0],
       documents: []
     };
@@ -260,6 +271,10 @@ const AddStudentModal = ({
     e.preventDefault();
     setFormError("");
     setFormFieldErrors({});
+    if (!resolvedRegisteringDate) {
+      setFormError("Choose a valid registering date.");
+      return;
+    }
     const validation = validateInquiryFormRequired(form, { requireBudget: false, requireSource: true });
     if (!validation.ok) {
       setFormError(validation.error);
@@ -340,6 +355,9 @@ const AddStudentModal = ({
             showBudgetField={false}
             showSourceField={true}
             intakeCountry={form.countryToVisit}
+            showRegisteringDate
+            registeringDate={registeringDate}
+            onRegisteringDateChange={setRegisteringDate}
           />
         ) : (
           <form
@@ -355,6 +373,9 @@ const AddStudentModal = ({
                 <p className="mt-0.5 text-xs text-slate-600">
                   {form.email || "—"}
                   {form.nearestOffice ? ` · ${form.nearestOffice}` : ""}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Registering date: {formatRegisteringDate(resolvedRegisteringDate) || "—"}
                 </p>
               </div>
               <div>

@@ -51,21 +51,26 @@ function studentMatchesManagerBranchBackend(student, branchLabel, branchCounselo
   return false;
 }
 
+function buildActorIdentitySet(users, userId) {
+  const uid = String(userId || "").trim().toLowerCase();
+  const identitySet = new Set();
+  if (!uid) return identitySet;
+  identitySet.add(uid);
+  const user = (users || []).find((u) => String(u.id || "").trim().toLowerCase() === uid);
+  if (user) {
+    const email = String(user.email || "").trim().toLowerCase();
+    const username = String(user.username || "").trim().toLowerCase();
+    if (email) identitySet.add(email);
+    if (username) identitySet.add(username);
+  }
+  return identitySet;
+}
+
 function applyRoleScope(students, { role, userId, branch, country, users }) {
   const normalizedRole = String(role || "").trim();
   if (normalizedRole === "Counselor" || normalizedRole === "Consultor" || normalizedRole === "Counsellor") {
     if (!userId) return [];
-    const uid = String(userId).trim().toLowerCase();
-    const identitySet = new Set();
-    if (uid) identitySet.add(uid);
-    const user = (users || []).find((u) => String(u.id || "").trim().toLowerCase() === uid);
-    if (user) {
-      const email = String(user.email || "").trim().toLowerCase();
-      const username = String(user.username || "").trim().toLowerCase();
-      if (email) identitySet.add(email);
-      if (username) identitySet.add(username);
-    }
-    return students.filter((s) => studentMatchesCounselorSet(s, identitySet));
+    return students.filter((s) => studentMatchesCounselorSet(s, buildActorIdentitySet(users, userId)));
   }
   if (normalizedRole === "Manager" || normalizedRole === "Accountant") {
     const branchLabel = String(branch || "").trim();
@@ -76,7 +81,11 @@ function applyRoleScope(students, { role, userId, branch, country, users }) {
   if (normalizedRole === "Country Coordinator") {
     const countryKey = String(country || "").trim().toLowerCase();
     if (!countryKey) return students;
-    return students.filter((s) => String(s.country || "").trim().toLowerCase() === countryKey);
+    const identitySet = buildActorIdentitySet(users, userId);
+    return students.filter((s) => {
+      if (String(s.country || "").trim().toLowerCase() === countryKey) return true;
+      return studentMatchesCounselorSet(s, identitySet);
+    });
   }
   return students;
 }

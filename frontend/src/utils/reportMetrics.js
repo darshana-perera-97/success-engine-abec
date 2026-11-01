@@ -2,6 +2,7 @@ import { documentTypeMatchesRequirement } from "../docMappingConfig";
 import { normalizePipelineStatus, isVisaGrantedStatus, PIPELINE_STEPS } from "../pipeline";
 import { normalizeOfferStatus, listUniversityOfferLetters } from "./universityOfferLetters";
 import { getAssignedCounselorIds } from "../studentContactHelpers";
+import { normalizeRegisteringDate } from "./registeringDate";
 
 export const REPORT_SECTIONS = [
   {
@@ -133,6 +134,12 @@ function inDateRange(value, dateFrom, dateTo) {
 
 function studentBranch(student) {
   return String(student?.branch || student?.nearestOffice || "").trim();
+}
+
+function studentRegisteredAt(student) {
+  const joined = normalizeRegisteringDate(student?.joinedDate);
+  if (joined) return `${joined}T12:00:00`;
+  return student?.createdAt;
 }
 
 function hasDocMatching(student, docTypes, { verifiedOnly = false, pendingOnly = false } = {}) {
@@ -269,7 +276,7 @@ function studentMatchesFilters(student, filters, employees, { skipDate = false }
   if (branch !== "All" && studentBranch(student) !== branch) return false;
   const country = String(filters.country || "All");
   if (country !== "All" && String(student?.country || "").trim() !== country) return false;
-  if (!skipDate && !inDateRange(student?.createdAt, filters.dateFrom, filters.dateTo)) return false;
+  if (!skipDate && !inDateRange(studentRegisteredAt(student), filters.dateFrom, filters.dateTo)) return false;
   return true;
 }
 

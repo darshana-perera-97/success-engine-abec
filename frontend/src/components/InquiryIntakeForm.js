@@ -9,6 +9,7 @@ import { resolveFormWhatsappNumber, validateWhatsappFields, isValidStudentPhone 
 import { intakeFieldsFromStudent, validateIntakeFields } from "../utils/intakeFields";
 import { useIntakeOptionsForCountry } from "../hooks/useIntakeOptionsForCountry";
 import { INQUIRY_SOURCE_OPTIONS, isValidInquirySource, normalizeInquirySource } from "../utils/inquirySource";
+import { DatePicker } from "./DatePicker";
 
 export const EDUCATION_LEVELS = [
   "High school",
@@ -279,7 +280,10 @@ export function InquiryIntakeForm({
   showBudgetField = true,
   showSourceField = false,
   intakeCountry = "",
-  fieldErrors = {}
+  fieldErrors = {},
+  showRegisteringDate = false,
+  registeringDate = "",
+  onRegisteringDateChange
 }) {
   const intakeOptions = useIntakeOptionsForCountry(intakeCountry);
   const fieldError = (key) => Boolean(fieldErrors?.[key]);
@@ -323,6 +327,19 @@ export function InquiryIntakeForm({
         <div className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">{error}</div>
       ) : null}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {showRegisteringDate ? (
+          <div className="sm:col-span-2">
+            <DatePicker
+              label="Registering date"
+              value={registeringDate}
+              onChange={(value) => onRegisteringDateChange?.(value)}
+              required
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              Defaults to today. Change this if the student was registered on a different date.
+            </p>
+          </div>
+        ) : null}
         {showSourceField ? (
           <InquirySourceField
             value={form.inquirySource}

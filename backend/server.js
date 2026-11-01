@@ -55,6 +55,7 @@ const enrollmentStatusChangeRequestRoutes = require("./routes/enrollmentStatusCh
 const studentDetailChangeRequestRoutes = require("./routes/studentDetailChangeRequests");
 const studentRemovalRequestRoutes = require("./routes/studentRemovalRequests");
 const intakeChangeRequestRoutes = require("./routes/intakeChangeRequests");
+const registrationDateChangeRequestRoutes = require("./routes/registrationDateChangeRequests");
 const branchChangeRequestRoutes = require("./routes/branchChangeRequests");
 const branchWhatsappMessengerChangeRequestRoutes = require("./routes/branchWhatsappMessengerChangeRequests");
 const refundRequestRoutes = require("./routes/refundRequests");
@@ -117,6 +118,7 @@ const server = http.createServer(async (req, res) => {
   if (await studentDetailChangeRequestRoutes.handle(req, res, url)) return;
   if (await studentRemovalRequestRoutes.handle(req, res, url)) return;
   if (await intakeChangeRequestRoutes.handle(req, res, url)) return;
+  if (await registrationDateChangeRequestRoutes.handle(req, res, url)) return;
   if (await branchChangeRequestRoutes.handle(req, res, url)) return;
   if (await branchWhatsappMessengerChangeRequestRoutes.handle(req, res, url)) return;
   if (await refundRequestRoutes.handle(req, res, url)) return;
